@@ -61,7 +61,10 @@ def magic_of(path):
     head = read_at(path, 0, 16)
     h = head.hex()
     if h.startswith("7f454c46"):
-        return "ELF/IRX executable"
+        machine = read_at(path, 18, 2)
+        endian = "big" if len(head) > 5 and head[5] == 2 else "little"
+        if len(machine) < 2 or int.from_bytes(machine, endian) == 8:
+            return "ELF/IRX executable"
     if h.startswith("89504e470d0a1a0a"):
         return "PNG image"
     if h.startswith("ffd8ff"):

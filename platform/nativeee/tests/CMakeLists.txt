@@ -5,7 +5,7 @@
 #   cmake --build build --target te_tests && ctest --test-dir build -L nativeee --output-on-failure
 add_library(te_test_support STATIC te_test_env.cpp te_test_iso.cpp)
 target_include_directories(te_test_support PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(te_test_support PUBLIC te_platform_host)
+target_link_libraries(te_test_support PUBLIC "$<LINK_LIBRARY:WHOLE_ARCHIVE,te_platform_host>")
 target_compile_options(te_test_support PRIVATE -Wall -Wextra)
 
 set(TE_TESTS test_time test_pads test_disc_files test_saves test_system_io test_audio test_sound test_stream test_movie test_savestate test_harness test_graphics_screen_models)

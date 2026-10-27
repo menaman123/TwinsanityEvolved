@@ -622,7 +622,7 @@ add_dependencies(te_graphics_selftest te_seam nativeee)
 add_executable(te_pdesc tools/oracle/te_pdesc.cpp)
 target_include_directories(te_pdesc PRIVATE "${CMAKE_SOURCE_DIR}/platform/nativeee/host")
 target_compile_options(te_pdesc PRIVATE -Wall -Wextra)
-target_link_libraries(te_pdesc PRIVATE te_test_support "$<LINK_LIBRARY:WHOLE_ARCHIVE,te_platform_host>" nativeee_libs te_seam_stubs)   # the tests' guest-memory stand-in: no module
+target_link_libraries(te_pdesc PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,te_test_support>" "$<LINK_LIBRARY:WHOLE_ARCHIVE,te_platform_host>" nativeee_libs te_seam_stubs)   # the tests' guest-memory stand-in: no module
 add_dependencies(te_pdesc te_seam nativeee)
 endif()
 
