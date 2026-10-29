@@ -84,7 +84,7 @@ QByteArray makeIso(const QVector<QPair<QString, QByteArray>>& files) {
     pvd.replace(156, rootRec.size(), rootRec);
     img.replace(16 * 2048, 2048, pvd);
     QByteArray term(2048, '\0');
-    term[0] = char(0xFF);
+    term[0] = static_cast<char>(-1);   // 0xFF: the set terminator's type
     term.replace(1, 5, "CD001");
     img.replace(17 * 2048, 2048, term);
     return img;
@@ -433,14 +433,14 @@ private slots:
             QVERIFY(QTest::qWaitFor([&] { ModRow* r = m->row(want2.last()); return r && r->isVisible() && r->height() > 0; }, 5000));
             QTest::qWait(50);
             ModRow* last = m->row(want2.last());
-            const QPoint at = last->mapTo(m, QPoint(20, last->height() - 2));
+            const QPoint dropAt = last->mapTo(m, QPoint(20, last->height() - 2));
             auto* mime = new QMimeData();
             mime->setData(QStringLiteral("application/x-twinsanityevolved-mod"), dropped.toUtf8());
-            QDragEnterEvent enter(at, Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
+            QDragEnterEvent enter(dropAt, Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
             QApplication::sendEvent(m, &enter);
-            QDragMoveEvent move(at, Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
+            QDragMoveEvent move(dropAt, Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
             QApplication::sendEvent(m, &move);
-            QDropEvent drop(QPointF(at), Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
+            QDropEvent drop(QPointF(dropAt), Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
             QApplication::sendEvent(m, &drop);
             QStringList want3 = want2;
             want3.removeAll(dropped);
@@ -525,6 +525,7 @@ private slots:
         QVERIFY(kept.open(QIODevice::ReadOnly));
         declined["notice"] = m->noticeText();
         declined["kept_old_copy"] = !kept.readAll().contains("9.99");
+        kept.close();   // an open file holds its folder on Windows: the replace below renames it
         declined["sheet_closed"] = m->replaceSheet() == nullptr;
         QCOMPARE(m->noticeText(), QStringLiteral("Nothing was added: you keep Copied mod 1."));
         QVERIFY(declined["kept_old_copy"].toBool() && declined["sheet_closed"].toBool());

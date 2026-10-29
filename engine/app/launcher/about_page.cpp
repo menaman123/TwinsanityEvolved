@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QEvent>
 #include <QScrollArea>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -87,6 +88,7 @@ AboutPage::AboutPage(LauncherApp* app, DetailsSheet* details, QWidget* parent) :
         vitaTitle->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::Text)));
         col->addWidget(vitaTitle);
         vita_ = new QLabel(inner);
+        vita_->installEventFilter(this);   // kept as tall as its text at its width (eventFilter)
         vita_->setObjectName(QStringLiteral("about_vita"));
         vita_->setFont(t.font(LauncherTheme::Body));
         vita_->setWordWrap(true);
@@ -208,6 +210,16 @@ void AboutPage::refresh() {
 void AboutPage::showEvent(QShowEvent* event) {
     refresh();
     QWidget::showEvent(event);
+}
+
+// The PS Vita label kept as tall as its text at its width: the layout can measure a word-wrapped list's height short
+// (Windows' fonts), which loses its last line
+bool AboutPage::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == vita_ && event->type() == QEvent::Resize) {
+        const int h = vita_->heightForWidth(vita_->width());
+        if (h > 0 && vita_->minimumHeight() != h) vita_->setMinimumHeight(h);
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void AboutPage::openRemoveSheet() {

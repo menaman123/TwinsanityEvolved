@@ -15,7 +15,7 @@
 #include <QVector>
 #include "release_catalogue.h"
 class QNetworkAccessManager;
-class QNetworkReply;
+#include <QNetworkReply>
 namespace ps2r::launcher {
 class AppData;
 class TitleManifest;

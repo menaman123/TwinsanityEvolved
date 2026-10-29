@@ -109,7 +109,7 @@ bool IniSettings::write(const QString& text, QString* error) const {
         return false;
     }
     QSaveFile f(path_);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    if (!f.open(QIODevice::WriteOnly)) {   // LF on every system, as the game writes it
         if (error) *error = QStringLiteral("cannot write %1").arg(path_);
         return false;
     }

@@ -4,6 +4,16 @@
 #include <fstream>
 #include <sstream>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "engine/core/config/config.h"
 
 namespace ps2r {
@@ -152,7 +162,12 @@ bool SettingsFile::WriteWhole(const std::string& path, const std::string& text, 
             return false;
         }
     }
+    // Windows' rename refuses an existing destination: the settings file is replaced in place there
+#ifdef _WIN32
+    if (!MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+#else
     if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+#endif
         if (err) *err = "cannot replace " + path;
         std::remove(tmp.c_str());
         return false;

@@ -129,7 +129,7 @@ int main() {
     if (const te::mods::Info* h = Row(rows, "hubtest")) {
         CHECK(h->kind == te::mods::Kind::Disc && h->folder && h->schema == 2 && h->has_disc && h->has_switch && !h->enabled);
         CHECK(h->name == "hub test" && h->author == "the tests" && h->version == "1.2" && h->description == "a disc mod");
-        CHECK(h->dir == (mods / "hubtest").string());
+        CHECK(fs::path(h->dir) == mods / "hubtest");
         CHECK(h->source.kind == "folder" && h->source.artefact == "hubtest" && h->source.sha256 == "ab");
         CHECK(h->base.region == "PAL" && h->base.executable == "SLES_525.68");
         CHECK(h->files.size() == 1 && h->files[0].path == "CRASH6/CRASH.BD" && h->files[0].form == "ranges" && h->files[0].bytes == 123);
@@ -141,7 +141,7 @@ int main() {
     CHECK(packs.size() == 1);
     if (packs.size() == 1) {
         const te::mods::Info* a = &packs[0];
-        CHECK(a->id == "arabic" && a->kind == te::mods::Kind::Language && a->folder && !a->has_disc && a->dir == (mods / "arabic").string());
+        CHECK(a->id == "arabic" && a->kind == te::mods::Kind::Language && a->folder && !a->has_disc && fs::path(a->dir) == mods / "arabic");
         CHECK(a->language.id == "arabic" && a->language.label == "arabic (text)" && a->language.text_bank == "data/arabic.txt.bank" &&
               a->language.font == "data/arabic.font" && a->language.direction == "rtl");
     }
@@ -162,7 +162,7 @@ int main() {
     te::mods::Configure({"hubtest"});
     CHECK(te::mods::Enabled("hubtest") && !te::mods::Enabled("zeta") && te::mods::AnyEnabled());
     std::vector<te::mods::DiscLayer> layers = te::mods::DiscLayers();
-    CHECK(layers.size() == 1 && layers[0].id == "hubtest" && layers[0].dir == (mods / "hubtest").string());
+    CHECK(layers.size() == 1 && layers[0].id == "hubtest" && fs::path(layers[0].dir) == mods / "hubtest");
     CHECK(te::mods::DescribeFolders() == "mods: 2 folders (hubtest disc on, zeta disc off), order: hubtest; language packs (not mods): arabic");
     te::Services::Get().saves().Core();
     CHECK(te::Services::Get().saves().UsingModsCard());

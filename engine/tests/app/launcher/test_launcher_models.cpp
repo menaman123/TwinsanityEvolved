@@ -69,7 +69,7 @@ QByteArray tinyIso(const QVector<QPair<QString, QByteArray>>& files) {
     pvd.replace(156, rootRec.size(), rootRec);
     img.replace(16 * 2048, 2048, pvd);
     QByteArray term(2048, '\0');
-    term[0] = char(0xFF);
+    term[0] = static_cast<char>(-1);   // 0xFF: the set terminator's type
     term.replace(1, 5, "CD001");
     img.replace(17 * 2048, 2048, term);
     return img;
@@ -474,7 +474,9 @@ private slots:
         QCOMPARE(done.first().first().toBool(), true);
         QCOMPARE(inst.tag(), QStringLiteral("v0.3.0"));
         QCOMPARE(inst.placedFile(), folder + "/twinsanityevolved");
+#ifndef Q_OS_WIN   // (Windows has no executable bit: a file is executable by its extension)
         QVERIFY(QFileInfo(folder + "/twinsanityevolved").isExecutable());
+#endif
         QVERIFY(QFileInfo::exists(folder + "/README.md"));
         QCOMPARE(mine.get("game.language"), QStringLiteral("german"));   // a protected name in the zip is never written
         QCOMPARE(inst.received(), qint64(zip.size()));

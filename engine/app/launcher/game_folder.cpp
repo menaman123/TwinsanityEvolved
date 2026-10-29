@@ -36,7 +36,7 @@ bool GameFolder::prepare(const QVector<QPair<QString, QString>>& defaults, QStri
     const QString ini = settingsFile();
     if (!QFileInfo::exists(ini) && !manifest_->settingsHeader().isEmpty()) {
         QSaveFile f(ini);
-        if (!f.open(QIODevice::WriteOnly | QIODevice::Text) || f.write((manifest_->settingsHeader() + "\n").toUtf8()) < 0 || !f.commit()) {
+        if (!f.open(QIODevice::WriteOnly) || f.write((manifest_->settingsHeader() + "\n").toUtf8()) < 0 || !f.commit()) {
             if (error) *error = QStringLiteral("%1 could not be written").arg(QDir::toNativeSeparators(ini));
             return false;
         }

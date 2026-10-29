@@ -111,7 +111,7 @@ QByteArray makeIso(const QVector<QPair<QString, QByteArray>>& files) {
     pvd.replace(156, rootRec.size(), rootRec);
     img.replace(16 * 2048, 2048, pvd);
     QByteArray term(2048, '\0');
-    term[0] = char(0xFF);
+    term[0] = static_cast<char>(-1);   // 0xFF: the set terminator's type
     term.replace(1, 5, "CD001");
     img.replace(17 * 2048, 2048, term);
     return img;

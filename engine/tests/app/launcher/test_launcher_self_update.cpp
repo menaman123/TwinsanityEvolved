@@ -331,7 +331,9 @@ private slots:
         QVERIFY(QTest::qWaitFor([&] { return su.state() == SelfUpdate::Restarting || su.state() == SelfUpdate::Failed || su.state() == SelfUpdate::UpToDate; }, 20000));
         QVERIFY2(su.state() == SelfUpdate::Restarting, qPrintable(su.problemText()));
         QCOMPARE(readFile(file), image);
+#ifndef Q_OS_WIN   // (Windows has no executable bit: a file is executable by its extension)
         QVERIFY(QFileInfo(file).isExecutable());
+#endif
         const QString aside = home_.path() + "/Apps/.TwinsanityEvolved-launcher-replaced-v0.2.0.AppImage";
         QCOMPARE(readFile(aside), QByteArray("\x7f" "ELF", 4) + "old");
         SelfUpdate after(&data, &manifest_);
