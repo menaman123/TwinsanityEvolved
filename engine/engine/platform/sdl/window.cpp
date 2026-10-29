@@ -65,6 +65,9 @@ Window::~Window() { Destroy(); }
 
 bool Window::Create(bool headless, int w, int h, const char* title) {
     Destroy();
+#if PS2R_HOST_VITA
+    std::fprintf(stderr, "[sdl] start-up: the video subsystem + the window\n"); std::fflush(stderr);
+#endif
     if (!SDL_WasInit(SDL_INIT_VIDEO)) {
         if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
             std::fprintf(stderr, "[sdl] SDL_InitSubSystem(VIDEO) failed: %s\n", SDL_GetError());

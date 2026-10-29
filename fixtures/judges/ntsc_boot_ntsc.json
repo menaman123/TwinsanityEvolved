@@ -1,0 +1,63 @@
+{
+  "judge": "ntsc_boot_judge",
+  "description": "The North American disc (SLUS-20909 v2.00, the retail image: Redump 13689) played by the European game's code through the built-in address map (launcher/discs/region_map_SLUS-20909.json): the disc is the retail dump the map was made for, the map is this disc's program's, the boot lines say how it is laid out, the title is reached with the game's font, the hub pad log timed for this disc runs to 4200 at 60 fields a second deterministically and in play mode, and the boot movies play. Without --ntsc-iso the judge reports SKIPPED (exit 2).",
+  "serial": "SLUS-20909",
+  "retail_dumps": [
+    13689
+  ],
+  "map": {
+    "committed": "launcher/discs/region_map_SLUS-20909.json",
+    "schema": 2,
+    "why": "the map is keyed by the program it was made from (elf.sha256 = the disc's SLUS_209.09) and the European one (pal_elf.sha256 = SLES_525.68 of the PAL disc used for development, the decompilation's)"
+  },
+  "dry_run": {
+    "lines": [
+      "[twinsanityevolved] disc: NTSC-U image SLUS-20909 v2.00 by size (the retail dump's 2,108,489,728 bytes; contents not verified: --verify-disc hashes the image; volume CRASH)",
+      "[twinsanityevolved] region: NTSC-U SLUS-20909, through an address map (built in), 60 Hz (50 not offered)",
+      "[twinsanityevolved] region: the European program's file names over this disc's archive index: StartUp\\Fonts\\Crash -> StartUp\\Fonts\\Crash_Euro",
+      "[twinsanityevolved] region: the archive entry Startup\\Fonts\\Crash.psf -> StartUp\\Fonts\\Crash_Euro.psf (the name the European program asks for)",
+      "[twinsanityevolved] region: SLUS_209.09 laid out at the PAL addresses through the built-in map: 42 segments, 197990 bytes, 12355 pointer words (11914 code, 2 data, 439 by range, 0 unmapped), 13 PAL words kept",
+      "[twinsanityevolved] retail image loaded (2151940-byte ELF); code pointers: 36184 words scanned, 7234 patched, 526 unported bodies, 4201 stray in code range",
+      "[twinsanityevolved] language: disc slots [0 American: text english 'new game', speech english (Crash6\\American.mb)]; text languages [english: text slot 0]; speech languages [english: voice slot 0 (Crash6\\American.mb)]; requested text 'english' speech 'english' -> text english by name: text slot 0; speech english by name: voice slot 0; Language() 1",
+      "[twinsanityevolved] vtable thunks: 2028 slots checked, 1766 matched, 123 thunked, 139 pure-virtual, 349 beyond vtable end, 0 unported, 0 pool exhausted, 0 duplicate rows"
+    ],
+    "rate_line": "[twinsanityevolved] settings: game.hz = 50 is the PAL console's rate: this disc runs at 60",
+    "why": "the region row by content (SYSTEM.CNF boots SLUS_209.09), the built-in map read for this disc only, the font's archive entry given the European program's name, the image laid out (42 segments, 12,355 pointer words translated, 0 unmapped, 13 PAL words kept), the code-pointer patch (7,234 patched as on the PAL disc; 4,201 stray against 4,207), ONE text language and ONE speech language (english text, Crash6\\American.mb speech: the two rows' lists), the vtable slots as on the PAL disc, and the PAL-only game.hz = 50 refused"
+  },
+  "title": {
+    "stop_at": 2600,
+    "run_seconds": 600,
+    "title_by": 1300,
+    "min_text_quads": 50000,
+    "measured": "Title (7) at boundary 1280 (the European disc 1262); text quads 56,428 to 2600 (0 before the font fix: the European C++ asks for StartUp\\Fonts\\Crash_Euro, this disc has StartUp\\Fonts\\Crash)"
+  },
+  "hub": {
+    "padlog": "fixtures/padlogs/hub_entry_ntsc.padlog",
+    "padlog_fixture": "fixtures/judges/hub_entry_ntsc.json",
+    "stop_at": 4200,
+    "run_seconds": 900,
+    "field_hz": 60,
+    "measured": "the route Title 1280, MainMenu 1293, NewGame 2397, Movie 2431, StartingPlay 2474, Playing 2476, Paused 2478, Waiting 2630, Playing 2647 held to 4200; 0 traps; 16 adapted call sites (the European disc: 16); small pages free 233"
+  },
+  "rate": {
+    "padlog": "fixtures/padlogs/hub_entry_ntsc.padlog",
+    "stop_at": 6230,
+    "playing_from": 2647,
+    "run_seconds": 300,
+    "game_hz": 60.0,
+    "game_hz_tolerance": 0.1,
+    "why": "play mode (paced by the clock, headless, TE_TICK_LOG_MS=0, every stderr line stamped): boundaries per wall second over the Playing span 2647..6230, as tools/judges/frame_rate_judge.py measures the European disc"
+  },
+  "movies": {
+    "stop_at": 2600,
+    "run_seconds": 600,
+    "title_by": 2600,
+    "thresholds": {
+      "min_opens": 2,
+      "min_pictures": 400,
+      "min_pcm": 100000
+    },
+    "measured": "VIVENDI.PSS 640x480 @ 30 fps, TTIDENT.PSS 512x448 @ 30 fps (the European disc: 25 fps; TTIDENT 512x512): 564 pictures decoded = queued = uploaded = presented, 560 drawn, 1,128 fields (two fields a picture at 60 Hz), 897,024 PCM frames, 0 silence; the Vivendi frame (presented frame 400) luminance 240.2, top colour share 0.46 -- movie_judge GREEN with fixtures/judges/movie_boot_pal.json's thresholds"
+  },
+  "frozen": "2026-10-26 (measured on a retail NTSC-U image): RED on 59a161b (the disc is refused: 'needs this disc's address map', exit 3 -- every check after the identity), GREEN on its change"
+}

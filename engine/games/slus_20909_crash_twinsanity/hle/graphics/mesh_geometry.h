@@ -77,8 +77,22 @@ public:
     };
     using Sink = void (*)(void* user, const ps2r::gs::VertexRec* vertices, size_t count, bool fan);
     static Result Prepare(const Mesh& mesh, Prepared& out);
+    // The Vita's prepared builds through its Advanced SIMD unit (4 lanes per multiply-add; rounding to nearest where the
+    // scalar path rounds toward zero: a lane may differ by a unit in the last place). Off by default; a no-op elsewhere.
+    static void SetVectorTransform(bool on);
+    static bool VectorTransform();
     static Result BuildPrepared(const Prepared& prepared, const View& view, const ps2r::gs::DrawIr& state,
                                 const std::array<uint8_t, 4>* colours, Sink sink, void* user);
+    // (the Vita's builders) BuildPrepared in two passes: every vertex's values first -- the clip transform, the guard
+    // scaling and both outcodes when clipped, the projected vertex -- each a function of the vertex and the view only, then
+    // the strips' assembly and fans on them as before (the same draws, the same order, bit for bit). The first pass's
+    // arithmetic without its clamps where the exponent budget shows every clamp the identity and the stored S / T / Q pass
+    // the audit (exponent_budget.h; modes: 1 the default, 0 the one-pass form, 2 both forms compared, 3 the two passes on
+    // the clamped forms, 4 the two passes' output compared with the one-pass form's, the latter drawn); elsewhere, and with
+    // SetVectorTransform on, the one-pass form. The census: builds clamp-free,
+    // builds clamped, vertices compared that differed (mode 2).
+    static void SetCertified(int mode);
+    static void CertifiedCensus(uint64_t out[5]);   // + (mode 4) builds compared with the one-pass form, those differing
 };
 
 }  // namespace title

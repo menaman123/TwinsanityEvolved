@@ -21,8 +21,8 @@
 //       GuardRecord bound recovery from the dominating comparison,
 //       EmulateFunction per-index address evaluation, and sanityCheck).
 //     This comment is the Apache-2.0 attribution for the adaptation site.
-//   * No PCSX2 (GPL) code or text is present here — concepts only, per the
-//     master brief.
+//   * No PCSX2 (GPL) code or text is present here — concepts only, by
+//     design.
 //
 
 #include "jumptables.h"

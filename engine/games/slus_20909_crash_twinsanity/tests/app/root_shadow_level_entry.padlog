@@ -1,4 +1,4 @@
-# RootShadowLevelEntry: the user's play-session s3 recording (play_sessions/s3/session.padlog,
+# RootShadowLevelEntry: the tester's play-session s3 recording (play_sessions/s3/session.padlog,
 # 2026-10-09, logical input ticks), replayed on the deterministic profile: title -> New Game ->
 # the first level (Levels\Earth\Hub\beach.rm2) -> the autosave dialog (CROSS at 6477) -> gameplay
 # on the beach with Crash idle; the default shadow meshes draw from ~tick 6480 on. Do not edit.

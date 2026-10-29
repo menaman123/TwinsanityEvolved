@@ -1,0 +1,308 @@
+{
+  "schema": 2,
+  "kind": "files",
+  "id": "pal",
+  "title": "Crash Twinsanity",
+  "region": "PAL",
+  "serial": "SLES-52568",
+  "executable": "SLES_525.68",
+  "volume_id": "CRASH",
+  "sectors": 1259392,
+  "retail": false,
+  "provenance": "a modified PAL image used for development (Redump mismatch)",
+  "image": {
+    "bytes": 2579234816,
+    "crc32": "bc22864a",
+    "sha1": "cf69ffd7ab5225ac5e8ffb6a494495743ba2b40a",
+    "redump": {
+      "compared": [
+        4514
+      ],
+      "match": null,
+      "verdict": "matches no known retail dump: 2,579,234,816 bytes vs 2,558,263,296 of Redump disc 4514 (SLES-52568 v1.01)"
+    }
+  },
+  "system_cnf": {
+    "boot2": "cdrom0:\\SLES_525.68;1",
+    "ver": "1.01",
+    "vmode": "PAL"
+  },
+  "elf": {
+    "entry": "0x00100008",
+    "machine": 8,
+    "bytes": 2152836
+  },
+  "made_by": "tools/discs/manifest.py --label this-disc: names, sizes and hashes only (no byte of any file)",
+  "files": [
+    {
+      "path": "SYSTEM.CNF",
+      "bytes": 57,
+      "sha256": "6f87e4a9375613e096e407172e72cd5c8f0edab0560e92d72d0c6da2f8125ee0",
+      "core": true
+    },
+    {
+      "path": "SLES_525.68",
+      "bytes": 2152836,
+      "sha256": "7a609bb3ac32c4ef42129088902c4cf8aa05cf9cb62845e121764e32d2cedc1d",
+      "core": true
+    },
+    {
+      "path": "CRASH6/MUSIC.MB",
+      "bytes": 221773824,
+      "sha256": "cc5cb043dcbdd23745652df015b7fe055dbd276d16bd3924057d90ff4c9eb371",
+      "core": true
+    },
+    {
+      "path": "CRASH6/MUSIC.MH",
+      "bytes": 2868,
+      "sha256": "b979171c1ae105d1bd19e1dfd624c625acbf4b57b3c3df2f2445b51cfa1176a0",
+      "core": true
+    },
+    {
+      "path": "CRASH6/CRASH.BH",
+      "bytes": 31160,
+      "sha256": "6878a97121a8c3a5b57666fbb4ea785a3f3633061df1e3db6e9947a7f30aa358",
+      "core": true
+    },
+    {
+      "path": "CRASH6/CRASH.BD",
+      "bytes": 929914953,
+      "sha256": "5c0489a082ce95cd7ec72607d08734dd941f1d25a1a5f97f000b55dd56854205",
+      "core": true
+    },
+    {
+      "path": "CRASH6/ENGLISH.MH",
+      "bytes": 2868,
+      "sha256": "bfb94bdfa8647de0e43e473c4caee9c51f83306dd799e81741f3bb437beb43c8",
+      "core": false
+    },
+    {
+      "path": "CRASH6/ENGLISH.MB",
+      "bytes": 13168640,
+      "sha256": "e0a30ff4a571f81c8a8947085f3f8403ad0cb30d70e1b444e609b9adadb850c7",
+      "core": false
+    },
+    {
+      "path": "CRASH6/FRENCH.MB",
+      "bytes": 18886656,
+      "sha256": "33ff380a9a1ccd43d6c7a011aed676868540e9e738b1f143b283a38f833c86ff",
+      "core": false
+    },
+    {
+      "path": "CRASH6/FRENCH.MH",
+      "bytes": 2868,
+      "sha256": "ef71bee13f95f75d0cc118ade8f04943ec8a974e9d8ef6e79312a41b9adf77be",
+      "core": false
+    },
+    {
+      "path": "CRASH6/GERMAN.MB",
+      "bytes": 18440192,
+      "sha256": "e17688f629cc67d7758473fa53d8d4494947f6460710d214a30cac79dc4ff73b",
+      "core": false
+    },
+    {
+      "path": "CRASH6/GERMAN.MH",
+      "bytes": 2868,
+      "sha256": "e742408b31fccf6d813a4f7a9301a8aa680f820f9fbee0a0d950925a828276a0",
+      "core": false
+    },
+    {
+      "path": "CRASH6/ITALIAN.MB",
+      "bytes": 18636800,
+      "sha256": "9e9c06ab24fba8f28c3a9bada244f0dd82d29086659bace87bfbdbc6e82fc2d1",
+      "core": false
+    },
+    {
+      "path": "CRASH6/ITALIAN.MH",
+      "bytes": 2868,
+      "sha256": "4ec87d2aa5edc760118bb72c99ca288655c0e945f395bd5be39cda2684f1f97f",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SPANISH.MB",
+      "bytes": 18522112,
+      "sha256": "504424cf0c8aa5bcef7b36bd21e3bedfc8482fea054e200eef1d5ae69ab50242",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SPANISH.MH",
+      "bytes": 2868,
+      "sha256": "3f89cddfcdeed9ae39bc7548dd71833b091707c34022e44b0bedaf379650d71e",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/CDVDSTM.IRX",
+      "bytes": 33521,
+      "sha256": "276c175fe4a6d83d43baeb86b40cd5a7c3fc7b13b15df6da541040f926d5eb07",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/LIBSD.IRX",
+      "bytes": 28573,
+      "sha256": "89e2322522f30fe5631c2e6c72ef82ac948377f5005331989165a5751297bc10",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/MCMAN.IRX",
+      "bytes": 96181,
+      "sha256": "e4e2afe72c123faa7c5f86624185479cd800d94c065ce5d023c540aa0935830a",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/MCSERV.IRX",
+      "bytes": 7385,
+      "sha256": "dd33d243b91adb6fb5587ee77b212ca7fe6bb24bffa6cd128bc3d59e6cf6e6d2",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/PADMAN.IRX",
+      "bytes": 45797,
+      "sha256": "7362ff796dced5c94a99d04fd50a774d92aa23d5605eb04d84997dd7cb5508c0",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/SDRDRV.IRX",
+      "bytes": 7313,
+      "sha256": "92856b7620241881e55f2f981e1eded2d400d457bdf8d348ccc564da7a3049a6",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/SIO2MAN.IRX",
+      "bytes": 6553,
+      "sha256": "1964b83bcc8c0cab9dfcf9b9637e0e313e69c23fd5c73408fe889ace91f13708",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/STREAM.IRX",
+      "bytes": 116156,
+      "sha256": "96ef95beac5173873c93073ea394b9dd245f1fae06cf18615dcb8d20efef6760",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/IOPRP300.IMG",
+      "bytes": 275345,
+      "sha256": "02d314464c17c715d7e809297b0aba184173a98616b1fafeac27fe33fc480c82",
+      "core": false
+    },
+    {
+      "path": "FMV/ATTRACT.PSS",
+      "bytes": 79626244,
+      "sha256": "12f30f8a93936404d9dffff71fe31dea680fa1be4d4bea41446eea1a1ebf8f6b",
+      "core": false
+    },
+    {
+      "path": "FMV/COMPLETE.PSS",
+      "bytes": 28672004,
+      "sha256": "364ed17b826f65475dd7a2840060647bd2af8b5980c769bab6179ed753fdab62",
+      "core": false
+    },
+    {
+      "path": "FMV/TTIDENT.PSS",
+      "bytes": 15941636,
+      "sha256": "968badc9b885b811e0ac64a2f1e61d1f8f5c9e3134b78633100a797f340846f8",
+      "core": false
+    },
+    {
+      "path": "FMV/VIVENDI.PSS",
+      "bytes": 8929284,
+      "sha256": "a443e6f5ad9d682c8555f60c0bdb3375ea62f5c685ee677e55f31623de856a9d",
+      "core": false
+    },
+    {
+      "path": "FMV/H02_N.PSS",
+      "bytes": 11911172,
+      "sha256": "5feffd72a9225ae7c644649883e8bea4086a416a60dc79327765082cd030bc5e",
+      "core": false
+    },
+    {
+      "path": "FMV/B01_A.PSS",
+      "bytes": 84033540,
+      "sha256": "b0a2ae2847f7070f8b3e55db635a40da8ad3aabd7deb6d0113d2bb8181ad349e",
+      "core": false
+    },
+    {
+      "path": "FMV/B01_B.PSS",
+      "bytes": 86851588,
+      "sha256": "8d3b40209fc2a021e8010d71d648b15dfa750b635c7f9abc75df7be2977eb327",
+      "core": false
+    },
+    {
+      "path": "FMV/B04_A.PSS",
+      "bytes": 148062212,
+      "sha256": "2fe2255e7df0e4afa0a7d1ee7a81296a8349fb2c6835b4ae20fae707850a6745",
+      "core": false
+    },
+    {
+      "path": "FMV/H01_F.PSS",
+      "bytes": 133234692,
+      "sha256": "c2a7567486f758a6256d249349ba1a49a985f7eaa5a821c3d47c99422c2dc38c",
+      "core": false
+    },
+    {
+      "path": "FMV/H02_A.PSS",
+      "bytes": 102055940,
+      "sha256": "869cfc636b1bd98fdcb6bcbd1abb6a562b080cb7fe0fd96a76a7f43de41d8914",
+      "core": false
+    },
+    {
+      "path": "FMV/H02_B.PSS",
+      "bytes": 35799044,
+      "sha256": "7a4cff59cf26abfbe36e70d0a3e68f93183deadf630d9ca8b8f78c8849227d93",
+      "core": false
+    },
+    {
+      "path": "FMV/H02_KA.PSS",
+      "bytes": 53854212,
+      "sha256": "ecfe2421b2a76086d2fca800e0c71cc666f0331cd3bb8067101412007535f979",
+      "core": false
+    },
+    {
+      "path": "FMV/H03_F.PSS",
+      "bytes": 162594820,
+      "sha256": "fbbbd90699feb0e3230c3ad967a1d075cd0d3e0898288945f635f2f1d9678c64",
+      "core": false
+    },
+    {
+      "path": "FMV/H04_DA.PSS",
+      "bytes": 96550916,
+      "sha256": "157cc249b412b41ce6c3fa7a67c8c1a09f2a0e96805ae8d6cf7826826f7dba4e",
+      "core": false
+    },
+    {
+      "path": "FMV/H04_DB.PSS",
+      "bytes": 143523844,
+      "sha256": "2e27eb853ab2ee7c29e2b6f38a9fe9ec108c21836fc4fe2af6eeff977b660ac7",
+      "core": false
+    },
+    {
+      "path": "FMV/H01_A.PSS",
+      "bytes": 77201412,
+      "sha256": "f8e24a6aab655c52e04781df328b522e3adb21b7f7466392c4c40fc416d32f32",
+      "core": false
+    },
+    {
+      "path": "FMV/BONUS/BONUS1.PSS",
+      "bytes": 12124164,
+      "sha256": "d4d7a48c1f9811ba21549a80c6df272d30a7a829e05a37a484183d269d76aaa9",
+      "core": false
+    },
+    {
+      "path": "FMV/BONUS/BONUS2.PSS",
+      "bytes": 8847364,
+      "sha256": "66c79d982b35e4ac0a2e8aad6e2fc99733eb208e87f73f458af02b33128996e6",
+      "core": false
+    },
+    {
+      "path": "FMV/BONUS/BONUS3.PSS",
+      "bytes": 12992516,
+      "sha256": "a5fcd3ea03333e1d0818b6e4b40d4dcc7ab2cd9b5a20f626f46d99ade44e8bf9",
+      "core": false
+    },
+    {
+      "path": "FMV/BONUS/BONUS4.PSS",
+      "bytes": 12566532,
+      "sha256": "c6c9b6de33252f0026547cbc19ade3884678aaa61aceefc5db31ea2467806571",
+      "core": false
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+# twinsanityevolved padlog v1 -- the title -> main menu -> OPTIONS (its rows: graphic options, sound options, game options ...) -> GRAPHIC OPTIONS (the disc overlay judge's text route; no language-bank header: the run's own language, english by default)
+1 0000 128 128 128 128  # NONE
+1273 0008 128 128 128 128  # START
+1278 0000 128 128 128 128  # NONE
+1400 0040 128 128 128 128  # DOWN
+1404 0000 128 128 128 128  # NONE
+1416 0040 128 128 128 128  # DOWN
+1420 0000 128 128 128 128  # NONE
+1432 4000 128 128 128 128  # CROSS
+1436 0000 128 128 128 128  # NONE
+1540 4000 128 128 128 128  # CROSS
+1544 0000 128 128 128 128  # NONE
+# end at boundary 1700

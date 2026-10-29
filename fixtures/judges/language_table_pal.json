@@ -1,27 +1,114 @@
 {
   "judge": "tools/judges/language_table_judge.py",
-  "disc": "PAL SLES-52568, the user's image: a Brazilian-Portuguese fan patch of CRASH6/CRASH.BH+BD only (2013 dates; every .mb/.mh/.pss is the 2004 retail file). Deterministic headless runs: --deterministic --no-sdl-input --no-audio --trace-state, an empty --mc-dir, TE_STREAM_TRACE=1 (the speech bank's open line); the selection runs stop at 2500 (the Title is reached at ~2383 with the boot movies playing), the menu run skips the movies and stops at 2000.",
+  "disc": "PAL SLES-52568, the development image: a Brazilian-Portuguese fan patch of CRASH6/CRASH.BH+BD only (2013 dates; every .mb/.mh/.pss is the 2004 retail file). Deterministic headless runs: --deterministic --no-sdl-input --no-audio --trace-state, an empty --mc-dir, TE_STREAM_TRACE=1 (the speech bank's open line); the selection runs stop at 2500 (the Title is reached at ~2383 with the boot movies playing), the menu run skips the movies and stops at 2000.",
   "evidence": "ten strings per slot read off the disc by the judge (Language\\Code\\<slot>.txt lines 9-15 = new game / load game / options / language / graphic options / sound options / game options; Language\\AgentLab\\<slot>.txt lines 0, 4, 7 = the thank-you and the first level's Cortex lines), the language by a word table over all ten: slot 0 `English` 10/10 Portuguese (novo jogo, carregar jogo, opcoes, idioma, opcoes graficas, opcoes de som, opcoes do jogo, obrigado por jogar, voce tem que me ajudar crash, o que eu fiz para merecer isto); slot 1 French 10/10; slot 2 German 10/10; slot 3 `Spanish` 10/10 ENGLISH (new game, load game, options, language, graphic options, sound options, game options, thanks for playing, you gotta help me crash, what did i do to deserve this); slot 4 Italian 10/10. No slot's text is Spanish (no 'nuevo juego' / 'nueva partida' / 'opciones' anywhere in Code, AgentLab or Credits); Crash6\\Spanish.mb (18522112 bytes), Titles\\Spanish\\*.psm and Credits\\Spanish.txt ('agradecimientos especiales') are the retail Spanish files.",
   "slots": {
-    "0": {"name": "English", "text": "portuguese", "text9": "novo jogo", "speech": "english", "speech_bank": "Crash6\\English.mb"},
-    "1": {"name": "French", "text": "french", "text9": "nouvelle partie", "speech": "french", "speech_bank": "Crash6\\French.mb"},
-    "2": {"name": "German", "text": "german", "text9": "neues spiel", "speech": "german", "speech_bank": "Crash6\\German.mb"},
-    "3": {"name": "Spanish", "text": "english", "text9": "new game", "speech": "spanish", "speech_bank": "Crash6\\Spanish.mb"},
-    "4": {"name": "Italian", "text": "italian", "text9": "nuova partita", "speech": "italian", "speech_bank": "Crash6\\Italian.mb"}
+    "0": {
+      "name": "English",
+      "text": "portuguese",
+      "text9": "novo jogo",
+      "speech": "english",
+      "speech_bank": "Crash6\\English.mb"
+    },
+    "1": {
+      "name": "French",
+      "text": "french",
+      "text9": "nouvelle partie",
+      "speech": "french",
+      "speech_bank": "Crash6\\French.mb"
+    },
+    "2": {
+      "name": "German",
+      "text": "german",
+      "text9": "neues spiel",
+      "speech": "german",
+      "speech_bank": "Crash6\\German.mb"
+    },
+    "3": {
+      "name": "Spanish",
+      "text": "english",
+      "text9": "new game",
+      "speech": "spanish",
+      "speech_bank": "Crash6\\Spanish.mb"
+    },
+    "4": {
+      "name": "Italian",
+      "text": "italian",
+      "text9": "nuova partita",
+      "speech": "italian",
+      "speech_bank": "Crash6\\Italian.mb"
+    }
   },
-  "languages": {
-    "english":    {"text_slot": 3, "voice_slot": 0, "speech_bank": "Crash6\\English.mb", "row": "english"},
-    "portuguese": {"text_slot": 0, "voice_slot": 0, "speech_bank": "Crash6\\English.mb", "row": "portuguese (english voice)"},
-    "french":     {"text_slot": 1, "voice_slot": 1, "speech_bank": "Crash6\\French.mb", "row": "french"},
-    "german":     {"text_slot": 2, "voice_slot": 2, "speech_bank": "Crash6\\German.mb", "row": "german"},
-    "italian":    {"text_slot": 4, "voice_slot": 4, "speech_bank": "Crash6\\Italian.mb", "row": "italian"},
-    "spanish":    {"text_slot": 3, "voice_slot": 3, "speech_bank": "Crash6\\Spanish.mb", "row": "spanish (english text)"}
-  },
-  "select": ["english", "french", "german", "spanish", "italian"],
   "stop_at": 2500,
-  "menu_padlog": "fixtures/padlogs/language_table_rows.padlog",
-  "menu_start": "english",
-  "menu_stop_at": 2000,
+  "menu_padlog": "fixtures/padlogs/language_rows.padlog",
+  "menu_stop_at": 2300,
   "run_seconds": 300,
-  "frozen": "2026-10-18: RED on bin/twinsanityevolved.310b6f0 (five rows, no spanish: `--language spanish` falls back to english by 'no language' and opens Crash6\\English.mb; the Options row cycles five), GREEN on the Spanish-row build (six rows; spanish by name: text slot 3, voice slot 3, Crash6\\Spanish.mb, text 9 'new game'; the menu steps english, portuguese, french, german, italian, spanish, english)."
+  "frozen": "2026-10-18: RED on bin/twinsanityevolved.310b6f0 (five rows, no spanish: `--language spanish` falls back to english by 'no language' and opens Crash6\\English.mb; the Options row cycles five), GREEN on the Spanish-row build (six rows; spanish by name: text slot 3, voice slot 3, Crash6\\Spanish.mb, text 9 'new game'; the menu steps english, portuguese, french, german, italian, spanish, english). | 2026-10-27: the text and the speech are two settings -- the table is two lists (text: english, portuguese, french, german, italian; speech: english, french, german, spanish, italian), each run chooses a text and ANOTHER speech by name (--text-language / --speech-language: text 9 from the text's slot, the speech bank from the speech's), and the menu route (fixtures/padlogs/language_rows.padlog) steps the TEXT row through every text language and then the SPEECH row through every speech language, each step leaving the other row alone. RED on 43e9989 (one row of tuples, no --text-language), GREEN on its change.",
+  "texts": {
+    "english": {
+      "text_slot": 3,
+      "text9": "new game"
+    },
+    "portuguese": {
+      "text_slot": 0,
+      "text9": "novo jogo"
+    },
+    "french": {
+      "text_slot": 1,
+      "text9": "nouvelle partie"
+    },
+    "german": {
+      "text_slot": 2,
+      "text9": "neues spiel"
+    },
+    "italian": {
+      "text_slot": 4,
+      "text9": "nuova partita"
+    }
+  },
+  "speeches": {
+    "english": {
+      "voice_slot": 0,
+      "speech_bank": "Crash6\\English.mb"
+    },
+    "french": {
+      "voice_slot": 1,
+      "speech_bank": "Crash6\\French.mb"
+    },
+    "german": {
+      "voice_slot": 2,
+      "speech_bank": "Crash6\\German.mb"
+    },
+    "spanish": {
+      "voice_slot": 3,
+      "speech_bank": "Crash6\\Spanish.mb"
+    },
+    "italian": {
+      "voice_slot": 4,
+      "speech_bank": "Crash6\\Italian.mb"
+    }
+  },
+  "pairs": [
+    [
+      "english",
+      "french"
+    ],
+    [
+      "portuguese",
+      "german"
+    ],
+    [
+      "french",
+      "spanish"
+    ],
+    [
+      "german",
+      "italian"
+    ],
+    [
+      "italian",
+      "english"
+    ]
+  ],
+  "menu_start": "english"
 }

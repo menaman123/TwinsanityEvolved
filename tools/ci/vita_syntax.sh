@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tools/ci/vita_syntax.sh -- the game code (game/src minus src/platform/ps2) parses for armv7 with the vitasdk GCC
-# (charter CI gate: nothing done now may make another 32-bit target harder). Syntax-only: GCC 15 accepts the decomp's
+# (a CI gate: nothing done now may make another 32-bit target harder). Syntax-only: GCC 15 accepts the decomp's
 # C++26 as written (consteval asm thunks included); the PS2SDK headers come from platform/nativeee/sdk_shim.
 #
 #   tools/ci/vita_syntax.sh [VITASDK=/usr/local/vitasdk] [-jN]

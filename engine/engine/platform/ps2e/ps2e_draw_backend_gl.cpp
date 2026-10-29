@@ -10,11 +10,13 @@
 namespace ps2r {
 namespace ps2e {
 
-std::unique_ptr<render::Backend> CreateDrawBackend(platform::Window& window, platform::GlContext& context) {
+std::unique_ptr<render::Backend> CreateDrawBackend(platform::Window& window, platform::GlContext& context, bool gs_z24) {
     if (!context.Create(window)) return nullptr;
     context.MakeCurrent(window);
     context.SetSwapInterval(0);
-    auto device = std::make_unique<render::GlDevice>();
+    render::GlDeviceSettings settings;
+    settings.gs_z24 = gs_z24;
+    auto device = std::make_unique<render::GlDevice>(settings);
     platform::Window* win = &window;
     if (!device->Init([win] { win->Swap(); })) return nullptr;
     return device;

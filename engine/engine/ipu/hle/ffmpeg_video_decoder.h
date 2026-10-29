@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <vector>
 #include <string>
 
 #include "engine/ipu/hle/decoded_picture.h"
@@ -40,6 +41,11 @@ public:
     // Pictures produced since construction (the count survives Shutdown).
     uint64_t FramesDecoded() const { return frames_decoded_; }
 
+    // Planar output (the Vita's movie textures, ps2e_movie_config.planar): a 4:2:0 picture comes out as its Y, U, V
+    // planes (DecodedPicture::planar / planes) instead of swscale's RGBA -- the GPU converts it. A picture of another
+    // chroma layout still comes out as RGBA. Off by default.
+    void SetPlanarOutput(bool on) { planar_ = on; }
+
     // The linked libavcodec as "MAJOR.MINOR.MICRO" (the decoded RGBA bytes
     // depend on it: the per-picture golden records this string).
     static std::string LibraryVersion();
@@ -59,10 +65,14 @@ private:
     AVPacket* packet_ = nullptr;
     SwsContext* sws_ctx_ = nullptr;
     int sws_w_ = 0;
+    // 32-bit ARM: a 64-byte-aligned staging destination for sws_scale when the picture's own buffer is not 16-byte aligned
+    // (FFmpeg's NEON yuv420p -> rgba stores with an alignment qualifier that faults on the device otherwise)
+    std::vector<uint8_t> aligned_staging_;
     int sws_h_ = 0;
     int sws_fmt_ = -1;  // AVPixelFormat of the current SwsContext (-1 = AV_PIX_FMT_NONE)
     bool initialized_ = false;
     bool drained_ = false;
+    bool planar_ = false;   // SetPlanarOutput
 };
 
 }  // namespace ps2r::ipu

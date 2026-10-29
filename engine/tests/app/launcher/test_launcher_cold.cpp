@@ -1,29 +1,40 @@
-// tests/app/launcher/test_launcher_cold.cpp -- the cold-run driver a judge points at a manifest: with HOME at an
-// empty folder it opens the real window, lets the first run install everything, points the Games folder at the given
-// disc image folder, presses the card's Build, then its Play, and waits for the game's title state in the launcher's
-// own play log. Zero shell commands by a person: every step is a button of the window. Writes a JSON report.
+// tests/app/launcher/test_launcher_cold.cpp -- the cold run of the prebuilt-install flow, driven through the window's own
+// buttons (the cold judge's driver): with HOME at a folder holding only the player's disc image (in Downloads) and the
+// launcher's settings file naming the release server, the setup opens by itself; step 1 finds and identifies the disc,
+// Next; step 2 keeps the suggested game folder, Next; step 3 keeps This computer, Install; the release is downloaded,
+// checked and placed; Play; the game reaches its title state in the launcher's own play log. Zero commands typed.
+// Then the launcher's own update (launcherUpdate): the list also names a NEWER LAUNCHER; the check made when the window
+// opened offers it on the Games page and on About, and -- this program being no launcher installed from a release -- the
+// offer says it cannot replace itself here and gives the release's page; the game's own Update is not offered for it.
+// Writes a JSON report (wall time, bytes downloaded, the steps' timings, the game folder as installed, the offer).
 //
-// Environment: PS2R_COLD_MANIFEST (title.json), PS2R_COLD_ISO_DIR (a folder holding the disc image),
-// PS2R_COLD_REPORT (the JSON written), PS2R_COLD_SCREENSHOTS (a folder for one PNG per screen),
-// PS2R_COLD_INSTALL_TIMEOUT_MIN (default 90), PS2R_COLD_BUILD_TIMEOUT_MIN (default 120), PS2R_COLD_TITLE_TIMEOUT_S (default 300).
+// Environment: PS2R_COLD_MANIFEST (title.json), PS2R_COLD_REPORT, PS2R_COLD_SCREENSHOTS (one PNG per step),
+// PS2R_COLD_INSTALL_TIMEOUT_S (default 600), PS2R_COLD_TITLE_TIMEOUT_S (default 300).
 #include <QtTest/QtTest>
+#include <QDirIterator>
 #include <QElapsedTimer>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include "app_data.h"
-#include "build_runner.h"
-#include "first_run_sheet.h"
+#include "choice_card.h"
+#include "disc_choice_card.h"
 #include "flat_button.h"
-#include "game_card.h"
 #include "game_library.h"
 #include "game_process.h"
+#include "about_page.h"
 #include "games_page.h"
-#include "installer.h"
 #include "launcher_app.h"
 #include "launcher_style.h"
+#include "launcher_update_box.h"
 #include "main_window.h"
-#include "settings_page.h"
-#include "targets_page.h"
+#include "release_installer.h"
+#include "self_update.h"
+#include "setup_disc_step.h"
+#include "setup_folder_step.h"
+#include "setup_install_step.h"
+#include "setup_sheet.h"
+#include "setup_target_step.h"
 using namespace ps2r::launcher;
 
 class TestLauncherCold : public QObject {
@@ -33,7 +44,7 @@ class TestLauncherCold : public QObject {
     QJsonObject report_;
     QElapsedTimer wall_;
     QString shots_;
-    bool download_ = false;   // PS2R_COLD_DOWNLOAD=1: the launcher's default mode
+    QStringList clicks_;
 
     int envInt(const char* name, int fallback) {
         const QByteArray v = qgetenv(name);
@@ -44,27 +55,34 @@ class TestLauncherCold : public QObject {
         QDir().mkpath(shots_);
         window_->screenshot(shots_ + "/" + name + ".png");
     }
+    void press(FlatButton* b, const QString& what) {
+        QVERIFY2(b->isVisible() && b->isEnabled(), qPrintable(what + " is not pressable"));
+        clicks_ << what;
+        QTest::mouseClick(b, Qt::LeftButton);
+    }
     void writeReport() {
         const QString path = qEnvironmentVariable("PS2R_COLD_REPORT");
         if (path.isEmpty()) return;
-        report_["wall_seconds"] = double(wall_.elapsed() / 1000);
+        report_["wall_seconds"] = double(wall_.elapsed()) / 1000.0;
+        report_["clicks"] = QJsonArray::fromStringList(clicks_);
+        report_["commands_typed"] = 0;
         QFile f(path);
         if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(report_).toJson(QJsonDocument::Indented));
     }
+    SetupSheet* sheet() const { return window_->setupSheet(); }
 
 private slots:
     void initTestCase() {
         wall_.start();
         shots_ = qEnvironmentVariable("PS2R_COLD_SCREENSHOTS");
+        report_["flow"] = "prebuilt-install";
         LauncherStyle::apply();
-        // PS2R_COLD_DOWNLOAD=1: the default mode (the release's game downloaded); else the source build
-        download_ = qEnvironmentVariable("PS2R_COLD_DOWNLOAD") == "1";
-        if (!download_) qputenv("PS2R_LAUNCHER_BUILD_FROM_SOURCE", "1");
         app_ = new LauncherApp(this);
         QString err;
         QVERIFY2(app_->loadManifest(qEnvironmentVariable("PS2R_COLD_MANIFEST"), &err), qPrintable(err));
-        report_["home"] = qEnvironmentVariable("HOME");
+        report_["home"] = AppData::homePath();
         report_["app_data"] = app_->appData()->root();
+        report_["releases_url"] = app_->installer()->releasesUrl();
         window_ = new MainWindow(app_);
         window_->show();
         QVERIFY(QTest::qWaitForWindowExposed(window_));
@@ -75,119 +93,136 @@ private slots:
         delete window_;
     }
 
-    void firstRunInstalls() {
+    void whereIsYourGame() {
         QElapsedTimer t;
         t.start();
-        QVERIFY2(window_->startFirstRunIfNeeded(), "the first run was not needed: HOME is not empty");
-        QVERIFY(window_->firstRunSheet()->isOpen());
-        shot("01-first-run");
-        const int timeoutMs = envInt("PS2R_COLD_INSTALL_TIMEOUT_MIN", 90) * 60 * 1000;
+        QVERIFY2(window_->startSetupIfNeeded(), "the setup did not open: something is installed already (HOME is not cold)");
+        QVERIFY(sheet()->isOpen());
+        QCOMPARE(sheet()->step(), 0);
+        QVERIFY2(QTest::qWaitFor([&] { return !sheet()->discStep()->looking() && !sheet()->discStep()->cards().isEmpty(); }, 180000),
+                 "no disc image was found and identified in the usual folders");
+        const DiscFound d = sheet()->discStep()->cards().first()->disc();
+        report_["disc"] = d.path;
+        report_["disc_region"] = d.region;
+        report_["disc_serial"] = d.serial;
+        // the identity badge after the whole-image check ("PAL · modified disc" for the development image: no known retail dump
+        // matches it; "PAL · original disc" for a retail one) -- the fixture says which this disc must show
+        report_["disc_state"] = sheet()->discStep()->cards().first()->identityBadgeText();
+        report_["disc_verdict"] = d.verdict;
+        report_["disc_image_sha1"] = d.imageSha1;
+        report_["identify_seconds"] = double(t.elapsed()) / 1000.0;
+        QCOMPARE(d.region, QStringLiteral("PAL"));
+        QVERIFY2(!d.checking && d.checked, "the disc's whole-image check did not finish");
+        if (!sheet()->discStep()->hasChoice()) QTest::mouseClick(sheet()->discStep()->cards().first(), Qt::LeftButton);
+        QVERIFY(sheet()->discStep()->hasChoice());
+        shot("01-where-is-your-game");
+        press(sheet()->primaryButton(), "Next (Where is your game?)");
+        QCOMPARE(sheet()->step(), 1);
+        writeReport();
+    }
+    void whereShouldTheGameLive() {
+        const QString folder = sheet()->folderStep()->folder();
+        report_["game_folder"] = folder;
+        QCOMPARE(folder, QDir::cleanPath(AppData::homePath() + "/Games/Crash Twinsanity"));
+        QVERIFY2(sheet()->folderStep()->valid(), qPrintable(sheet()->folderStep()->problem()));
+        shot("02-where-should-the-game-live");
+        press(sheet()->primaryButton(), "Next (Where should the game live?)");
+        QCOMPARE(sheet()->step(), 2);
+    }
+    void whereWillYouPlay() {
+        QVERIFY(sheet()->targetStep()->thisComputer()->chosen());
+        QCOMPARE(sheet()->targetStep()->target(), app_->hostTarget());
+        report_["target"] = app_->hostTarget();
+        shot("03-where-will-you-play");
+        press(sheet()->primaryButton(), "Install (Where will you play?)");
+        QCOMPARE(sheet()->step(), 3);
+    }
+    void install() {
+        QElapsedTimer t;
+        t.start();
         bool shotMid = false;
         QVERIFY2(QTest::qWaitFor([&] {
-            if (!shotMid && t.elapsed() > 20000) { shot("02-first-run-progress"); shotMid = true; }
-            return !app_->installer()->running();
-        }, timeoutMs), "the installer did not finish in time");
-        QJsonObject steps;
-        for (const InstallStep& s : app_->installer()->steps()) {
-            QJsonObject o;
-            o["state"] = int(s.state);
-            o["detail"] = s.detail;
-            o["reason"] = s.reason;
-            o["bytes"] = double(s.bytes);
-            steps[s.id] = o;
-        }
-        report_["install_steps"] = steps;
-        report_["install_seconds"] = double(t.elapsed() / 1000);
-        report_["installed_release"] = app_->installer()->installedRelease();
-        report_["installed_game"] = app_->installer()->installedGameExe();
-        report_["download_bytes"] = double(app_->installer()->totalDownloadedBytes());
-        report_["on_disk_bytes"] = double(app_->installer()->totalOnDiskBytes());
+            if (!shotMid && app_->installer()->phase() == ReleaseInstaller::Downloading && app_->installer()->received() > 0) { shot("04-installing"); shotMid = true; }
+            return sheet()->installStep()->done() || sheet()->installStep()->failed();
+        }, envInt("PS2R_COLD_INSTALL_TIMEOUT_S", 600) * 1000), "the install did not finish in time");
+        report_["install_seconds"] = double(t.elapsed()) / 1000.0;
+        report_["installed_tag"] = app_->installer()->tag();
+        report_["install_error"] = sheet()->installStep()->errorText();
+        report_["download_bytes"] = double(app_->installer()->downloadedBytes());
+        report_["asset_bytes"] = double(app_->installer()->total());
+        QJsonArray listing;
+        const QString folder = sheet()->installStep()->folder();
+        QDirIterator it(folder, QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+        while (it.hasNext()) listing << QDir(folder).relativeFilePath(it.next());
+        report_["game_folder_listing"] = listing;
+        report_["bundled_mods"] = QJsonArray::fromStringList(app_->installer()->bundledMods());
+        QFile ini(folder + "/ps2r.ini");
+        if (ini.open(QIODevice::ReadOnly)) report_["ps2r_ini"] = QString::fromUtf8(ini.readAll());
+        QFile disc(folder + "/disc-image.txt");
+        if (disc.open(QIODevice::ReadOnly)) report_["disc_image_txt"] = QString::fromUtf8(disc.readAll()).trimmed();
         writeReport();
-        for (const InstallStep& s : app_->installer()->steps()) {
-            if (!s.optional) QVERIFY2(s.state == InstallStep::Done, qPrintable(s.name + ": " + s.reason));
-        }
-        QVERIFY(app_->installer()->complete());
-        QVERIFY(QTest::qWaitFor([&] { return !window_->firstRunSheet()->isOpen(); }, 5000));
-        // a second start is a no-op: the pins match
-        QVERIFY(app_->installer()->upToDate());
+        QVERIFY2(sheet()->installStep()->done(), qPrintable(sheet()->installStep()->errorText()));
+        QCOMPARE(sheet()->primaryButton()->text(), QStringLiteral("Play"));
+        shot("05-ready");
     }
-    void discIsFound() {
-        const QString dir = qEnvironmentVariable("PS2R_COLD_ISO_DIR");
-        QVERIFY(!dir.isEmpty());
-        // the user points the Games folder at the folder holding the disc (the Change… button's result)
-        app_->setFolder("games", dir);
-        app_->scan();
-        QVERIFY2(QTest::qWaitFor([&] { return !app_->library()->games().isEmpty(); }, 120000), "no disc image was identified in the folder");
-        QVERIFY(QTest::qWaitFor([&] { return !window_->gamesPage()->cards().isEmpty(); }, 5000));
-        const GameEntry& g = app_->library()->games().first();
-        report_["disc"] = g.path;
-        report_["disc_fingerprint"] = g.fingerprintFile;
-        QCOMPARE(app_->nextAction(g.path), download_ ? LauncherApp::Play : LauncherApp::Build);
-        shot("03-games-found");
-    }
-    void buildFromTheCard() {
-        if (download_) QSKIP("the downloaded game needs no build");
-        const QString iso = app_->library()->games().first().path;
-        GameCard* card = window_->gamesPage()->card(iso);
-        QVERIFY(card);
-        QCOMPARE(card->actionButton()->text(), QStringLiteral("Build"));
+    void play() {
         QElapsedTimer t;
         t.start();
-        QTest::mouseClick(card->actionButton(), Qt::LeftButton);
-        QVERIFY(QTest::qWaitFor([&] { return app_->builder()->running(); }, 10000));
-        const int timeoutMs = envInt("PS2R_COLD_BUILD_TIMEOUT_MIN", 120) * 60 * 1000;
-        bool shotMid = false;
-        QVERIFY2(QTest::qWaitFor([&] {
-            if (!shotMid && t.elapsed() > 60000) { card = window_->gamesPage()->card(iso); if (card) shot("04-build-progress"); shotMid = true; }
-            return !app_->builder()->running();
-        }, timeoutMs), "the build did not finish in time");
-        const BuildRecord r = app_->builder()->record(app_->hostTarget());
-        report_["build_ok"] = r.ok;
-        report_["build_seconds"] = double(r.seconds);
-        report_["build_commit"] = r.sourceCommit;
-        report_["build_binary"] = r.binaryPath;
-        report_["build_failure"] = r.failure;
-        report_["build_log"] = app_->builder()->currentLogPath();
-        writeReport();
-        QVERIFY2(r.ok, qPrintable(r.failure));
-        QVERIFY(app_->builder()->upToDate(app_->hostTarget()));
-        QCOMPARE(app_->nextAction(iso), LauncherApp::Play);
-        QVERIFY(QTest::qWaitFor([&] { card = window_->gamesPage()->card(iso); return card && card->actionButton()->text() == QStringLiteral("Play"); }, 5000));
-        shot("05-games-ready");
-    }
-    void playReachesTitle() {
-        const QString iso = app_->library()->games().first().path;
-        GameCard* card = window_->gamesPage()->card(iso);
-        QVERIFY(card);
-        QCOMPARE(card->actionButton()->text(), QStringLiteral("Play"));
-        QElapsedTimer t;
-        t.start();
-        QTest::mouseClick(card->actionButton(), Qt::LeftButton);
-        QVERIFY(QTest::qWaitFor([&] { return app_->game()->running(); }, 10000));
+        press(sheet()->primaryButton(), "Play");
+        QVERIFY(QTest::qWaitFor([&] { return app_->game()->running(); }, 15000));
         report_["play_log"] = app_->game()->logPath();
-        const int timeoutMs = envInt("PS2R_COLD_TITLE_TIMEOUT_S", 300) * 1000;
-        const bool reached = QTest::qWaitFor([&] { return app_->game()->reachedTitle() || !app_->game()->running(); }, timeoutMs);
+        report_["play_arguments"] = QJsonArray::fromStringList(app_->game()->lastArguments());
+        const bool reached = QTest::qWaitFor([&] { return app_->game()->reachedTitle() || !app_->game()->running(); },
+                                             envInt("PS2R_COLD_TITLE_TIMEOUT_S", 300) * 1000);
         report_["title_reached"] = app_->game()->reachedTitle();
-        report_["title_seconds"] = double(t.elapsed() / 1000);
+        report_["title_seconds"] = double(t.elapsed()) / 1000.0;
         shot("06-playing");
         writeReport();
         QVERIFY2(reached && app_->game()->reachedTitle(), "the game did not reach its title state");
         app_->game()->stop();
-        QVERIFY(QTest::qWaitFor([&] { return !app_->game()->running(); }, 15000));
-        QVERIFY(app_->library()->games().first().lastPlayed.isValid());
-    }
-    void otherScreens() {
-        window_->showPage(1);
-        QTest::qWait(200);
-        shot("07-settings");
-        window_->showPage(2);
-        QTest::qWait(200);
-        shot("08-targets");
-        window_->showPage(3);
-        QTest::qWait(200);
-        shot("09-about");
-        window_->showPage(0);
+        QVERIFY(QTest::qWaitFor([&] { return !app_->game()->running(); }, 20000));
+        QVERIFY(!app_->library()->games().isEmpty() && app_->library()->games().first().lastPlayed.isValid());
         writeReport();
+    }
+    // the launcher's own update: the check made when the window opened (startSetupIfNeeded) found the newer launcher
+    void launcherUpdate() {
+        SelfUpdate* su = app_->selfUpdate();
+        QVERIFY2(QTest::qWaitFor([&] { return su->state() != SelfUpdate::Idle && su->state() != SelfUpdate::Checking; }, 30000),
+                 "the launcher's own check did not finish");
+        QJsonObject u;
+        u["state"] = int(su->state());
+        u["available"] = su->state() == SelfUpdate::Available;
+        u["tag"] = su->release().tag;
+        u["asset"] = su->release().asset.name;
+        u["running_version"] = su->running().version;
+        u["running_kind"] = su->running().kind;
+        u["download_page"] = su->downloadPage().toString();
+        QString why;
+        u["cannot_replace"] = int(su->cannotReplace(&why));
+        u["cannot_replace_text"] = why;
+        window_->showPage(MainWindow::GamesIndex);
+        QTest::qWait(200);
+        LauncherUpdateBox* games = window_->gamesPage()->launcherUpdateBox();
+        u["games_visible"] = games->isVisible();
+        u["games_line"] = games->text();
+        u["games_update_button"] = games->updateButton()->isVisible();
+        u["games_download_button"] = games->downloadButton()->isVisible();
+        shot("07-launcher-update-games");
+        window_->showPage(MainWindow::AboutIndex);
+        QTest::qWait(200);
+        LauncherUpdateBox* about = window_->aboutPage()->launcherUpdateBox();
+        u["about_line"] = about->text();
+        u["about_download_button"] = about->downloadButton()->isVisible();
+        shot("08-launcher-update-about");
+        // the game's own Update is the game's: the launcher's release does not offer it
+        u["game_update_offered"] = app_->updateFor(app_->hostTarget());
+        u["log"] = su->logPath();
+        report_["launcher_update"] = u;
+        writeReport();
+        QVERIFY2(su->state() == SelfUpdate::Available, qPrintable(QStringLiteral("no newer launcher was offered (state %1)").arg(int(su->state()))));
+        QVERIFY(u["games_visible"].toBool());            // seen while the Games page was shown
+        QVERIFY(u["games_download_button"].toBool());
+        window_->showPage(MainWindow::GamesIndex);
     }
 };
 

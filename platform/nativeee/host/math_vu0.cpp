@@ -12,6 +12,7 @@
 // within 0.1 world units of the triangle's edges counts, the share |ds| / (|ds| + |de|)); against an engine pinned before it
 // the body below follows the game's own slow path (collision.cpp CheckTriangleIntersection) by meaning, without the margin.
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -34,6 +35,7 @@
 #include "graphics_internal.h"
 #include "ps2e_seam.h"
 #include "te_host.h"
+#include "te_unclamped.h"
 
 namespace {
 
@@ -63,6 +65,14 @@ void WriteMatrix(uint32_t address, const Matrix& m) {
     for (int r = 0; r < 4; ++r) std::memcpy(out + r * 4, m[r].data(), 16);
 }
 float* Floats(uint32_t address, size_t count) { return reinterpret_cast<float*>(te::GuestPointer(address, count * 4)); }
+#if defined(__vita__)
+// a guest vector / matrix READ IN PLACE: Vector is float[4], Matrix float[4][4] (std::array, no padding), the guest
+// memory holds the game's floats as it wrote them -- the joint seams' ReadVector / ReadMatrix copies (an optional each) were
+// the bulk of their memory traffic (~300 joint, ~370 parent and ~290 Euler calls a hub frame on the device)
+const Vector* InPlaceVector(uint32_t address) { return reinterpret_cast<const Vector*>(te::GuestPointer(address, 16)); }
+const Matrix* InPlaceMatrix(uint32_t address) { return reinterpret_cast<const Matrix*>(te::GuestPointer(address, 64)); }
+static_assert(sizeof(Vector) == 16 && sizeof(Matrix) == 64, "the in-place forms read 4 / 16 consecutive floats");
+#endif
 
 // MAX.S / MIN.S order: sign-magnitude as a signed key (+0 above -0; no NaN on the EE FPU)
 int64_t FpuKey(float value) {
@@ -116,10 +126,12 @@ constexpr uint32_t kStandardVu0Programs = 0x002E6110;
 // logs were authored against (no margin). The DEFAULT is retail since the fixtures were re-recorded from their plans under
 // it (with the EE rounding and the drive model); `legacy` stays for A/B against the pre-flip recordings.
 bool RetailRays() {
-    static const int retail = [] {
+    // (read once on the game thread into a plain int: a function-local static's guard is a DMB per cast on the Vita)
+    static int retail = -1;
+    if (retail < 0) {
         const char* v = std::getenv("TE_MATH_RAY");
-        return v && std::strcmp(v, "legacy") == 0 ? 0 : 1;
-    }();
+        retail = v && std::strcmp(v, "legacy") == 0 ? 0 : 1;
+    }
     return retail != 0;
 }
 struct RayMicro {
@@ -134,7 +146,7 @@ struct RayMicro {
         compare = std::getenv("TE_MATH_RAY_COMPARE") != nullptr;
         if (!use && !compare) return;
         std::array<uint8_t, 4096> image{};
-        uint32_t at = kStandardVu0Programs;
+        uint32_t at = te::RetailAddress(kStandardVu0Programs);
         for (int tags = 0; tags < 16; ++tags) {
             const uint32_t* tag = reinterpret_cast<const uint32_t*>(te::GuestPointer(at, 16));
             if (!tag) break;
@@ -185,10 +197,34 @@ void RayMicro::Report() {
                      (unsigned long long)g_rayMicro.microOnly, (unsigned long long)g_rayMicro.hitDiffer);
 }
 
-// Diagnosis toggles: a group of bodies made stubs again (TE_MATH_STUB=collision,rays,joints,particles)
+// Diagnosis toggles: a group of bodies made stubs again (TE_MATH_STUB=collision,rays,joints,particles). Read once into plain
+// flags on the game thread: a function-local `static const char* v = getenv()` cost every seam call a guard load + a DMB
+// barrier on the Vita (thousands of joint / collision calls a frame)
+struct MathStubs {
+    bool read = false;
+    bool collision = false, rays = false, joints = false, particles = false;
+};
+MathStubs g_mathStubs;
 bool Stubbed(const char* group) {
-    static const char* v = std::getenv("TE_MATH_STUB");
-    return v && std::strstr(v, group) != nullptr;
+    if (!g_mathStubs.read) {
+        g_mathStubs.read = true;
+        if (const char* v = std::getenv("TE_MATH_STUB")) {
+            g_mathStubs.collision = std::strstr(v, "collision") != nullptr;
+            g_mathStubs.rays = std::strstr(v, "rays") != nullptr;
+            g_mathStubs.joints = std::strstr(v, "joints") != nullptr;
+            g_mathStubs.particles = std::strstr(v, "particles") != nullptr;
+        }
+    }
+    switch (group[0]) {
+        case 'c': return g_mathStubs.collision;
+        case 'r': return g_mathStubs.rays;
+        case 'j': return g_mathStubs.joints;
+        case 'p': return g_mathStubs.particles;
+        default: {
+            const char* v = std::getenv("TE_MATH_STUB");
+            return v && std::strstr(v, group) != nullptr;
+        }
+    }
 }
 
 }  // namespace
@@ -208,9 +244,23 @@ void ps2e_math_slerp_rotations(ps2e_u32 from, ps2e_u32 to, ps2e_f32 share, ps2e_
 
 void ps2e_math_euler_rotation(ps2e_u32 anglesNow, ps2e_u32 anglesNext, ps2e_u32 moveNow, ps2e_u32 moveNext, ps2e_u32 rotation,
                               ps2e_u32 move) {
+    te::gfx::CountCall(te::gfx::kCallEuler);
     if (Stubbed("joints")) return;
+#if defined(__vita__)
+    // the four vectors read where they lie (InPlaceVector: the guest's floats as written) -- no optional copies;
+    // EulerRotation's result is made before either output is written, as before
+    const Vector* an = InPlaceVector(anglesNow);
+    const Vector* ax = InPlaceVector(anglesNext);
+    const Vector* mn = InPlaceVector(moveNow);
+    const Vector* mx = InPlaceVector(moveNext);
+#else
     const auto an = ReadVector(anglesNow), ax = ReadVector(anglesNext), mn = ReadVector(moveNow), mx = ReadVector(moveNext);
+#endif
     if (!an || !ax || !mn || !mx) return;
+    if (te::gfx::g_repeatCensus) {
+        const std::array<Vector, 4> in{*an, *ax, *mn, *mx};
+        te::gfx::NoteRepeat(te::gfx::kCallEuler, in.data(), sizeof in);
+    }
     const auto result = title::JointMath::EulerRotation(*an, *ax, *mn, *mx);
     WriteVector(rotation, result.rotation);
     WriteVector(move, result.move);
@@ -224,9 +274,11 @@ void ps2e_math_turn_rotation(ps2e_u32 by, ps2e_u32 rotation) {
 }
 
 void ps2e_math_lerp(ps2e_u32 from, ps2e_u32 to, ps2e_f32 share, ps2e_u32 out) {
+    te::gfx::CountCall(te::gfx::kCallLerp);
     if (Stubbed("joints")) return;
     const auto f = ReadVector(from), t = ReadVector(to);
     if (!f || !t) return;
+    if (te::gfx::g_repeatCensus) te::gfx::NoteRepeat(te::gfx::kCallLerp, f->data(), 16, t->data(), 16, &share, 4);
     WriteVector(out, title::JointMath::Lerp(*f, *t, share));
 }
 
@@ -234,8 +286,50 @@ void ps2e_math_lerp(ps2e_u32 from, ps2e_u32 to, ps2e_f32 share, ps2e_u32 out) {
 // when they are given, the translation (none: 0 0 0 1) as the last row, times the parent when there is one
 void ps2e_math_joint_matrix(ps2e_u32 rotation, ps2e_u32 parentScale, ps2e_u32 scale, ps2e_u32 translation, ps2e_u32 parent,
                             ps2e_u32 out) {
+    te::gfx::CountCall(te::gfx::kCallJointMatrix);
     if (Stubbed("joints")) return;
+    if (te::gfx::g_repeatCensus) {
+        // the words the body reads (each operand or its absence)
+        float in[4 * 4 + 16 + 5] = {};
+        const uint32_t addrs[4] = {rotation, parentScale, scale, translation};
+        for (int k = 0; k < 4; ++k)
+            if (addrs[k]) {
+                if (const float* v = reinterpret_cast<const float*>(te::GuestPointer(addrs[k], 16))) std::memcpy(in + 4 * k, v, 16);
+                in[32 + k] = 1.f;
+            }
+        if (parent) {
+            if (const float* p = reinterpret_cast<const float*>(te::GuestPointer(parent, 64))) std::memcpy(in + 16, p, 64);
+            in[36] = 1.f;
+        }
+        te::gfx::NoteRepeat(te::gfx::kCallJointMatrix, in, sizeof in);
+    }
     Matrix matrix;
+#if defined(__vita__)
+    // the operands read in place (InPlaceVector / InPlaceMatrix): the same values into the same operations; the
+    // result is assembled in `matrix` and written last, as before (an output that is also an input is read first)
+    if (rotation) {
+        const Vector* r = InPlaceVector(rotation);
+        if (!r) return;
+        static const Vector kUnit{1, 1, 1, 1};
+        const Vector* psv = parentScale ? InPlaceVector(parentScale) : nullptr;
+        const Vector* own = scale ? InPlaceVector(scale) : nullptr;
+        const auto basis = title::JointMath::RotationBasis(*r, psv ? *psv : kUnit, own);
+        for (int row = 0; row < 3; ++row) matrix[row] = basis[row];
+    } else {
+        matrix[0] = {1, 0, 0, 0};
+        matrix[1] = {0, 1, 0, 0};
+        matrix[2] = {0, 0, 1, 0};
+    }
+    matrix[3] = {0, 0, 0, 1};
+    if (translation) {
+        if (const Vector* t = InPlaceVector(translation)) matrix[3] = *t;
+    }
+    if (parent) {
+        if (const Matrix* p = InPlaceMatrix(parent)) matrix = title::JointMath::MultiplyByParent(matrix, *p);
+    }
+    WriteMatrix(out, matrix);
+    return;
+#endif
     if (rotation) {
         const auto r = ReadVector(rotation);
         if (!r) return;
@@ -263,9 +357,17 @@ void ps2e_math_joint_matrix(ps2e_u32 rotation, ps2e_u32 parentScale, ps2e_u32 sc
 }
 
 void ps2e_math_multiply_by_parent(ps2e_u32 matrix, ps2e_u32 parent, ps2e_u32 out) {
+    te::gfx::CountCall(te::gfx::kCallMultiplyByParent);
     if (Stubbed("joints")) return;
+#if defined(__vita__)
+    // both operands read in place; the product is made before `out` is written (out may be the matrix itself)
+    const Matrix* m = InPlaceMatrix(matrix);
+    const Matrix* p = InPlaceMatrix(parent);
+#else
     const auto m = ReadMatrix(matrix), p = ReadMatrix(parent);
+#endif
     if (!m || !p) return;
+    if (te::gfx::g_repeatCensus) te::gfx::NoteRepeat(te::gfx::kCallMultiplyByParent, m->data(), 64, p->data(), 64);
     WriteMatrix(out, title::JointMath::MultiplyByParent(*m, *p));
 }
 
@@ -278,7 +380,7 @@ ps2e_s32 ps2e_graphics_load_particle_view(ps2e_u32 matrices, ps2e_s32 index) {
     ParticleView& v = g_particleViews[index];
     v.camera = (*chunk)[3];
     v.toScreen = *toScreen;
-    const float* planes = Floats(kViewPlanes, 24);
+    const float* planes = Floats(te::RetailAddress(kViewPlanes), 24);
     for (int i = 0; i < 6; ++i) {
         Vector plane = planes ? Vector{planes[i * 4], planes[i * 4 + 1], planes[i * 4 + 2], planes[i * 4 + 3]} : Vector{0, 0, 0, 0};
         v.planes[i] = TransformPlane(plane, *chunk);
@@ -319,6 +421,7 @@ ps2e_f32 ps2e_math_view_distance(ps2e_s32 view, ps2e_u32 point) {
 // whole frame -- the cryscave dark flicker).
 ps2e_s32 ps2e_math_particle_block_view(ps2e_s32 view, ps2e_s32 keepsTranslation, ps2e_u32 extents, ps2e_u32 gravity, ps2e_u32 place,
                                        ps2e_f32 scale, ps2e_u32 matrix, ps2e_u32 distance) {
+    te::gfx::CountCall(te::gfx::kCallParticleView);
     const float* e = Floats(extents, 3);
     const auto g = ReadMatrix(gravity);
     const float* p = Floats(place, 3);
@@ -331,9 +434,19 @@ ps2e_s32 ps2e_math_particle_block_view(ps2e_s32 view, ps2e_s32 keepsTranslation,
     const Vector c = v.camera;
     const Vector box{e[0], e[1], e[2], 1.f};
     const Vector at{p[0], p[1], p[2], 1.f};
-    static const bool noCull = std::getenv("TE_PARTICLE_NOCULL") != nullptr;
-    // TE_PARTICLE_VIEW=legacy: the earlier provisional body (the lerp towards the camera) for A/B against the recordings
-    static const bool legacy = [] { const char* v = std::getenv("TE_PARTICLE_VIEW"); return v && std::strcmp(v, "legacy") == 0; }();
+    // (the switches read once into plain values: a function-local static's guard is a DMB per call on the Vita)
+    static int switchesRead = 0;
+    static bool noCull = false, legacy = false;
+    static long diag = 0;
+    if (!switchesRead) {
+        switchesRead = 1;
+        noCull = std::getenv("TE_PARTICLE_NOCULL") != nullptr;
+        // TE_PARTICLE_VIEW=legacy: the earlier provisional body (the lerp towards the camera) for A/B against the recordings
+        const char* pv = std::getenv("TE_PARTICLE_VIEW");
+        legacy = pv && std::strcmp(pv, "legacy") == 0;
+        const char* pd = std::getenv("TE_PARTICLE_DIAG");   // =N: the first N calls
+        diag = pd ? std::max(1L, std::atol(pd) > 1 ? std::atol(pd) : 400L) : 0L;
+    }
     Matrix out{};
     float far = 0.f;
     bool outside = false;
@@ -383,7 +496,6 @@ ps2e_s32 ps2e_math_particle_block_view(ps2e_s32 view, ps2e_s32 keepsTranslation,
     if (noCull) outside = false;
     if (d) *d = far;
     WriteMatrix(matrix, out);
-    static const long diag = [] { const char* v = std::getenv("TE_PARTICLE_DIAG"); return v ? std::max(1L, std::atol(v) > 1 ? std::atol(v) : 400L) : 0L; }();   // =N: the first N calls
     if (diag) {
         static long said = 0;
         if (said++ < diag) {
@@ -419,6 +531,7 @@ void ps2e_math_set_ray(ps2e_u32 start, ps2e_u32 end) {
 }
 
 void ps2e_math_start_ray_triangle(ps2e_u32 vertices, ps2e_u32 nearest) {
+    te::gfx::CountCall(te::gfx::kCallStartRay);
     if (Stubbed("rays")) return;
     const float* v = Floats(vertices, 12);
     const auto n = ReadVector(nearest);
@@ -454,6 +567,7 @@ bool PortRayTest(const title::CollisionMath::EdgeSetup& setup, Vector& out) {
 }  // namespace
 
 ps2e_s32 ps2e_math_finish_ray_triangle(ps2e_u32 hit) {
+    te::gfx::CountCall(te::gfx::kCallFinishRay);
     if (Stubbed("rays")) return 0;
     if (!g_ray.pending) return 0;
     const auto setup = *g_ray.pending;
@@ -497,6 +611,12 @@ ps2e_s32 ps2e_math_finish_ray_triangle(ps2e_u32 hit) {
     return 1;
 }
 
+#if defined(__vita__)
+// te_unclamped.h's census: calls taken on the unclamped path / left to the engine's clamped one (counted on the game
+// thread, read by the pace bookkeeping on the drawing thread: relaxed 32-bit atomics, wrapping deltas)
+std::atomic<uint32_t> g_unclamped_fast{0}, g_unclamped_clamped{0};
+#endif
+
 // ---- the second seam's collision maths (collisionmaths.cpp) over title::CollisionMath ---------------------------------------
 void ps2e_vu0_start_triangle_edge_tests(ps2e_u32 start, ps2e_u32 end, ps2e_u32 triangle, ps2e_u32 values) {
     if (Stubbed("collision")) return;
@@ -506,7 +626,18 @@ void ps2e_vu0_start_triangle_edge_tests(ps2e_u32 start, ps2e_u32 end, ps2e_u32 t
     if (!s || !e || !t || !out) return;
     title::CollisionMath::Triangle tri;
     for (int i = 0; i < 3; ++i) tri[i] = {t[i * 4], t[i * 4 + 1], t[i * 4 + 2], t[i * 4 + 3]};
+#if defined(__vita__)
+    // the same arithmetic without the PS2 FPU clamps when they cannot act (te_unclamped.h): bit-identical
+    if (te::unclamped::StartEdgesApply(*s, *e, tri)) {
+        g_edges = te::unclamped::StartEdges(*s, *e, tri);
+        g_unclamped_fast.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_edges = title::CollisionMath::EvaluateStartEdges(*s, *e, tri);
+        g_unclamped_clamped.fetch_add(1, std::memory_order_relaxed);
+    }
+#else
     g_edges = title::CollisionMath::EvaluateStartEdges(*s, *e, tri);
+#endif
     out[0] = g_edges->plane_values[0];
     out[1] = g_edges->plane_values[1];
 }
@@ -515,7 +646,13 @@ void ps2e_vu0_finish_triangle_edge_tests(ps2e_u32 values) {
     if (Stubbed("collision")) return;
     float* out = Floats(values, 6);
     if (!out || !g_edges) return;
+#if defined(__vita__)
+    const bool fast = te::unclamped::FinishEdgesApply(*g_edges);
+    (fast ? g_unclamped_fast : g_unclamped_clamped).fetch_add(1, std::memory_order_relaxed);
+    const auto result = fast ? te::unclamped::FinishEdges(*g_edges) : title::CollisionMath::EvaluateFinishEdges(*g_edges);
+#else
     const auto result = title::CollisionMath::EvaluateFinishEdges(*g_edges);
+#endif
     for (int i = 0; i < 6; ++i) out[i] = result.values[i];
 }
 
@@ -578,6 +715,15 @@ void ps2e_vu0_groups_range(ps2e_u32 groups, ps2e_s32 count, ps2e_u32 axis, ps2e_
     const auto a = ReadVector(axis);
     float* out = Floats(range, 2);
     if (!g || !a || !out) return;
+#if defined(__vita__)
+    // The same products and sums without the PS2 FPU clamps when they cannot act (te_unclamped.h): bit-identical.
+    if (te::unclamped::Applies() && te::unclamped::FiniteWords(g, size_t(count) * 12) && te::unclamped::FiniteWords(a->data(), 3)) {
+        te::unclamped::GroupsRange(g, count, a->data(), out);
+        g_unclamped_fast.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    g_unclamped_clamped.fetch_add(1, std::memory_order_relaxed);
+#endif
     float least = INFINITY, greatest = -INFINITY;
     for (int32_t i = 0; i < count; ++i) {
         title::CollisionMath::PointGroup group;
@@ -593,6 +739,14 @@ void ps2e_vu0_groups_range(ps2e_u32 groups, ps2e_s32 count, ps2e_u32 axis, ps2e_
 }
 
 void ps2e_vu0_sixteen_groups_range(ps2e_u32 groups, ps2e_u32 axis, ps2e_u32 range) { ps2e_vu0_groups_range(groups, 16, axis, range); }
+
+#if defined(__vita__)
+// te_prof.cpp's CPU census reads the unclamped paths' counts
+void te_unclamped_counts(uint32_t* fast, uint32_t* clamped) {
+    *fast = g_unclamped_fast.load(std::memory_order_relaxed);
+    *clamped = g_unclamped_clamped.load(std::memory_order_relaxed);
+}
+#endif
 
 // LoadTriangleHullSupport: a triangle's three vertices against eight hull vertices, kept for the range tests
 void ps2e_vu0_load_triangle_hull_support(ps2e_u32 triangle, ps2e_u32 hullVertices) {

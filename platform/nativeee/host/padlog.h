@@ -1,4 +1,4 @@
-// padlog.h -- the pad log (fixtures/padlogs/*.padlog): pad 0's sample per frame boundary, INPUTS ONLY (charter: fixtures
+// padlog.h -- the pad log (fixtures/padlogs/*.padlog): pad 0's sample per frame boundary, INPUTS ONLY (fixtures
 // hold metadata, never game data). A text file; one line per change:
 //
 //   # comment

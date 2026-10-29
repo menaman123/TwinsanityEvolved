@@ -32,7 +32,7 @@ if [ -n "$ISO" ]; then
     echo "== the runner: one deterministic dump run (every 5th frame, up to ${SECONDS_RUN}s or the run's end)"
     # (the process NAME only: a foreign runner's --game-files .../ps2recomp/... argument is not a game process)
     if pgrep -fl '(^|/)(twinsanityevolved|ps2recomp|ps2recomp_oracle|ps2recomp_release[.0-9a-f]*)( |$)' > /dev/null; then
-        echo "another game process is running (charter: one at a time); skipping the runner"; exit $fail
+        echo "another game process is running (one at a time); skipping the runner"; exit $fail
     fi
     mkdir -p "$OUT/run"
     # --skip-movies: the frozen frame numbers (35 legal, 1500 title world) are the drive model's boot timeline (the title appears at

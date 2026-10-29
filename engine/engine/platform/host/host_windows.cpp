@@ -136,6 +136,23 @@ bool IsDirectory(const char* path) {
     const DWORD a = GetFileAttributesA(path);
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
 }
+bool ListDirectory(const char* path, std::vector<DirectoryEntry>* out) {
+    if (out) out->clear();
+    if (!path || !*path || !IsDirectory(path)) return false;
+    std::string pattern(path);
+    if (pattern.back() != '/' && pattern.back() != '\\') pattern.push_back('\\');
+    pattern.push_back('*');
+    WIN32_FIND_DATAA data;
+    HANDLE h = FindFirstFileA(pattern.c_str(), &data);
+    if (h == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_FILE_NOT_FOUND;   // an empty directory
+    do {
+        const std::string name(data.cFileName);
+        if (name.empty() || name == "." || name == "..") continue;
+        if (out) out->push_back(DirectoryEntry{name, (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0});
+    } while (FindNextFileA(h, &data));
+    FindClose(h);
+    return true;
+}
 int64_t FileSeek64(std::FILE* f, int64_t offset, int whence) { return _fseeki64(f, offset, whence); }
 int64_t FileTell64(std::FILE* f) { return _ftelli64(f); }
 

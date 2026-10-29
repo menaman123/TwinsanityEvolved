@@ -23,7 +23,7 @@ controller events), detaches it at 2150 (JOYDEVICEREMOVED), then the keyboard's 
   * the recorded padlog has CROSS in [2050, 2090] (the pad's press reached the game) and LY=0 rows in
     [2200, 2300] (the keyboard took over after the unplug) -- no input lost either way;
   * stderr `nativeee: harness.virtual_pad attach/press/release/detach at boundary` x4.
-Red-before (the user's bug): with no controller connected the keyboard produced NOTHING -- no CROSS,
+Red-before (the tester's bug): with no controller connected the keyboard produced NOTHING -- no CROSS,
 no load window past the title, LY stays neutral. SKIP 77 without the title files or a display.
 Selftest pins the judge (no game process).
 """
@@ -161,7 +161,7 @@ def selftest():
     fh = {2099: "0x1", 2300: "0x2"}
     r = judge_kbm(meta, rows, fh, 2400, 399, 1850, (2100, 2300), 2320)
     ok &= all(x for x, _ in r)
-    # the user's bug: the keyboard produced nothing
+    # the tester's bug: the keyboard produced nothing
     r = judge_kbm(meta | {"load_windows": "60-111,418-418"}, parse_padlog("# padlog v1\n"), {2099: "0x1", 2300: "0x1"}, 2400, 399, 1850, (2100, 2300), 2320)
     ok &= sum(1 for x, _ in r if not x) == 6
     hp = "# padlog v1\n399-404:CROSS\n1850-1856:CROSS\n2050-2080:CROSS\n2200-2300:LY=0\n"

@@ -34,14 +34,14 @@ jobs:
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Asset scan over the source tree
         shell: bash
         run: python tools/ci/asset_scan.py
 
       - name: Python 3.12 (the clang-cl shim and the generators run under `python`)
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -54,7 +54,7 @@ jobs:
           & "${{ github.workspace }}\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
       - name: vcpkg binary cache (restore)
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
@@ -72,7 +72,7 @@ jobs:
           python --version
 
       - name: Toolchain cache (the pinned downloads; the sha256 check runs on every fetch)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             tools/toolchain/*.tar.gz
@@ -92,7 +92,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: vcpkg binary cache (save)
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
@@ -128,11 +128,11 @@ jobs:
       - name: Stage, scan and zip (tools/ci/release_dist.ps1 -SkipBuild)
         shell: pwsh
         run: |
-          # the zip carries the user's GPU driver path, not the test-only Mesa copy
+          # the zip carries the player's GPU driver path, not the test-only Mesa copy
           Remove-Item build-windows-release/opengl32.dll, build-windows-release/libgallium_wgl.dll -ErrorAction SilentlyContinue
           ./tools/ci/release_dist.ps1 -SkipBuild -BuildDir "$PWD/build-windows-release" 2>&1 | Tee-Object -FilePath release_dist.log
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: twinsanityevolved-windows-x64

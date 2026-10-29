@@ -8,6 +8,27 @@ namespace gs {
 
 VramImage::VramImage() : bytes_(kBytes, 0), pages_(kPageCount), settle_pages_(kPageCount / 64, 0) {}
 
+void VramImage::Reset() {
+    for (uint32_t pg = 0; pg < kPageCount; ++pg) {
+        PageRecord& p = pages_[pg];
+        // every mutation of a page's bytes moves its record (WriteStream bumps view_gen; a deposit's commit its epochs and
+        // view_gen): an untouched record means untouched (zero) bytes
+        const bool touched = p.view_gen != 0 || p.write_bits != 0 || p.upload_epoch != 0 || p.deposit_epoch != 0 ||
+                             p.shadow_epoch != 0 || p.state != PageRecord::State::Clean || p.author != PageRecord::Author::Cold;
+        if (touched) std::memset(bytes_.data() + size_t(pg) * kPageBytes, 0, kPageBytes);
+        p = PageRecord{};
+    }
+    shadow_.reset();
+    upload_seq_ = 0;
+    deposit_seq_ = 0;
+    pending_ = 0;
+    settle_lo_ = 0xFFFFFFFFu;
+    settle_hi_ = 0;
+    for (auto& w : settle_pages_) w = 0;
+    counters_ = Counters{};
+    mirror_ = nullptr;
+}
+
 void VramImage::PagesOf(Span span, uint32_t* first, uint32_t* count) {
     const uint32_t start = span.start % kBytes;
     *first = start / kPageBytes;

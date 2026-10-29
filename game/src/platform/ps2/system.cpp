@@ -241,19 +241,20 @@ Platform::System::ConsoleLanguage Platform::System::Language()
     return static_cast<ConsoleLanguage>(config.japLanguage);
 }
 
-// The PS2 cannot look at the disc's banks for free: the game's own slots, named as the game names them (lower-cased), the
-// console's OSD language stands (no settings file to persist to) and the texts come from the same slot as everything else
-u32 Platform::System::LanguageCount()
+// The PS2 cannot look at the disc's banks for free: the game's own slots as the text row, named as the game names them
+// (lower-cased), no speech row (one language drives both, as retail), the console's OSD language stands (no settings file to
+// persist to) and the texts come from the same slot as everything else
+u32 Platform::System::TextLanguageCount()
 {
     return g_LanguageCount;
 }
 
-u32 Platform::System::LanguageSelected()
+u32 Platform::System::TextLanguageSelected()
 {
     return g_CurrentLanguage;
 }
 
-void Platform::System::LanguageLabel(u32 language, char* out, u32 size)
+void Platform::System::TextLanguageLabel(u32 language, char* out, u32 size)
 {
     if (size == 0)
     {
@@ -271,12 +272,53 @@ void Platform::System::LanguageLabel(u32 language, char* out, u32 size)
     out[at] = '\0';
 }
 
+void Platform::System::SetTextLanguage(u32)
+{
+}
+
+u32 Platform::System::SpeechLanguageCount()
+{
+    return 0;
+}
+
+u32 Platform::System::SpeechLanguageSelected()
+{
+    return NoLanguage;
+}
+
+void Platform::System::SpeechLanguageLabel(u32, char* out, u32 size)
+{
+    if (size != 0)
+    {
+        out[0] = '\0';
+    }
+}
+
+void Platform::System::SetSpeechLanguage(u32)
+{
+}
+
+// The game's own texts for the rows
+void Platform::System::LanguageRowTitle(u32, char* out, u32 size)
+{
+    if (size != 0)
+    {
+        out[0] = '\0';
+    }
+}
+
 u32 Platform::System::LanguageTextBank()
 {
     return NoLanguageBank;
 }
 
-void Platform::System::SetLanguage(u32)
+// The PS2 reads every text from its disc: no language packs
+u32 Platform::System::LanguageTextSize(u32)
+{
+    return 0;
+}
+
+void Platform::System::LanguageText(u32, void*, u32)
 {
 }
 

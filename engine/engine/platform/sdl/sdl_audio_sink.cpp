@@ -19,6 +19,7 @@ void SdlAudioSink::Callback(void* userdata, uint8_t* stream, int len) {
     auto* self = static_cast<SdlAudioSink*>(userdata);
     float* out = reinterpret_cast<float*>(stream);
     const int frames = len / (AudioPullRing::kChannels * static_cast<int>(sizeof(float)));
+    if (self->refill_) self->refill_(self->refill_user_, frames);   // the owner's wall-clocked producer, if any
     self->ring_->Pull(out, frames);
     if (self->tap_) self->tap_(self->tap_user_, out, frames);
 }

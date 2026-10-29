@@ -34,12 +34,14 @@ uint32_t rd32(const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | 
 }  // namespace
 
 bool ReadGameState(unsigned* state, unsigned* last_state, unsigned* next_state) {
-    const uint8_t* mem = te::GuestMemory();
-    if (!mem) return false;
-    const uint32_t gc = rd32(mem + kGameControllerPointer);
-    if (gc == 0 || uint64_t(gc) + 16 > te::GuestMemorySize()) return false;
+    // (te::GuestPointer: the bounds checks of the wasm lanes; on the Vita's native build the pointer is the address itself)
+    const uint8_t* global = te::GuestPointer(te::RetailAddress(kGameControllerPointer), 4);
+    if (!global) return false;
+    const uint32_t gc = rd32(global);
+    const uint8_t* controller = gc ? te::GuestPointer(gc, 16) : nullptr;
+    if (!controller) return false;
     uint64_t v = 0;
-    std::memcpy(&v, mem + gc + 8, 8);
+    std::memcpy(&v, controller + 8, 8);
     if (state) *state = unsigned((v >> 44) & 63);
     if (last_state) *last_state = unsigned((v >> 38) & 63);
     if (next_state) *next_state = unsigned((v >> 50) & 63);

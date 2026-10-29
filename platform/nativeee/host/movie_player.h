@@ -16,6 +16,9 @@
 //     presents the frame (one more boundary), asks QueuePicture for the next picture and finishes the frame.
 //   * QueuePicture uploads the queue's first picture into the picture texture ("sends it to the screen's memory");
 //     Draw records that texture over the game's area into the movies bucket (nothing until two pictures were queued).
+//     The Vita (TE_MOVIE_PICTURES yuv / rgba, movie_player.cpp PictureRing): the pictures live in a ring of slots of the
+//     GPU's own storage the movie thread writes them into; QueuePicture only makes the picture's slot the one shown, and
+//     the quad is drawn by the device's movie program (ps2e_draw_movie_*) -- no per-picture upload on the drawing thread.
 //   * The sound: the decoder's PCM (48 kHz stereo, the SPU2's rate) is popped by the audio mixer's tick (AudioMixer's
 //     movie source, one tick per boundary) from StartSound on, at the game's volume; nothing before (the PS2 filled
 //     the ring, then started the SPU2's block transfer).
@@ -36,6 +39,16 @@ typedef struct ps2e_movie ps2e_movie;
 
 namespace te::movie {
 
+// The movie's decoder as the player drives it (movie_player.cpp): ps2e_movie's contract plus the disc pump -- on the game
+// thread, or (the Vita's default, TE_MOVIE_THREAD) on the movie thread, the game thread replaying its per-slice outcomes.
+class Decoder;
+struct DecoderDeleter { void operator()(Decoder* d) const; };
+// The Vita's movie pictures in the GPU's storage (movie_player.cpp, TE_MOVIE_PICTURES): a ring of picture slots per movie,
+// and a picture's claim on the slot it was written into (released unseen when the picture is dropped)
+class PictureRing;
+struct SlotLease;
+struct SlotLeaseDeleter { void operator()(SlotLease* l) const; };
+
 class MoviePlayer final : public ps2r::sound::PcmSource {
 public:
     static constexpr uint32_t kPlayerSize = 0x41D0;        // Platform::Movie::PlayerSize
@@ -44,9 +57,15 @@ public:
     static constexpr uint32_t kSoundBufferFrames = 0x6000 / 4;   // the PS2 ring: 0x6000 bytes of 16-bit stereo
     static constexpr uint32_t kReadSlice = 64 * 2048;      // bytes read off the disc per pump
 
+    // A decoded picture: RGBA bytes (`rgba`), the decoder's 4:2:0 planes (`planar`: Y, U, V packed in `planes`), or --
+    // the Vita's movie path -- already in a slot of the movie's PictureRing (`lease`: no bytes here)
     struct Picture {
         int width = 0, height = 0;
         std::vector<uint8_t> rgba;
+        int planar = 0;
+        std::vector<uint8_t> planes;
+        std::unique_ptr<SlotLease, SlotLeaseDeleter> lease;
+        int luma = -1;   // its mean brightness over a sparse grid (the movie census), -1 not sampled
     };
     struct Player {
         bool constructed = false, presenting = false, open = false, sound_started = false;
@@ -59,13 +78,22 @@ public:
         uint32_t file_size = 0, read_cursor = 0;
         bool input_done = false;
         // the decoder and the pictures
-        ps2e_movie* decoder = nullptr;
+        std::unique_ptr<Decoder, DecoderDeleter> decoder;
         std::unique_ptr<Picture> decoded;        // decoded, not yet queued (the PS2's player->decoded)
         std::deque<std::unique_ptr<Picture>> queue;   // waiting for the screen (player->queue)
         uint32_t frames = 0;                     // Steps that queued a picture (player->frames; Draw needs 2)
         uint32_t texture = 0;                    // the picture texture on the graphics device (0 = none yet)
         int texture_w = 0, texture_h = 0;
         bool texture_filled = false;
+        // The Vita's movie path (TE_MOVIE_PICTURES yuv / rgba): the movie's ring of picture slots in the GPU's storage
+        // (`texture` is then its ps2e_draw movie texture); ring_failed: not possible for this movie (the RGBA uploads)
+        std::shared_ptr<PictureRing> ring;
+        bool ring_failed = false;
+        // the pictures sent to the screen this playback: their luma samples (the first three, the range) -- the movie
+        // census line at the close says whether the decoder made pictures at all
+        int luma_first[3] = {-1, -1, -1};
+        int luma_min = 256, luma_max = -1;
+        uint32_t luma_n = 0;
         // The quad Draw recorded into the frame's movies bucket and the present callback has not yet shown: the game draws
         // BEFORE WaitFrame and the frame is presented INSIDE it, so a save state taken at one of WaitFrame's boundaries
         // (the frame-boundary checkpoints) sits between the two and the host-side draw would be lost -- the loaded run's first present
@@ -81,6 +109,11 @@ public:
         // counters
         uint32_t steps = 0, waits = 0, queued = 0, draws = 0, uploads = 0;
         uint32_t pcm_popped = 0;                 // PCM frames the mixer popped from this player (the restore discards as many)
+        // TE_MOVIE_TRACE only: the game thread's time in DecodeNext (the disc reads, the demux, the decode, the RGBA
+        // conversion) and in QueuePicture's upload (waiting for the render thread's; on the Vita only posting it), per
+        // playback (the "[movie] ... closed:" line)
+        uint32_t trace_decodes = 0, trace_uploads = 0;
+        double trace_decode_ms = 0, trace_decode_max_ms = 0, trace_upload_ms = 0, trace_upload_max_ms = 0;
     };
 
     MoviePlayer();
@@ -103,6 +136,9 @@ public:
     // PcmSource (the audio mixer pops the sound track here, one tick per boundary)
     std::array<float, 2> Gains() const override;
     int Pop(int16_t* stereo, int frames) override;
+    // Game thread: whether Pop delivers the sound track now (a movie is open with its sound started). The audio owner's
+    // real-time producer mixes on the game thread's boundaries while it does (the decoder is this thread's).
+    bool SoundLive() const { return playing_ && playing_->open && playing_->sound_started && playing_->decoder; }
 
     const Player* Inspect(uint32_t player) const;
     // The save-state section (savestate::kTagMovie): the players the game constructed, by guest address, with what the
@@ -132,6 +168,15 @@ private:
     Player* Boundary(uint32_t player);   // one clock boundary (a save-state checkpoint); the player looked up again after it
     bool PictureDue(const Player& p) const;
     void UploadPicture(Player& p, const Picture& picture);
+#if defined(__vita__)
+    void UploadPictureAsync(Player& p, std::unique_ptr<Picture> picture);
+#endif
+    // The picture to the screen: the Vita's movie ring (TE_MOVIE_PICTURES yuv / rgba) when it serves the picture, else the
+    // RGBA upload (posted on the Vita, synchronous elsewhere; `wait`: synchronous everywhere -- a restore)
+    void ShowPicture(Player& p, std::unique_ptr<Picture> picture, bool wait);
+    bool ShowInRing(Player& p, std::unique_ptr<Picture>& picture, bool wait);
+    bool EnsureRing(Player& p, const Picture& first);
+    void DestroyRing(Player& p);
     void DestroyDecoder(Player& p);
     void EnsureMixerSource();
 

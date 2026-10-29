@@ -80,7 +80,30 @@ bool IniSettings::has(const QString& key) const {
 }
 
 bool IniSettings::set(const QString& key, const QString& value, QString* error) {
-    const QString text = setInText(readAll(), key, value);
+    return write(setInText(readAll(), key, value), error);
+}
+
+QString IniSettings::removeFromText(const QString& text, const QString& key, bool* changed) {
+    QStringList lines = text.split('\n');
+    if (!lines.isEmpty() && lines.last().isEmpty()) lines.removeLast();
+    QString section, out;
+    for (const QString& line : lines) {
+        if (lineKey(line, section) == key) {
+            if (changed) *changed = true;
+            continue;
+        }
+        out += line + "\n";
+    }
+    return out;
+}
+
+bool IniSettings::remove(const QString& key, QString* error) {
+    bool changed = false;
+    const QString text = removeFromText(readAll(), key, &changed);
+    return !changed || write(text, error);
+}
+
+bool IniSettings::write(const QString& text, QString* error) const {
     if (!QDir().mkpath(QFileInfo(path_).absolutePath())) {
         if (error) *error = QStringLiteral("cannot create the folder of %1").arg(path_);
         return false;

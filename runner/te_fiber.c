@@ -6,7 +6,11 @@
 #if defined(_WIN32)
 #include <windows.h>
 #elif defined(__vita__)
-#include <stdlib.h>   /* no mmap on the device: the stack is a heap block (no guard page; the hint is never honoured) */
+#include <fenv.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #else
 #include <sys/mman.h>
 #endif
@@ -26,6 +30,84 @@ _Static_assert(offsetof(te_fiber_ctx, rip) == 56, "te_fiber_ctx: rip at 56 (te_f
 #elif defined(__arm__)
 _Static_assert(offsetof(te_fiber_ctx, r) == 4 && offsetof(te_fiber_ctx, d) == 40, "te_fiber_ctx: r4 at 4, d8 at 40 (te_fiber_switch.S)");
 #endif
+
+#if defined(__vita__)
+/* THE VITA: the game "fiber" is a kernel thread. The kernel refuses a system call made with the stack pointer outside
+   the calling thread's own stack (the first sceIoOpen from a heap-allocated coroutine stack killed the process on the
+   device: stop reason 0x10006, the same registers every run, while the same call from the main stack worked), so the
+   game cannot run on a stack of ours. Instead te_fiber_prepare creates a thread whose stack the kernel allocates and
+   owns, and te_fiber_switch hands control over through one semaphore per side: the side that switches away wakes the
+   other and sleeps on its own semaphore. Exactly one side runs at a time, as with the register switch, so every caller's
+   view of "the game thread" (the fiber's turn) is unchanged. The ctx words hold the handles (no save state reads them
+   on the device: te_savestate_null.cpp). */
+enum { TE_VITA_FIBER_UNUSED = 0, TE_VITA_FIBER_PREPARED = 1, TE_VITA_FIBER_STARTED = 2 };
+#define VF_SEMA(ctx) ((SceUID)(int32_t)(ctx)->sp)
+#define VF_THREAD(ctx) ((SceUID)(int32_t)(ctx)->r[0])
+#define VF_STATE(ctx) ((ctx)->r[3])
+
+static void vf_ensure_sema(te_fiber_ctx* ctx) {
+    if (ctx->sp != 0) return;
+    const SceUID s = sceKernelCreateSema("te-fiber", 0, 0, 1, NULL);
+    if (s < 0) { fprintf(stderr, "[twinsanityevolved] te_fiber: sceKernelCreateSema failed 0x%08x\n", (unsigned)s); sceKernelExitProcess(1); }
+    ctx->sp = (uint32_t)s;
+}
+
+typedef struct { void (*fn)(void*); void* arg; fenv_t env; } vf_start;
+
+static int vf_thread_main(SceSize args, void* argp) {
+    (void)args;
+    vf_start st = *(const vf_start*)argp;
+    fesetenv(&st.env);   /* the FPU mode the host set for the game (round toward zero: the EE's) */
+    st.fn(st.arg);       /* never returns: it switches away for good */
+    fprintf(stderr, "[twinsanityevolved] te_fiber: the game function returned\n");
+    sceKernelExitProcess(1);
+    return 0;
+}
+
+static vf_start g_vf_start;   /* copied by the thread at its start; one game thread per process */
+
+void te_fiber_prepare(te_fiber_ctx* ctx, void* stack, size_t size, void (*fn)(void*), void* arg) {
+    (void)stack;
+    memset(ctx, 0, sizeof *ctx);
+    vf_ensure_sema(ctx);
+    g_vf_start.fn = fn;
+    g_vf_start.arg = arg;
+    const SceUID t = sceKernelCreateThread("te-game", vf_thread_main, 0x10000100 /* the default priority: the creating thread's */, (SceSize)size,
+                                           0, SCE_KERNEL_THREAD_CPU_AFFINITY_MASK_DEFAULT, NULL);
+    if (t < 0) { fprintf(stderr, "[twinsanityevolved] te_fiber: sceKernelCreateThread(%u bytes) failed 0x%08x\n", (unsigned)size, (unsigned)t); sceKernelExitProcess(1); }
+    ctx->r[0] = (uint32_t)t;
+    ctx->r[1] = (uint32_t)(uintptr_t)fn;
+    ctx->r[2] = (uint32_t)(uintptr_t)arg;
+    VF_STATE(ctx) = TE_VITA_FIBER_PREPARED;
+}
+
+void te_fiber_switch(te_fiber_ctx* save, const te_fiber_ctx* load) {
+    te_fiber_ctx* to = (te_fiber_ctx*)load;
+    vf_ensure_sema(save);
+    vf_ensure_sema(to);
+    if (VF_STATE(to) == TE_VITA_FIBER_PREPARED) {
+        VF_STATE(to) = TE_VITA_FIBER_STARTED;
+        fegetenv(&g_vf_start.env);   /* the caller's FPU environment travels to the game thread */
+        const int r = sceKernelStartThread(VF_THREAD(to), sizeof g_vf_start, &g_vf_start);
+        if (r < 0) { fprintf(stderr, "[twinsanityevolved] te_fiber: sceKernelStartThread failed 0x%08x\n", (unsigned)r); sceKernelExitProcess(1); }
+    } else {
+        sceKernelSignalSema(VF_SEMA(to), 1);
+    }
+    sceKernelWaitSema(VF_SEMA(save), 1, NULL);
+}
+
+uint64_t te_fiber_frame_pointer(const te_fiber_ctx* ctx) { (void)ctx; return 0; }
+
+void* te_fiber_map_stack(uint64_t hint, size_t size, int* at_hint) {
+    /* the kernel allocates the game thread's stack (te_fiber_prepare); this is only the non-NULL token the owner keeps */
+    (void)hint; (void)size;
+    if (at_hint) *at_hint = 0;
+    return malloc(16);
+}
+
+void te_fiber_unmap_stack(void* stack, size_t size) { (void)size; free(stack); }
+
+#else   /* the register-switch coroutine (every other target) */
 
 void te_fiber_prepare(te_fiber_ctx* ctx, void* stack, size_t size, void (*fn)(void*), void* arg) {
     memset(ctx, 0, sizeof *ctx);
@@ -119,3 +201,5 @@ void te_fiber_unmap_stack(void* stack, size_t size) {
     munmap((char*)stack - guard, size + guard);
 #endif
 }
+
+#endif   /* !__vita__ */

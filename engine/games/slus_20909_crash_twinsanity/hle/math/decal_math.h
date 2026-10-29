@@ -37,8 +37,15 @@ public:
         std::array<uint32_t, 4> offsets{};  // vf31 (4.12 integers; w = the outside flags, sign-extended)
         std::array<uint32_t, 4> more{};     // vf30 (4.12 integers)
     };
-    // `data` is the VU0 data image (kDataQuadwords quadwords); `program` kSameChunk or kOtherChunk
-    static Look Age(const Vector* data, uint32_t program, const Decal& decal);
+    // `data` is the VU0 data image (kDataQuadwords quadwords); `program` kSameChunk or kOtherChunk. `dataFinite`: the
+    // caller vouches that no word of the image is an infinity or a NaN -- the Vita then leaves out the VU's operand and
+    // result clamps where none can act (round toward zero with flush-to-zero, the decal's place finite: the same values,
+    // bit for bit); false keeps the clamped form everywhere
+    // (`unclamped`, when given: whether the unclamped form answered -- the census)
+    static Look Age(const Vector* data, uint32_t program, const Decal& decal, bool dataFinite = false, bool* unclamped = nullptr);
+#if defined(DECAL_MATH_TEST_UNCLAMPED)
+    static Look AgeUnclampedForTest(const Vector* data, uint32_t program, const Decal& decal);
+#endif
 };
 
 }  // namespace title

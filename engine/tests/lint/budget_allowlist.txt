@@ -6,7 +6,7 @@
 # An entry silences the FAIL only while the lint's measured value is <= <measured>; an offender that
 # grows fails again, and an entry that no longer silences anything is reported stale. The thresholds
 # of the section 11 table are never read from here. Every entry below is an offender REPORTED to the
-# orchestrator's refactor queue by the stage that added it -- not an acceptance.
+# refactor queue by the change that added it -- not an acceptance.
 
 # 2026-10-08 refactor queue item 1 closed: the composition root's leg runner (one 2,154-line EeBootstrap::Run,
 # file 2,493 lines after the stage-12 union) is split into fourteen phase functions in construction order

@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "engine/platform/host/platform.h"   // PS2R_HOST_VITA (the caps below)
+
 namespace ps2r {
 namespace render {
 
@@ -19,8 +21,16 @@ class GlStateCache;
 
 class GlTexturePool {
 public:
+#if PS2R_HOST_VITA
+    // The Vita: a retired texture keeps vitaGL pool memory (VRAM first: 96 MB in all), and a refill of a whole image
+    // re-specifies it anyway (GlDevice::Upload: no copy-on-write), so the storage is not what the pool saves there --
+    // kept small: 32 entries, 8 MB
+    static constexpr size_t kMaxEntries = 32;
+    static constexpr uint64_t kMaxBytes = 8ull * 1024 * 1024;
+#else
     static constexpr size_t kMaxEntries = 128;
     static constexpr uint64_t kMaxBytes = 96ull * 1024 * 1024;
+#endif
 
     // Returns 0 on a miss. *storage_idle = true when the storage may be refilled in place.
     uint32_t Acquire(int width, int height, bool* storage_idle);

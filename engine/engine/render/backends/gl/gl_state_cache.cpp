@@ -5,7 +5,8 @@
 #include PS2R_GL_HEADER
 
 #include <cstring>
-#include <cstdlib>   // XBISECT
+
+#include "engine/render/backends/gl/gl_census.h"
 
 namespace ps2r {
 namespace render {
@@ -15,6 +16,8 @@ void GlStateCache::InvalidateAll() {
     active_unit_ = -1;
     for (int i = 0; i < kMaxUnits; i++) tex2d_[i] = kUnknown;
     tex_params_.clear();
+    last_param_tex_ = kUnknown;
+    last_param_bucket_ = nullptr;
     program_ = kUnknown;
     array_buffer_ = kUnknown;
     viewport_known_ = false;
@@ -77,8 +80,22 @@ void GlStateCache::BindTex2D(uint32_t tex) {
     glBindTexture(GL_TEXTURE_2D, tex);
 }
 
+void GlStateCache::BindTex2DUnit(uint32_t unit_enum, uint32_t tex) {
+    const int idx = static_cast<int>(unit_enum - GL_TEXTURE0);
+    if (idx >= 0 && idx < kMaxUnits && tex2d_[idx] == tex) {
+        skips_++;
+        return;
+    }
+    ActiveTexture(unit_enum);
+    BindTex2D(tex);
+}
+
 bool GlStateCache::TexParamCheckSet(uint32_t tex, uint32_t pname, int32_t bits) {
-    TexParamBucket& b = tex_params_[tex];
+    if (tex != last_param_tex_ || !last_param_bucket_) {
+        last_param_bucket_ = &tex_params_[tex];
+        last_param_tex_ = tex;
+    }
+    TexParamBucket& b = *last_param_bucket_;
     for (auto& pv : b.params) {
         if (pv.first == pname) {
             if (pv.second == bits) return true;
@@ -118,6 +135,10 @@ void GlStateCache::DeleteTextures(int n, const uint32_t* ids) {
     for (int i = 0; i < n; i++) {
         for (int u = 0; u < kMaxUnits; u++)
             if (tex2d_[u] == ids[i]) tex2d_[u] = 0;
+        if (last_param_tex_ == ids[i]) {
+            last_param_tex_ = kUnknown;
+            last_param_bucket_ = nullptr;
+        }
         tex_params_.erase(ids[i]);
     }
     ++mutations_;
@@ -133,26 +154,36 @@ void GlStateCache::ApplyVitaSamplerSizes() {
         {"te_size_u_texture", 0}, {"te_size_u_frame", 0}, {"te_size_u_rt_texture", 1},
         {"te_size_u_clut", 2},    {"te_size_u_idx_tex2", 3}, {"te_size_u_zsrc_tex", 4},
     };
-    auto it = vita_sizes_.find(program_);
-    if (it == vita_sizes_.end()) {
-        VitaSizes sizes;
-        for (int i = 0; i < 6; ++i) sizes.locs[i] = glGetUniformLocation(program_, kSizes[i].name);
-        it = vita_sizes_.emplace(program_, sizes).first;
+    if (program_ != vita_sizes_program_ || !vita_sizes_entry_) {
+        auto it = vita_sizes_.find(program_);
+        if (it == vita_sizes_.end()) {
+            VitaSizes sizes;
+            for (int i = 0; i < 6; ++i) sizes.locs[i] = glGetUniformLocation(program_, kSizes[i].name);
+            it = vita_sizes_.emplace(program_, sizes).first;
+        }
+        vita_sizes_program_ = program_;
+        vita_sizes_entry_ = &it->second;   // (std::unordered_map: the element's address holds until it is erased)
     }
-    VitaSizes& sizes = it->second;
+    VitaSizes& sizes = *vita_sizes_entry_;
     const uint32_t generation = ps2r_vita_TexGeneration();
     for (int i = 0; i < 6; ++i) {
         const int32_t loc = sizes.locs[i];
         const uint32_t tex = tex2d_[kSizes[i].unit];
         if (loc < 0 || tex == kUnknown || tex == 0) continue;
-        static const bool xNoSizeCache = std::getenv("TE_X_NO_SIZECACHE") != nullptr;   // XBISECT
-        if (!xNoSizeCache && sizes.tex[i] == tex && sizes.generation[i] == generation) continue;
+        if (sizes.tex[i] == tex && sizes.generation[i] == generation) continue;
         int w = 0, h = 0;
         if (!ps2r_vita_TexSize(tex, &w, &h)) continue;
-        ++mutations_;
-        glUniform2f(loc, float(w), float(h));
         sizes.tex[i] = tex;
         sizes.generation[i] = generation;
+        if (sizes.sent_w[i] == w && sizes.sent_h[i] == h) {
+            Census().size_skipped++;   // the uniform holds this size: nothing to send
+            continue;
+        }
+        ++mutations_;
+        Census().size_uniforms++;
+        glUniform2f(loc, float(w), float(h));
+        sizes.sent_w[i] = w;
+        sizes.sent_h[i] = h;
     }
 }
 #endif
@@ -168,6 +199,8 @@ void GlStateCache::DeleteProgram(uint32_t prog) {
     if (program_ == prog) program_ = kUnknown;
 #if PS2R_HOST_VITA
     vita_sizes_.erase(prog);
+    vita_sizes_program_ = kUnknown;
+    vita_sizes_entry_ = nullptr;
 #endif
     ++mutations_;
     glDeleteProgram(prog);

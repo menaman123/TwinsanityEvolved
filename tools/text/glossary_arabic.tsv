@@ -1,0 +1,109 @@
+# The Arabic glossary: one term a row, used everywhere in the game (tools/text/prompts/*.md quote this file).
+# english	arabic	note
+crash	كراش	the hero
+crash bandicoot	كراش بانديكوت
+bandicoot	بانديكوت
+cortex	كورتكس	Dr. Neo Cortex, the villain who teams up with Crash
+dr. cortex	د. كورتكس
+nina	نينا	Cortex's niece
+n. gin	إن جين	the English writes "ngin"
+mme. amberley	مدام أمبرلي	the headmistress
+evil crash	كراش الشرير
+evil twins	التوأمان الشريران
+aku-aku	أكو أكو	the mask
+tribesman	رجل القبيلة
+crystal	كريستالة	plural كريستالات
+gem	جوهرة	plural جواهر; "crash like gems" is a joke: "كراش يحب الجواهر"
+crate	صندوق	plural صناديق
+tnt crate	صندوق TNT	TNT stays in Latin letters
+detonator crate	صندوق التفجير
+ammo crate	صندوق الذخيرة
+mask	قناع	plural أقنعة
+red button	الزر الأحمر
+cannonball	قذيفة المدفع
+mantrap	الفخ
+energy ball	كرة الطاقة	plural كرات الطاقة
+energon sphere	كرة إنرجون	plural كرات الإنرجون
+tractor beam	شعاع الجذب
+ufo	الصحن الطائر
+flying saucer	صحن طائر	plural صحون طائرة
+hoverboard	لوح التحليق
+hover scooter	الدراجة الطائرة
+laser bolts	طلقات الليزر
+charge blast	الطلقة المشحونة
+charged shot	طلقة مشحونة
+radial blast jump	قفزة الانفجار الدائري
+lollipop	مصاصة	plural مصاصات
+teddy	دبدوب	plural دباديب
+worm	دودة	plural ديدان
+switch	مفتاح
+security console	لوحة الأمن	plural لوحات الأمن
+flame vent	فتحة اللهب	plural فتحات اللهب
+battleship	السفينة الحربية
+crows nest	برج المراقبة
+weathervane	دوارة الرياح
+gargoyle	تمثال حجري	plural التماثيل الحجرية
+chainsaw	المنشار الآلي
+airship	المنطاد
+valve	صمام	plural صمامات
+pipe	أنبوب	plural أنابيب
+sewers	المجاري
+missile	صاروخ	plural صواريخ
+spin	الدوران	"press X to spin" = اضغط X للدوران
+double jump	القفزة المزدوجة
+slide	الانزلاق
+slam	الضربة الأرضية
+crawl	الزحف
+strafe	التحرك جانبيا
+nsanity isle	جزيرة إنسانيتي	level
+jungle bungle	فوضى الأدغال	level
+cavern catastrophe	كارثة الكهف	level
+totem hokum	خدعة الطوطم	level
+iceberg lab	مختبر الجليد	level
+ice climb	تسلق الجليد	level
+slip slide icecapades	مغامرات الجليد	level
+high seas hi-jinks	مقالب البحار	level
+academy of evil	أكاديمية الشر	level
+boiler room doom	هلاك غرفة المرجل	level
+classroom chaos	فوضى الفصل	level
+rooftop rampage	هيجان السطوح	level
+twinsanity island	جزيرة توينسانيتي	level
+rockslide rumble	انهيار الصخور	level
+bandicoot pursuit	مطاردة البانديكوت	level
+ant agony	عذاب النمل	level
+new game	لعبة جديدة	menu
+load game	تحميل لعبة	menu
+options	الخيارات	menu
+language	اللغة	menu
+graphic options	خيارات الرسوم	menu
+sound options	خيارات الصوت	menu
+game options	خيارات اللعبة	menu
+extras	الإضافات	menu
+save game	حفظ اللعبة	menu
+quit game	إنهاء اللعبة	menu
+resume	استئناف	menu
+continue	متابعة	menu
+back	رجوع	menu
+select	اختيار	menu
+cancel	إلغاء	menu
+next	التالي	menu
+on	تشغيل	a setting's value
+off	إيقاف	a setting's value
+yes	نعم
+no	لا
+autosave	الحفظ التلقائي
+save file	ملف الحفظ
+memory card (ps2)	بطاقة الذاكرة (ps2)	ps2 stays in Latin letters
+memory card slot 1	فتحة بطاقة الذاكرة 1
+controller	يد التحكم
+analog controller (dualshock{REG}2)	يد التحكم التناظرية (dualshock{REG}2)	the brand stays in Latin letters
+controller port 1	منفذ يد التحكم 1
+left analog stick	العصا التناظرية اليسرى
+directional buttons	أزرار الاتجاه
+format	تهيئة	the memory card
+overwrite	استبدال
+gallery	معرض
+boss	زعيم	plural زعماء
+movie	فيلم
+text language	لغة النص	menu: the Options row choosing the text's language
+speech language	لغة الكلام	menu: the Options row choosing the speech's language

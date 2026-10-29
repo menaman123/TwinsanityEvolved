@@ -1,5 +1,5 @@
 # padlog v1 start_frame=37166 clock=frame title=slus_20909_crash_twinsanity
-# s11 scripted Mecha-Bandicoot fight from the user's slot0 (frame 37165, saved in the pause menu):
+# s11 scripted Mecha-Bandicoot fight from the tester's slot0 (frame 37165, saved in the pause menu):
 # Resume (TRIANGLE = Back), run at the boss, spin and jump, strafe both ways, keep inside the arena.
 37200-37206:TRIANGLE
 37260-37400:LY=0

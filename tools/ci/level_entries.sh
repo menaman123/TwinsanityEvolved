@@ -25,7 +25,7 @@ RUNNER="${RUNNER:-$BUILD/twinsanityevolved}"
 OUT="${OUT:-$BUILD/level_entries}"
 rm -rf "$OUT"; mkdir -p "$OUT/mc_hub"
 if pgrep -f '(^|/)(twinsanityevolved|ps2recomp|ps2recomp_oracle|ps2recomp_release[.0-9a-f]*)( |$)' > /dev/null; then
-  echo "level_entries: a game process is running (one at a time, charter)"; exit 3
+  echo "level_entries: a game process is running (one at a time)"; exit 3
 fi
 # Known load blocks (a STAGE each): the gate reports them as BLOCKED and does not fail on them
 LEVEL_ENTRY_BLOCKED=""

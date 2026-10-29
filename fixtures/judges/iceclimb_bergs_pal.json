@@ -1,0 +1,59 @@
+{
+ "judge": "iceclimb_bergs",
+ "chunk": "levels\\ice\\iceclimb\\caveent",
+ "padlog": "fixtures/padlogs/iceclimb_bergs.padlog",
+ "stop_at": 4030,
+ "name": "ICE_PLATFORM19",
+ "berg": {
+  "label": "the first berg",
+  "at": [
+   0.88,
+   11.39
+  ]
+ },
+ "near": 1.0,
+ "tolerance": 0.001,
+ "reference_y": {
+  "3312": -6.516495,
+  "3347": -7.893327,
+  "3382": -8.362803,
+  "3432": -7.790736,
+  "3497": -7.15725,
+  "3562": -7.398479,
+  "3622": -7.561657,
+  "3702": -7.507771,
+  "3782": -7.507604,
+  "3842": -6.552066,
+  "3897": -5.991731,
+  "4017": -6.524673
+ },
+ "reference_y_bits": {
+  "3312": "C0D08721",
+  "3347": "C0FC9622",
+  "3382": "C105CE0A",
+  "3432": "C0F94DB5",
+  "3497": "C0E50832",
+  "3562": "C0ECC057",
+  "3622": "C0F1F919",
+  "3702": "C0F03FAA",
+  "3782": "C0F03E4A",
+  "3842": "C0D1AA86",
+  "3897": "C0BFBC43",
+  "4017": "C0D0CA1E"
+ },
+ "what": {
+  "3312": "the landing",
+  "3347": "sinking under the landing",
+  "3382": "the dip's bottom (the lowest of the route)",
+  "3432": "rising",
+  "3497": "the bob's top",
+  "3562": "sagging under the standing character",
+  "3622": "the sag's bottom",
+  "3702": "the long stand (1.12 below the authored -6.38619)",
+  "3782": "the long stand's end, before the jump off",
+  "3842": "after he leaves: rising",
+  "3897": "the rebound's top",
+  "4017": "settling back"
+ },
+ "source": "reference_y: the first berg's body height (its matrix's translation y, the --trace-bodies probe's pos y) in the recompiled reference -- the engine's NTSC build of SLUS-20909 run with --set hle.math_helpers=off (the retail maths' generated bodies) on fixtures/padlogs/iceclimb_bergs.oracle.padlog (this pad log transposed: +77 boundaries before 2850, +100 to 2910, +99 after); read from its memory every 5 boundaries; its game timeline is this pad log's + 98 here, so reference boundary B is the port's B - 98. The twelve: the landing, the dip, the bob, the sag under the standing character, the 8 s stand, the jump off, the rebound (the window 3312..4032 where the two runs' routes agree; after ~3947 Crash's route parts from the reference's by a hair, the first berg's own height stays equal). The port matched these to <= 4.3e-6 (2026-10-28, branch fix-icebergs); with VuTransformPoint and VuRotateVector answered by the retail instructions on the engine's VU interpreter (TE_MATH_TRANSFORM_MICRO=1) to <= 8.6e-6. tolerance: 1e-3. Made by the icebergs agent (notes/icebergs.md)."
+}

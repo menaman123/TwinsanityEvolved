@@ -18,25 +18,34 @@
 namespace title {
 namespace {
 
+// The Vita: the clamps inline in the multiply-adds (GCC kept Clamp4 as two calls in every MaddBc -- 24 a block view, each
+// returning its four lanes through memory); the same operations in the same order. MaddBc / MulBc / GroupFlags stay
+// calls: all of them inline made BlockView 4700 straight-line instructions (~14 KB of a 32 KB instruction cache)
+#if defined(__vita__)
+#define TE_PV_INLINE __attribute__((always_inline)) inline
+#else
+#define TE_PV_INLINE
+#endif
+
 using Vector = ParticleViewMath::Vector;
 using Matrix = ParticleViewMath::Matrix;
 
 constexpr uint32_t kSign = 0x80000000u;
 constexpr uint32_t kMaxFloat = 0x7F7FFFFFu;
 
-uint32_t Bits(float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; }
-float Float(uint32_t b) { float f; std::memcpy(&f, &b, 4); return f; }
+TE_PV_INLINE uint32_t Bits(float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; }
+TE_PV_INLINE float Float(uint32_t b) { float f; std::memcpy(&f, &b, 4); return f; }
 
-float Clamp(float v) {
+TE_PV_INLINE float Clamp(float v) {
     const uint32_t b = Bits(v), e = b & 0x7F800000u;
     if (e == 0x7F800000u) return Float((b & kSign) | kMaxFloat);
     if (e == 0) return Float(b & kSign);
     return v;
 }
-Vector Clamp4(const Vector& v) { return {Clamp(v[0]), Clamp(v[1]), Clamp(v[2]), Clamp(v[3])}; }
+TE_PV_INLINE Vector Clamp4(const Vector& v) { return {Clamp(v[0]), Clamp(v[1]), Clamp(v[2]), Clamp(v[3])}; }
 
 // The MAC S flags of a raw result (x 0x80, y 0x40, z 0x20, w 0x10)
-uint16_t SignFlags(const Vector& raw) {
+TE_PV_INLINE uint16_t SignFlags(const Vector& raw) {
     uint16_t s = 0;
     for (int k = 0; k < 4; ++k) if (Bits(raw[k]) & kSign) s |= uint16_t(0x80 >> k);
     return s;

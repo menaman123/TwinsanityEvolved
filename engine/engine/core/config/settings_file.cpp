@@ -107,6 +107,38 @@ bool SettingsFile::Set(const std::string& path, const std::string& key, const st
     bool changed = false;
     const std::string next = SetInText(text, key, value, &changed);
     if (!changed) return true;
+    return WriteWhole(path, next, err);
+}
+
+std::string SettingsFile::RemoveInText(const std::string& text, const std::string& key, bool* changed) {
+    std::string out, section;
+    for (const std::string& line : Lines(text)) {
+        if (LineKey(line, section) == key) {
+            if (changed) *changed = true;
+            continue;
+        }
+        out += line + "\n";
+    }
+    return out;
+}
+
+bool SettingsFile::Remove(const std::string& path, const std::string& key, std::string* err) {
+    if (key.empty() || key.compare(0, 8, "harness.") == 0) {
+        if (err) *err = key + ": not a removable setting";
+        return false;
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) return true;
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    in.close();
+    bool changed = false;
+    const std::string next = RemoveInText(buf.str(), key, &changed);
+    if (!changed) return true;
+    return WriteWhole(path, next, err);
+}
+
+bool SettingsFile::WriteWhole(const std::string& path, const std::string& text, std::string* err) {
     const std::string tmp = path + ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
@@ -114,7 +146,7 @@ bool SettingsFile::Set(const std::string& path, const std::string& key, const st
             if (err) *err = "cannot write " + tmp;
             return false;
         }
-        out << next;
+        out << text;
         if (!out) {
             if (err) *err = "write failed: " + tmp;
             return false;

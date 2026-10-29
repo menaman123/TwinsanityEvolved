@@ -62,7 +62,7 @@ std::string hex32(uint32_t v) {
 }
 
 // ---------------------------------------------------------------------------
-// The P2 comparison report (design §7.3 seed 6 + master brief P2 deliverable).
+// The P2 comparison report (design §7.3 seed 6, the P2 deliverable).
 // ---------------------------------------------------------------------------
 int write_comparison(const recomp_v2::DiscoveryResult& r,
                      const recomp_v2::DiscoveryInputs& in,

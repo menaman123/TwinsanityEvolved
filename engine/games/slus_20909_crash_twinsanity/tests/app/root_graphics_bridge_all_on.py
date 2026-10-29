@@ -6,7 +6,7 @@ each 300 frames, each required to COMPLETE (run_leg finalized, park=none,
 graphics_output_faulted=0) with the named family's owned work positive and its
 refusal/fault rows at zero:
 
-  frame63   the Movie presentation release at frame 63 (the user's bundle):
+  frame63   the Movie presentation release at frame 63 (the tester's bundle):
             graphics_movie_transport failed=0 release_refused=0,
             graphics_owned_output failed=0, graphics_frame_send model_calls=0
   shadows   frame 113 "Shadow model load could not establish owned geometry":

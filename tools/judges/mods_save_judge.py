@@ -8,9 +8,14 @@ the hub autosave) to `stop_at`, each on its own memory-card folder:
                                                 `-mods` folder holds the save (the game wrote its card there).
   C  `--mod <id>`, a COPY of A's vanilla card -> GREEN needs: every vanilla file's bytes identical before and after (sha256), the
                                                 `-mods` folder present (seeded from the vanilla card, then written to).
+  D  the LANGUAGE PACK (fixture "language_pack": mods/arabic) present and CHOSEN as the text language, its switch from an earlier
+     version on in the settings file, an empty card folder -> GREEN needs: the vanilla folder holds the save, no `-mods` folder,
+     the log names the vanilla card (a language pack is not a mod). A runner without text languages of its own (no
+     --text-language) is run the way it chose the pack -- `--mod <pack> --language <pack>` -- and judged the same.
 A runner that refuses `--mod` (a play binary without mods, exit 2) is RED: no mod can be enabled, nothing is namespaced.
 
-RED on bin/twinsanityevolved.0f92911, GREEN on the mods build.
+RED on bin/twinsanityevolved.0f92911, GREEN on the mods build. 2026-10-27: D RED on 43e9989 (the pack switched on
+sends the saves to the -mods card), GREEN on its change.
 
 Usage: mods_save_judge.py --bin BIN --iso ISO [--out DIR] [--fixture F]
 Exit 0 = GREEN, 1 = RED, 2 = the run failed.
@@ -103,16 +108,46 @@ def main():
         return 2
     after, c_mods = tree_hashes(mc_c), tree_hashes(mc_c + "-mods")
     changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+    # D: the language pack chosen as the text language (not a mod): the vanilla card
+    d_ok, d_line = True, "no language pack in the fixture"
+    pack = fx.get("language_pack")
+    if pack:
+        mc_d = os.path.join(a.out, "mc_D")
+        os.makedirs(mc_d)
+        ini = os.path.join(a.out, "D_ps2r.ini")
+        with open(ini, "w", newline="\n") as f:
+            f.write("".join(x + "\n" for x in pack["settings"]))
+        help_text = subprocess.run([a.bin, "--help"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(os.environ, TE_GFX_HEADLESS="1")).stderr
+        if "--text-language" in help_text:
+            extra = ["--config", ini, "--mods-dir", os.path.join(ROOT, pack["mods_dir"]), "--text-language", pack["id"]]
+        else:   # the runner's own way to choose the pack: a mod switched on, its language named
+            extra = ["--config", ini, "--mods-dir", os.path.join(ROOT, pack["mods_dir"]), "--mod", pack["id"], "--language", pack["id"]]
+        rc, log_d = run(a.bin, a.iso, a.out, fx, mc_d, extra, "D_language_pack")
+        if rc != 0:
+            print("mods_save_judge: run D failed (exit %d)" % rc)
+            return 2
+        with open(log_d, errors="replace") as f:
+            d_text = f.read()
+        d_vanilla, d_mods = tree_hashes(mc_d), tree_hashes(mc_d + "-mods")
+        chosen = ("-> text %s by name" % pack["id"]) in d_text or ("requested '%s'" % pack["id"]) in d_text
+        d_ok = (any(fx["save_file"] in k for k in d_vanilla) and not d_mods and not os.path.isdir(mc_d + "-mods") and "the -mods card" not in d_text)
+        d_line = "D (the %s pack chosen%s): vanilla files %d (%s), -mods %s" % (pack["id"], "" if chosen else " -- NOT reported chosen", len(d_vanilla),
+                                                                                "save present" if any(fx["save_file"] in k for k in d_vanilla) else "NO save",
+                                                                                ("%d files" % len(d_mods)) if os.path.isdir(mc_d + "-mods") else "absent")
+        d_ok = d_ok and chosen
+        print("mods_save_judge: %s" % d_line)
     print("mods_save_judge: A vanilla files %d; B vanilla files %d, -mods files %d (%s), log names the -mods card: %s; "
           "C vanilla files changed %d of %d (%s), -mods files %d"
           % (len(a_hashes), len(b_vanilla), len(b_mods), "save present" if any(fx["save_file"] in k for k in b_mods) else "NO save",
              b_logged, len(changed), len(before), changed[:5], len(c_mods)))
     green = (len(b_vanilla) == 0 and any(fx["save_file"] in k for k in b_mods) and b_logged and not changed and len(c_mods) > 0)
-    if green:
-        print("mods_save_judge: GREEN -- with %s on, the card writes went to the -mods card and the vanilla card's bytes never changed" % mod)
+    if green and d_ok:
+        print("mods_save_judge: GREEN -- with %s on, the card writes went to the -mods card and the vanilla card's bytes never changed; "
+              "with the %s language pack chosen they stayed on the vanilla card" % (mod, pack["id"] if pack else "(no)"))
         return 0
     print("mods_save_judge: RED -- %s" % ("the vanilla card was written with a mod on" if (b_vanilla or changed) else
-                                       "no save reached the -mods card" if not b_mods else "see the figures"))
+                                       "no save reached the -mods card" if not b_mods else
+                                       "a language pack sent the saves off the vanilla card (%s)" % d_line if not d_ok else "see the figures"))
     return 1
 
 

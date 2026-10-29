@@ -1,0 +1,28 @@
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# language-bank=0  -- recorded against the disc's slot-0 text bank (the replay pins it)
+# Ice Climb's iceberg cave (levels\ice\iceclimb\bergint), the camera orbited: load_game.padlog's LOAD GAME on a card whose
+# save starts that chunk (tools/warp_save.py --chunk 'levels\ice\iceclimb\bergint' --place 0xFFFF on the hub card), CROSS
+# on the autosave notice, then the right stick: right 300 boundaries, left 300, up 120, down 120. The cave's far walls
+# (their scrolled caustics pass) and the ripple rings around the floating ice are on screen throughout
+# (tools/judges/icetex_judge.py).
+1 0000 128 128 128 128  # NONE
+1273 0008 128 128 128 128  # START
+1278 0000 128 128 128 128  # NONE
+1353 0040 128 128 128 128  # DOWN
+1356 0000 128 128 128 128  # NONE
+1403 4000 128 128 128 128  # CROSS
+1408 0000 128 128 128 128  # NONE
+1803 0040 128 128 128 128  # DOWN
+1806 0000 128 128 128 128  # NONE
+1903 4000 128 128 128 128  # CROSS
+1906 0000 128 128 128 128  # NONE
+2610 4000 128 128 128 128  # CROSS (the autosave notice)
+2614 0000 128 128 128 128  # NONE
+2700 0000 128 128 255 128  # right stick right
+3000 0000 128 128 128 128  # release
+3060 0000 128 128 0 128  # right stick left
+3360 0000 128 128 128 128  # release
+3420 0000 128 128 128 0  # right stick up
+3540 0000 128 128 128 255  # right stick down
+3660 0000 128 128 128 128  # release
+# end at boundary 3720

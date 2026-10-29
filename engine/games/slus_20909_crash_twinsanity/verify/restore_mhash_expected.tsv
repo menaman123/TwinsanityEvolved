@@ -12,7 +12,7 @@ ps2state_slot0_f57292.ps2st	0xfc8deca68213dc9c	33554432	16384	2097152	4	57292
 ps2state_slot0_f59991.ps2st	0x9d674482db08223c	33554432	16384	2097152	4	59991
 slowspot_f37092_s1789428268.ps2st	0xd5ff7161f930509e	33554432	16384	2097152	4	37096
 slowspot_f40298_s1789693059.ps2st	0x6f74f07f86f2ef4a	33554432	16384	2097152	4	40304
-# coldboot probe approval (Movie boot import, MovieCheckpoint::RegisterBoot): one row, authorised by the orchestrator
+# coldboot probe approval (Movie boot import, MovieCheckpoint::RegisterBoot): one row, approved in review
 # 2026-10-07 citing baseline/coldboot/probe/PROOF.txt (old_b120: PROOF-OK) and baseline/coldboot/mem.mhash line
 # `120,0x74bacf01b589b5a6`; the probe lives in baseline/coldboot/probe/, not OLD/save_states (RootColdbootProbeResumes).
 old_b120.ps2st	0x74bacf01b589b5a6	33554432	16384	2097152	4	121

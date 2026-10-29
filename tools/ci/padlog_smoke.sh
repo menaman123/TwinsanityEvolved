@@ -31,7 +31,7 @@ RUNNER="${RUNNER:-$BUILD/twinsanityevolved}"
 OUT="${OUT:-$BUILD/padlog_smoke}"
 rm -rf "$OUT"; mkdir -p "$OUT/mc_hub"
 if pgrep -f '(^|/)(twinsanityevolved|ps2recomp|ps2recomp_oracle|ps2recomp_release[.0-9a-f]*)( |$)' > /dev/null; then
-  echo "padlog_smoke: a game process is running (one at a time, charter)"; exit 3
+  echo "padlog_smoke: a game process is running (one at a time)"; exit 3
 fi
 
 # log : end boundary : last state (GameController name) : card (fresh = an empty --mc-dir, the pad logs' assumption;
@@ -82,8 +82,13 @@ for row in "${ROWS[@]}"; do
   [ "$verdict" = OK ] || { status=1; grep -iE "trap|call_indirect|SIG|abort|error" "$run" | head -5; }
 done
 # every level pad log has a row: the logs under fixtures/padlogs/ that are not a judge's own fixture (the title / menu logs
-# and the one-click level-select logs the judges drive themselves), an oracle transposition or a plan
-JUDGE_DRIVEN="title_intro_idle title_main_menu language_table_rows decal_footprints landing_dust"
+# and the one-click level-select logs the judges drive themselves), an oracle transposition or a plan. options_graphic
+# and mods_page_toggle are the Options routes the mods judges (mods_overlay, mods_import, mods_page) drive with their own
+# mods folders. hub_entry_ntsc is the hub log timed for the North American disc: ntsc_boot_judge replays it on that disc
+# (with padlog_judge and fixtures/judges/hub_entry_ntsc.json); this script replays every log on --iso, the European disc.
+# totem_hokum_user is the PS Vita's measurement route through Totem Hokum (level select, 50 Hz)
+# and totem_hokum_user_desktop the same inputs one boundary later, the desktop's timing of that route.
+JUDGE_DRIVEN="title_intro_idle title_main_menu language_table_rows language_rows language_pick_arabic decal_footprints landing_dust options_graphic mods_page_toggle hub_entry_ntsc totem_hokum_user totem_hokum_user_desktop"
 for f in fixtures/padlogs/*.padlog; do
   b="$(basename "$f")"
   case "$b" in *.oracle.padlog|*.script.padlog|level_select_*.padlog) continue ;; esac

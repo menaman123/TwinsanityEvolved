@@ -31,6 +31,10 @@ struct Vu1HleInput {
     // The analysis of this image (the loaded-program layout a program keys its
     // sub bodies on); null when the caller has none (image pins apply then).
     const Vu1ImageInfo* info = nullptr;
+    // false: the caller reads no data_writes from this run (a program may then
+    // leave them out: the diff of the whole 16 KB image costs more than many
+    // programs' own work); kicks and registers are produced either way.
+    bool data_writes = true;
 };
 
 struct Vu1HleOutput {

@@ -20,7 +20,7 @@ void EeTimers::AdvanceTo(uint64_t now_tick) {
             continue;
         }
         const uint64_t dticks = now_tick - t.baseline_tick;
-        const uint64_t raw = t.count_base + dticks * DerivedClocks::kCountsPerTick[TimerCodec::Clks(t.mode)];
+        const uint64_t raw = t.count_base + dticks * clocks_.CountsPerTick(TimerCodec::Clks(t.mode));   // the field rate's counts (60 Hz: kCountsPerTick)
         if (t.mode & TimerCodec::kModeZret) {
             const uint64_t period = t.comp ? t.comp : 0x10000ull;
             const uint64_t cycles = raw / period;

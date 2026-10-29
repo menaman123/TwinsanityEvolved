@@ -32,9 +32,8 @@ bool ZeroKick::RunStub(const Vu1HleInput& in, Vu1HleOutput& out, int cls) {
 
     VuChopRoundGuard chop_guard;
 
-    // Read-only use of data memory (the working copy is never written).
-    std::vector<u8>& s_mem = WorkingCopy(in);
-    QwPtr m{s_mem.data()};
+    // Read-only use of data memory: the caller's image is read in place (QwPtr's reads only; nothing is written to it).
+    QwPtr m{const_cast<u8*>(in.data)};
     out.regs = *in.regs;
     VUregs& r = out.regs;
 
@@ -155,7 +154,14 @@ bool ZeroKick::RunA(const Vu1HleInput& in, Vu1HleOutput& out) { return RunStub(i
 bool ZeroKick::RunB(const Vu1HleInput& in, Vu1HleOutput& out) { return RunStub(in, out, 1); }
 bool ZeroKick::RunC(const Vu1HleInput& in, Vu1HleOutput& out) { return RunStub(in, out, 2); }
 
-bool ZeroKick::RunCCont(const Vu1HleInput& in, Vu1HleOutput& out) {
+namespace {
+// The class-C continuation's body. kFull: the whole contract (the working copy of data memory, the MAC / STATUS chain,
+// the register file, the data writes). !kFull (ZeroKick::RunCContKicks): the kicks only -- the program runs over the
+// caller's image in place (the caller discards it) and the MAC / STATUS chain, which nothing but the final registers
+// observes (the FSAND tests read their producers' raw results directly), is not kept: the same arithmetic, the same
+// packets.
+template <bool kFull>
+bool RunCContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
     // FMAC rule for every op below: the RAW result feeds the MAC push, the
     // CLAMPED result is stored. A-form MULA/MADDA broadcast operands read
     // the RAW lane; dest-form broadcast ops read the CLAMPED lane. MOVE /
@@ -165,8 +171,8 @@ bool ZeroKick::RunCCont(const Vu1HleInput& in, Vu1HleOutput& out) {
 
     VuChopRoundGuard chop_guard;
 
-    std::vector<u8>& s_mem = WorkingCopy(in);
-    QwPtr m{s_mem.data()};
+    u8* const s_mem = kFull ? WorkingCopy(in).data() : memory;
+    QwPtr m{s_mem};
 
     out.regs = *in.regs;
     VUregs& r = out.regs;
@@ -174,7 +180,10 @@ bool ZeroKick::RunCCont(const Vu1HleInput& in, Vu1HleOutput& out) {
     auto W = [&](int vf, int k) -> u32& { return r.VF[vf].I[k]; };
     auto vi = [&](int n) -> u16& { return r.VI[n]; };
 
-    auto push = [&](const u32 b[4], u8 mask) { Push(mac, status, b, mask); };
+    auto push = [&](const u32 b[4], u8 mask) {
+        if constexpr (kFull) Push(mac, status, b, mask);
+        else (void)b, (void)mask;
+    };
     // Single-lane FMACs: raw = op(CF(a), CF(b)); push; store CF(raw).
     // Returns the RAW result bits (FSAND producers test its sign).
     auto sub_lane = [&](int vfd, int k, u32 a, u32 b) -> u32 {
@@ -455,16 +464,32 @@ bool ZeroKick::RunCCont(const Vu1HleInput& in, Vu1HleOutput& out) {
     }
 
     r.Q = q_reg;
-    r.mac_flag = mac;
-    r.status_flag = status;
     r.TPC = kCContTpc;
-    out.has_regs = true;
-
-    EmitDataWrites(s_mem.data(), in, out);
+    if constexpr (kFull) {
+        r.mac_flag = mac;
+        r.status_flag = status;
+        out.has_regs = true;
+        if (in.data_writes) EmitDataWrites(s_mem, in, out);
+    } else {
+        out.has_regs = false;   // MAC / STATUS not reproduced
+    }
     return true;
 }
+}  // namespace
 
-bool ZeroKick::RunACont(const Vu1HleInput& in, Vu1HleOutput& out) {
+bool ZeroKick::RunCCont(const Vu1HleInput& in, Vu1HleOutput& out) { return RunCContBody<true>(in, nullptr, out); }
+
+bool ZeroKick::RunCContKicks(const Vu1HleInput& in, uint8_t* memory, Vu1HleOutput& out) {
+    if (!memory || memory != in.data) return false;
+    return RunCContBody<false>(in, memory, out);
+}
+
+
+namespace {
+// The class-A continuation's body; kFull as RunCContBody's (!kFull: ZeroKick::RunAContKicks -- the kicks only, in place,
+// no MAC / STATUS chain: nothing in this program reads the flags back).
+template <bool kFull>
+bool RunAContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
     // Q consumption follows the FDIV pipeline: each MULq reads the quotient
     // of the DIV issued seven bundles earlier (q1..q4 below); the final Q is
     // the last DIV. Same-bundle hazards: a lower-pipe MR32 / SQ reads its
@@ -473,8 +498,8 @@ bool ZeroKick::RunACont(const Vu1HleInput& in, Vu1HleOutput& out) {
 
     VuChopRoundGuard chop_guard;
 
-    std::vector<u8>& s_mem = WorkingCopy(in);
-    QwPtr m{s_mem.data()};
+    u8* const s_mem = kFull ? WorkingCopy(in).data() : memory;
+    QwPtr m{s_mem};
 
     out.regs = *in.regs;
     VUregs& r = out.regs;
@@ -482,7 +507,10 @@ bool ZeroKick::RunACont(const Vu1HleInput& in, Vu1HleOutput& out) {
     auto W = [&](int vf, int k) -> u32& { return r.VF[vf].I[k]; };
     auto vi = [&](int n) -> u16& { return r.VI[n]; };
 
-    auto push = [&](const u32 b[4], u8 mask) { Push(mac, status, b, mask); };
+    auto push = [&](const u32 b[4], u8 mask) {
+        if constexpr (kFull) Push(mac, status, b, mask);
+        else (void)b, (void)mask;
+    };
     auto sub_lane = [&](int vfd, int k, u32 a, u32 b) {
         const float f = CF(bits2f(a)) - CF(bits2f(b));
         u32 raw[4] = {0, 0, 0, 0};
@@ -721,11 +749,22 @@ bool ZeroKick::RunACont(const Vu1HleInput& in, Vu1HleOutput& out) {
     }
 
     r.Q = q_reg;
-    r.mac_flag = mac;
-    r.status_flag = status;
     r.TPC = kACContTpc;
-    out.has_regs = true;
-
-    EmitDataWrites(s_mem.data(), in, out);
+    if constexpr (kFull) {
+        r.mac_flag = mac;
+        r.status_flag = status;
+        out.has_regs = true;
+        if (in.data_writes) EmitDataWrites(s_mem, in, out);
+    } else {
+        out.has_regs = false;   // MAC / STATUS not reproduced
+    }
     return true;
+}
+}  // namespace
+
+bool ZeroKick::RunACont(const Vu1HleInput& in, Vu1HleOutput& out) { return RunAContBody<true>(in, nullptr, out); }
+
+bool ZeroKick::RunAContKicks(const Vu1HleInput& in, uint8_t* memory, Vu1HleOutput& out) {
+    if (!memory || memory != in.data) return false;
+    return RunAContBody<false>(in, memory, out);
 }

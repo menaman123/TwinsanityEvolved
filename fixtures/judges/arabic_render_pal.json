@@ -1,0 +1,118 @@
+{
+  "judge": "tools/judges/arabic_render_judge.py",
+  "disc": "PAL SLES-52568; deterministic headless: --deterministic --no-sdl-input --no-audio --skip-movies --trace-state, an empty --mc-dir, a settings file the judge makes (--config: the pick is persisted there); TE_GFX_DIAG_TEXT=1, TE_GFX_DUMP_EVERY=10",
+  "run_seconds": 300,
+  "dump_every": 10,
+  "language": "arabic",
+  "runner_args": [
+    "--mods-dir",
+    "mods"
+  ],
+  "settings": [
+    "mods.arabic.enabled = on"
+  ],
+  "settings_why": "an earlier version's switch for the pack (a language pack is not a mod): ignored, and dropped when the language is written",
+  "bank": "mods/arabic/data/arabic.bank",
+  "tolerance_px": 0.6,
+  "runs": {
+    "pick": {
+      "padlog": "fixtures/padlogs/language_pick_arabic.padlog",
+      "stop_at": 1840,
+      "why": "English at the start; GAME OPTIONS > TEXT LANGUAGE stepped LEFT once: english wraps to arabic, the last text language (the pack's)",
+      "ini_must_hold": [
+        "game.text_language = arabic",
+        "game.speech_language = english"
+      ],
+      "ini_must_not_name": [
+        "mods.arabic.enabled",
+        "game.language"
+      ],
+      "frames": {
+        "game_options": {
+          "present": 1440,
+          "texts": [
+            "code:015",
+            "code:004",
+            "code:028",
+            "code:029"
+          ],
+          "row": "arabic",
+          "titled": [
+            "port:000",
+            "port:001"
+          ],
+          "min_lettering_pixels": 300,
+          "why": "right after the pick: the GAME OPTIONS page redrawn in Arabic, its rows titled in the pack's words, TEXT LANGUAGE reading 'arabic', SPEECH LANGUAGE 'english'"
+        },
+        "options": {
+          "present": 1600,
+          "texts": [
+            "code:011",
+            "code:013",
+            "code:014",
+            "code:015",
+            "code:004",
+            "code:028",
+            "code:029"
+          ],
+          "min_lettering_pixels": 400,
+          "why": "TRIANGLE back: the OPTIONS page in Arabic"
+        }
+      }
+    },
+    "next_start": {
+      "padlog": "fixtures/padlogs/language_table_rows.padlog",
+      "stop_at": 1590,
+      "why": "the next start with the same settings file (game.text_language = arabic, nothing named on the command line): the boot is in Arabic",
+      "frames": {
+        "notice": {
+          "present": 200,
+          "texts": [
+            "code:039"
+          ],
+          "min_lettering_pixels": 300,
+          "why": "the memory card check at the boot, fully grown in: a centred notice of several lines with a paragraph break"
+        },
+        "dialogue": {
+          "present": 1110,
+          "texts": [
+            "agentlab:050"
+          ],
+          "min_lettering_pixels": 150,
+          "why": "the intro's bottom line ('three years ago...', AgentLab 50) centred at the bottom while the title comes up, after its cross-fade with 'loading'"
+        },
+        "options": {
+          "present": 1330,
+          "texts": [
+            "code:011",
+            "code:013",
+            "code:014",
+            "code:015",
+            "code:004",
+            "code:028",
+            "code:029"
+          ],
+          "min_lettering_pixels": 400,
+          "why": "the OPTIONS page: its title, graphic / sound / game options and back rows, the two corner hints"
+        },
+        "game_options": {
+          "present": 1400,
+          "texts": [
+            "code:015",
+            "code:004",
+            "code:028",
+            "code:029"
+          ],
+          "row": "arabic",
+          "min_lettering_pixels": 300,
+          "why": "the GAME OPTIONS page before the language rows are stepped: the vibration and the two language rows, titled in the pack's words (TEXT LANGUAGE reads 'arabic')",
+          "titled": [
+            "port:000",
+            "port:001"
+          ]
+        }
+      }
+    }
+  },
+  "frozen": "2026-10-25: RED on the base runner (main 234718f: no --mods-dir, so the mod cannot be turned on; --language arabic falls back to english and nothing is shaped), GREEN on the Arabic change's runner (the four frames: forms = the rules, aligned, inside, no glyph missing in any of the run's shaped texts) | 2026-10-27: the pack is present in the mods folder (no --mod: no switch) and PICKED in the game's options (the pick run: TEXT LANGUAGE LEFT once -> arabic, persisted as game.text_language with the stale mods.arabic.enabled dropped); the next start reads it (the old four frames, the language row now 'arabic', both rows titled in the pack's words). RED on 43e9989 (the pack is a mod there, switched on by the settings file's mods.arabic.enabled: the step reaches its row and Arabic is drawn, but the pick is persisted as game.language = arabic -- no game.text_language / game.speech_language, the stale switch kept -- and no row is titled in the pack's words), GREEN on its change."
+}

@@ -1,0 +1,18 @@
+{
+  "name": "icetex_pal",
+  "padlog": "fixtures/padlogs/iceclimb_bergint_orbit.padlog",
+  "disc": "PAL SLES-52568 (deterministic, headless: --config none --deterministic --no-sdl-input --no-audio --skip-movies; the hub card from hub_entry.padlog to 2700 with TE_GFX_NO_DRAW=1, warped by tools/warp_save.py --place 0xFFFF)",
+  "chunk": "levels\\ice\\iceclimb\\bergint",
+  "presents": [3200, 3260],
+  "stop_margin": 200,
+  "run_seconds": 900,
+  "buckets": [8, 9],
+  "bucket_count": 28,
+  "names": {"8": "the ripple rings around the floating ice (bucket 8)", "9": "the far walls' caustics pass (bucket 9)"},
+  "min_judged": {"8": 1500, "9": 5000},
+  "max_missing_share": 0.005,
+  "particle_pad": 4,
+  "presents_note": "3200: the camera turning left over the water -- the far walls with their caustics (model 0xc25c60 / 0xc26398 / 0xcb5248 / 0xcb5280, texture 0xc47e44, additive, scrolled) and the rings (model 0xc25fc4, texture 0xc47a0c, additive, scrolled, 28 placed); 3260: the rings across the water in front of the far ice, close",
+  "why": "Ice Climb's iceberg cave: the far walls' textures and the ripple rings around the floating ice 'freak out' while the camera moves. Both are passes over a surface they nearly touch (GEQUAL, no depth write): the caustics ~50 GS Z units in front of the wall, the rings on the water. The GS's Z32 buffer compares the integers exactly over the title's 0..2^24 range; the port's window depth z/2^32 kept a vertex's Z to 128 units (no clip control) and the attachment to 256, so whole triangles of a pass lost the test wherever the rounding put them behind their surface, and which ones changed with the camera. The fix: ps2e_draw's depth_bits 24 (GS_Z24_DEPTH: window depth z/2^24, one depth step per Z unit). The judge: each pass's pixels where the exact GS test over the logged triangles shows it are magenta in the picture (TE_GFX_DIAG_MARK_BUCKET), at most 0.5 % missing.",
+  "frozen": "2026-10-28: RED on 177bfb4 (the base's pictures) -- the rings 84 of 3811 judged px missing = 2.20 % at 3200 and 349 of 6836 = 5.11 % at 3260, the walls 1840 of 18533 = 9.93 % at 3200 and 0 of 7423 at 3260; the same values on the fix with TE_GFX_DEPTH_Z32=1 (the old mapping, pixel-identical to the base); GREEN on the fix (8b41a38 and later): 0 missing in all four (judged 3811 / 18533 / 6836 / 7423), extra 0. The judge's own card gives the same judged counts as a card warped from another hub card"
+}

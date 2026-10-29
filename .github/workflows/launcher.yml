@@ -1,25 +1,34 @@
-# .github/workflows/launcher.yml -- the launcher players download: a portable Windows zip and a macOS .dmg, built by
-# tools/ci/release_launcher.ps1 / tools/ci/release_launcher.sh with the official Qt 6 kit.
+# .github/workflows/launcher.yml -- the launcher players download: a portable Windows zip, a macOS .dmg and a Linux
+# AppImage, built by tools/ci/release_launcher.ps1 / tools/ci/release_launcher.sh / tools/ci/release_launcher_linux.sh with
+# the official Qt 6 kit (the AppImage packed by linuxdeploy and its Qt plugin at pinned releases, sha256 in the script).
+# The launcher updates ITSELF from the same files: the Windows zip, the AppImage, and on macOS
+# the signed bundle zipped beside the dmg (twinsanityevolved-launcher-<version>-macos-arm64.zip).
 #
-# The launcher carries no game code: on its first run it installs the toolchain, clones the latest commit of this
-# repository and builds the game on the player's machine from their own disc image.
+# The launcher carries no game code and no game data (its title manifest and disc tables are names, sizes and hashes):
+# it recognises the player's own disc image, downloads the finished game for this computer, a PS Vita or another
+# computer from the newest release (release.yml's assets, checked against SHA256SUMS) and plays it. It never compiles
+# anything.
 #
-#   push to main / pull request    build + test + stage both launchers, uploaded as workflow artifacts
-#   tag v*                         the same, then a GitHub release with the zip, the dmg and their sha256 files
+#   push to main / pull request    build + test + stage the three launchers, uploaded as workflow artifacts
+#   workflow_call                  the same, as release.yml's `launcher` job on a version tag: its release job attaches
+#                                  the three files to the tag's one draft release and lists them in SHA256SUMS
 #   workflow_dispatch              by hand
+#
+# Local validation: actionlint .github/workflows/launcher.yml; bash -n tools/ci/release_launcher_linux.sh. The Linux job
+# was written without a Linux host and has not run on one yet.
 name: TwinsanityEvolved launcher
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
     paths-ignore: ['**.md', 'docs/**']
   pull_request:
     paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
+  workflow_call:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   QT_VERSION: 6.8.3
@@ -30,7 +39,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # `git describe` names the version
       - name: Qt ${{ env.QT_VERSION }} (msvc2022_64)
@@ -48,7 +57,7 @@ jobs:
       - name: tools/ci/release_launcher.ps1 (build, tests, stage, windeployqt, asset scan, zip)
         shell: pwsh
         run: ./tools/ci/release_launcher.ps1 -Qt "$env:QT_ROOT_DIR"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: twinsanityevolved-launcher-windows-x64
           path: |
@@ -63,7 +72,7 @@ jobs:
     env:
       TE_MIN_FREE_GB: 3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Ninja
@@ -76,33 +85,51 @@ jobs:
           target: desktop
           arch: clang_64
           cache: true
-      - name: tools/ci/release_launcher.sh (build, tests, stage, macdeployqt, codesign, asset scan, dmg)
+      - name: tools/ci/release_launcher.sh (build, tests, stage, macdeployqt, codesign, asset scan, dmg, the update zip)
         run: tools/ci/release_launcher.sh --qt "$QT_ROOT_DIR"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: twinsanityevolved-launcher-macos-arm64
           path: |
             dist/twinsanityevolved-launcher-macos-arm64.dmg
             dist/twinsanityevolved-launcher-macos-arm64.dmg.sha256
+            dist/twinsanityevolved-launcher-*-macos-arm64.zip
+            dist/twinsanityevolved-launcher-*-macos-arm64.zip.sha256
           if-no-files-found: error
 
-  release:
-    name: GitHub release
-    needs: [windows, macos]
-    if: startsWith(github.ref, 'refs/tags/v')
+  # Linux x86_64: the AppImage (one file: download, mark executable, run). The Qt kit's xcb platform plugin needs the
+  # X client libraries below to be deployed; the tests run offscreen (fontconfig); linuxdeploy runs extracted (no FUSE).
+  linux:
+    name: launcher linux-x86_64 (AppImage)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 60
+    env:
+      TE_MIN_FREE_GB: 3
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
         with:
-          pattern: twinsanityevolved-launcher-*
-          path: release
-          merge-multiple: true
-      # the release's notes are the game release's (release.yml, same tag); the launcher only adds its files
-      - uses: softprops/action-gh-release@v2
+          fetch-depth: 0
+      - name: Ninja and the libraries the Qt platform plugin is deployed with
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libfontconfig1 libfreetype6 libgl1 libegl1 libdbus-1-3 \
+            libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libxcb-xfixes0 libxcb-sync1 libxcb-shm0 \
+            libxcb-render0 libxcb1 libx11-xcb1 desktop-file-utils
+      - name: Qt ${{ env.QT_VERSION }} (Linux)
+        uses: jurplel/install-qt-action@v4
         with:
-          files: |
-            release/*.zip
-            release/*.dmg
-            release/*.sha256
-          fail_on_unmatched_files: true
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          cache: true
+      - name: tools/ci/release_launcher_linux.sh (build, tests, stage, linuxdeploy, asset scan, AppImage)
+        run: tools/ci/release_launcher_linux.sh --qt "$QT_ROOT_DIR"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: twinsanityevolved-launcher-linux-x86_64
+          path: |
+            dist/twinsanityevolved-launcher-linux-x86_64.AppImage
+            dist/twinsanityevolved-launcher-linux-x86_64.AppImage.sha256
+          if-no-files-found: error

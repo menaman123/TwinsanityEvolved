@@ -37,6 +37,8 @@
 #include <string>
 #include <vector>
 
+#include "disc_reader.h"
+
 class ReadTiming;
 
 namespace te::stream {
@@ -76,6 +78,11 @@ public:
     // A whole-range read of an open file's bytes (the audio owner's music windows). Short at the file's end.
     // Synchronous and off the drive timeline (the owned music asset plays from memory).
     bool ReadFileBytes(int32_t file, uint32_t offset, uint32_t size, std::vector<uint8_t>& out);
+    // The same range NOT read (the audio owner reads it in pieces off the game thread, te::io): its first image byte and
+    // the count ReadFileBytes would deliver (the file's and the image's ends clamp it). False for an unknown file.
+    bool FileRange(int32_t file, uint32_t offset, uint32_t size, uint64_t& image_byte, size_t& bytes) const;
+    // ... and the counters ReadFileBytes keeps, for such a range taken
+    void CountFileRead(uint32_t size, size_t bytes) { if (bytes != size) ++count_.short_reads; }
 
     // ----- the drive model's sites ---------------------------------------------------------------------------------
     // The boundary hook's work: land every read whose drive end lies inside the frame that just ended.
@@ -106,7 +113,9 @@ public:
 private:
     struct File { uint64_t image_offset = 0; uint32_t size = 0; std::string path; bool found = false; };
     struct Buffer { uint32_t address = 0, size = 0, sound_address = 0, sound_size = 0; };
-    // A read in flight (one per channel): what was asked, the bytes (read at issue), the drive's end.
+    // A read in flight (one per channel): what was asked, the bytes, the drive's end. The bytes are read at issue -- on the
+    // calling thread, or (te::io::Async(): the Vita) by the disc reader thread into `read`, waited for at the landing; the
+    // drive model's timeline is the same either way (it needs their count, known from the extents at issue).
     struct Pending {
         int32_t file = kNoFile;
         uint32_t offset = 0, size = 0, destination = 0;
@@ -115,7 +124,12 @@ private:
         uint64_t issue_boundary = 0;
         double end_ms = 0;
         std::vector<uint8_t> bytes;
+        te::io::Handle<te::io::Job> read;
     };
+    // The bytes ReadRange would return for the range (the file's and the image's ends clamp it), without reading them
+    size_t ExpectedBytes(uint64_t image_offset, uint32_t file_size, uint32_t offset, uint32_t size) const;
+    // A pending read's bytes (an async read waited for; a save state's)
+    static const std::vector<uint8_t>& PendingBytes(const Pending& p);
     bool ValidChannel(int32_t channel) const;
     uint32_t AllocateBuffer(uint32_t size) const;
     // Reads [offset, offset+size) of the file (clamped to the file) into out; false for an unknown file.
@@ -125,6 +139,9 @@ private:
     void LandPending(int32_t channel, const char* site);
     void ForceChannel(int32_t channel);
     uint64_t Boundary() const;
+    uint64_t DriveFrame() const;   // the drive model's frame clock (the boundaries; the fields in Vita play mode)
+    // the drive clock's frame in ms: kFrameMs at 60 Hz, 20 at the 50 Hz game rate
+    static double FrameMs();
     double FrameEndMs() const;
     void EnsureTiming();
 

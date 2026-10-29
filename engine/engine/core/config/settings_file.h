@@ -23,10 +23,19 @@ public:
     // Reads `path` (absent = empty text), applies SetInText, writes it back.
     // False with *err set on a refused key or an I/O failure.
     static bool Set(const std::string& path, const std::string& key, const std::string& value, std::string* err);
+    // Drops every line setting `key` from the ini text (every other line kept byte for byte); returns the new text.
+    static std::string RemoveInText(const std::string& text, const std::string& key, bool* changed = nullptr);
+    // Reads `path`, applies RemoveInText, writes it back when a line went (an absent file or key: nothing to do, true).
+    // A key the schema no longer knows can be removed (a retired key's line): only harness.* is refused.
+    static bool Remove(const std::string& path, const std::string& key, std::string* err);
     // The value of `key` in the ini text ("" and false when absent).
     static bool GetFromText(const std::string& text, const std::string& key, std::string* value);
     // Whether `key` may be written: a schema key that is not harness plumbing.
     static bool Writable(const std::string& key);
+
+private:
+    // `text` written whole to `path` through a temporary renamed into place
+    static bool WriteWhole(const std::string& path, const std::string& text, std::string* err);
 };
 
 }  // namespace ps2r

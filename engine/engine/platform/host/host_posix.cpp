@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <dirent.h>
 #include <filesystem>
 #include <fcntl.h>
 #include <pthread.h>
@@ -185,6 +186,24 @@ bool MakeDirectory(const char* path) {
 bool IsDirectory(const char* path) {
     struct stat st{};
     return ::stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+bool ListDirectory(const char* path, std::vector<DirectoryEntry>* out) {
+    if (out) out->clear();
+    if (!path || !*path) return false;
+    DIR* dir = ::opendir(path);
+    if (!dir) return false;
+    std::string base(path);
+    if (base.back() != '/') base.push_back('/');
+    while (const struct dirent* e = ::readdir(dir)) {
+        const std::string name(e->d_name);
+        if (name.empty() || name == "." || name == "..") continue;
+        // whether it is a directory: stat (the Vita's newlib dirent has no d_type; a symlinked folder counts as one)
+        struct stat st{};
+        const bool directory = ::stat((base + name).c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+        if (out) out->push_back(DirectoryEntry{name, directory});
+    }
+    ::closedir(dir);
+    return true;
 }
 int64_t FileSeek64(std::FILE* f, int64_t offset, int whence) { return ::fseeko(f, offset, whence); }
 int64_t FileTell64(std::FILE* f) { return ::ftello(f); }

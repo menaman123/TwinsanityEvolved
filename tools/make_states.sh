@@ -29,7 +29,7 @@ BIN="$BUILD/twinsanityevolved"
 OUT="${OUT:-$BUILD/states}"
 mkdir -p "$OUT"
 if pgrep -f "build/twinsanityevolved --iso|ps2recomp_release|ps2recomp_dist|app/host/ps2recomp" >/dev/null; then
-  echo "make_states: another game process is running (one at a time, charter)"; exit 3
+  echo "make_states: another game process is running (one at a time)"; exit 3
 fi
 meta_value() { sed -n "s/^$2=//p" "$1" | head -1; }
 status=0

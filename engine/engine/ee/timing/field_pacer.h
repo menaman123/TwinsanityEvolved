@@ -17,7 +17,7 @@
 //     shortens the following sleep instead of pushing the train later; more
 //     than one period behind (a debugger pause, a stall) re-anchors to now
 //     rather than firing a burst;
-//   * hz is the FIELD rate: 60 (the charter's game_hz; a perfect 60 Hz
+//   * hz is the FIELD rate: 60 (the default game_hz; a perfect 60 Hz
 //     console) or 50 (a PAL console's fields);
 //   * one field per tick, on the consumer's side too: the game-thread boundary
 //     takes its field through BoundaryProtocol::DeliverField -- exactly one
@@ -72,6 +72,18 @@ public:
     // The train's period in ns (1e9 / hz, rounded down).
     int64_t PeriodNs() const { return static_cast<int64_t>(1000000000ull / (hz_ == 0 ? 60u : hz_)); }
 
+    // An EXTERNAL edge source the train follows while UseExternalEdge(true) -- a display's vertical blank (the Vita's
+    // sceDisplayWaitVblankStart), so the fields are the display's refreshes and a consumer that shows one picture every n
+    // fields shows it on the same refresh phase every time: `wait` blocks until the next edge; the tick is noted when it
+    // returns (edge = that instant) and the timer train is re-anchored on it, so a switch back to the timer continues from
+    // the last external edge (no burst, no gap). Set before Start(); `wait` must return within a few periods (Stop()
+    // joins after it). Unset or off (the default): the timer train above, unchanged.
+    void SetExternalEdge(std::function<void()> wait) { external_wait_ = std::move(wait); }
+    void UseExternalEdge(bool on) { use_external_.store(on, std::memory_order_release); }
+    bool UsingExternalEdge() const { return use_external_.load(std::memory_order_acquire); }
+    // Ticks noted on the external edge (the rest are the timer's).
+    uint64_t ExternalTicks() const { return external_ticks_.load(std::memory_order_relaxed); }
+
 private:
     void Loop();
 
@@ -88,4 +100,7 @@ private:
     // change (seqlock in two words).
     std::atomic<int64_t> last_edge_ns_{0};
     std::atomic<uint64_t> last_edge_tick_{0};
+    std::function<void()> external_wait_;
+    std::atomic<bool> use_external_{false};
+    std::atomic<uint64_t> external_ticks_{0};
 };

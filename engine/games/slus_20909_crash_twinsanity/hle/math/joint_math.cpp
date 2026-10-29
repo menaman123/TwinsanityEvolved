@@ -40,6 +40,30 @@ float JointMath::Finite(float value) {
     return Float(bits);
 }
 #if defined(__vita__)
+namespace {
+// newlib's truncf (libm/common/sf_trunc.c, the eboot's) on a PRODUCT, inline and without a branch. newlib: s = the
+// unbiased exponent; s < 0 (|x| < 1): the sign alone; 0 <= s < 23: the bits below the binary point cleared; s >= 23:
+// x itself (whole already) -- and s == 128 (NaN, infinity): x + x. Here 0xff800000 >> s (arithmetic) = ~(0x007fffff >> s)
+// for 0 <= s <= 22 and all ones from 23 on, which keeps a NaN's or an infinity's bits as they are: the same as x + x
+// whenever x is the result of a VFP multiply -- infinity + infinity is that infinity, and a multiply's NaN is already
+// quiet (FPSCR.DN off: x + x of a quiet NaN is that NaN) or the default NaN (DN on: x + x is the default NaN too). The
+// fold's only input is such a product (|angle| times the fold's scale). Checked over every one of the 2^32 angles in
+// every rounding mode with FZ and DN off / on: cpuwork gamecodework/cull/foldtest.cpp.
+inline float TruncOfProduct(float x) {
+    uint32_t w;
+    std::memcpy(&w, &x, sizeof(w));
+    const int32_t s = int32_t((w >> 23) & 0xffu) - 127;
+    const int32_t shift = s < 0 ? 0 : (s > 23 ? 23 : s);
+    const uint32_t mask = uint32_t(int32_t(0xff800000u) >> shift) & (0x80000000u | ~uint32_t(s >> 31));
+    const uint32_t bits = w & mask;
+    float whole;
+    std::memcpy(&whole, &bits, sizeof(whole));
+    return whole;
+}
+}  // namespace
+// The fold, the polynomial and the sine inline where they are used (EulerRotation's six polynomials, Interpolate's
+// three): one block of independent chains for the compiler to interleave (a dependent VMLA waits 8 cycles on the A9)
+#define TE_JM_INLINE __attribute__((always_inline)) inline
 float JointMath::Product(float a, float b) { return a * b; }
 float JointMath::Sum(float a, float b) { return a + b; }
 float JointMath::Difference(float a, float b) { return a - b; }
@@ -62,27 +86,53 @@ float JointMath::MultiplyAdd(float a, float b, float sum) {
     // VuFloat::Fma: std::fma's result (the Vita: its product and sum rounded apart; newlib's fmaf is software)
     return Finite(::VuFloat::Fma(left, right, accumulated));
 }
+#define TE_JM_INLINE
 #endif
+#if defined(__vita__)
+// The exact form's values (Finite, the zero test, the division, Finite) without its volatile stores and loads and with
+// the zero test on the clamped bits: Finite leaves no NaN and turns a denormal into its signed zero, so `divisor == 0`
+// is (bits & 0x7fffffff) == 0 -- a VFP compare would be a VMRS flag transfer on the Cortex-A9
+float JointMath::Reciprocal(float value) {
+    const float divisor = Finite(value);
+    uint32_t bits;
+    std::memcpy(&bits, &divisor, sizeof(bits));
+    if ((bits & 0x7fffffffu) == 0) return Float((bits & 0x80000000u) ? 0xff7fffff : 0x7f7fffff);
+    return Finite(1.0f / divisor);
+}
+#else
 float JointMath::Reciprocal(float value) {
     volatile float divisor = Finite(value);
     if (divisor == 0) return Float(std::signbit(divisor) ? 0xff7fffff : 0x7f7fffff);
     volatile float result = 1.0f / divisor;
     return Finite(result);
 }
+#endif
 
-float JointMath::Fold(float angle) {
+TE_JM_INLINE float JointMath::Fold(float angle) {
     const float magnitude = std::fabs(angle);
     const float scale = Float(0xbe22f987);
-    const float magic = Float(0x4b400000);
     float residual = Product(magnitude, scale);
+#if defined(__vita__)
+    // The whole turns taken off by truncation. The program does it with the magic number below under the VU's chop
+    // (the exact form's Rounding); the Vita's fast form runs in the caller's rounding -- to nearest -- under which the
+    // magic number rounds to the NEAREST whole turn: past half a turn the fold then leaves the polynomial's range and
+    // sine / cosine come out wrong by up to 0.4 (every EulerRotation half angle beyond pi: one picture of a spinning
+    // object -- the title's logo -- drawn in a wrong rotation). Truncating is what the chop gives, in any rounding.
+    // std::trunc is a libcall on the Cortex-A9 (VFPv3 has no VRINTZ): newlib's truncf of the product, inline and
+    // without its branches (TruncOfProduct: the same bits), so the folds of an EulerRotation's six polynomials are no
+    // longer six calls the compiler cannot schedule across
+    residual = TruncOfProduct(residual);
+#else
+    const float magic = Float(0x4b400000);
     residual = MultiplyAdd(-1, magic, residual);
     residual = MultiplyAdd(1, magic, residual);
+#endif
     residual = MultiplyAdd(-magnitude, scale, residual);
     residual = MultiplyAdd(-1, 0.5f, residual);
     return Difference(std::fabs(residual), 0.25f);
 }
 
-float JointMath::Polynomial(float folded) {
+TE_JM_INLINE float JointMath::Polynomial(float folded) {
     const float squared = Product(folded, folded);
     const float fourth = Product(squared, squared);
     const float eighth = Product(fourth, fourth);
@@ -103,7 +153,7 @@ float JointMath::Arc(float cosine) {
     return Difference(Sum(base, base), adjusted);
 }
 
-float JointMath::Sine(float angle) {
+TE_JM_INLINE float JointMath::Sine(float angle) {
     return Polynomial(Fold(Difference(angle, Float(0x3fc90fd8))));
 }
 
@@ -265,12 +315,21 @@ float MacroClamp(float value) {
 }
 }  // namespace
 
+#if defined(__vita__)
+// The same clamps and operations without the volatile store and reload of every result (a float operation on the Vita's
+// VFP is IEEE single precision in the thread's own rounding either way; the volatile only cost a store, a load and a
+// forwarding stall per operation -- Lerp makes nine)
+float JointMath::ScalarSum(float a, float b) { return MacroClamp(MacroClamp(a) + MacroClamp(b)); }
+float JointMath::ScalarDifference(float a, float b) { return MacroClamp(MacroClamp(a) - MacroClamp(b)); }
+float JointMath::ScalarProduct(float a, float b) { return MacroClamp(MacroClamp(a) * MacroClamp(b)); }
+#else
 float JointMath::ScalarSum(float a, float b) { volatile float r = MacroClamp(a) + MacroClamp(b); return MacroClamp(r); }
 float JointMath::ScalarDifference(float a, float b) {
     volatile float r = MacroClamp(a) - MacroClamp(b);
     return MacroClamp(r);
 }
 float JointMath::ScalarProduct(float a, float b) { volatile float r = MacroClamp(a) * MacroClamp(b); return MacroClamp(r); }
+#endif
 
 JointMath::Vector JointMath::Lerp(const Vector& from, const Vector& to, float share) {
     Vector result{};

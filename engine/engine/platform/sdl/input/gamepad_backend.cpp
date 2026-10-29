@@ -211,10 +211,12 @@ void GamepadBackend::Poll(NormalizedInput& out) {
         SDL_GameController* gc = (SDL_GameController*)p.controller;
 
         GamepadRaw raw;
-        for (int a = 0; a < GamepadRaw::kAxes; a++)
-            raw.axis[a] = SDL_GameControllerGetAxis(gc, (SDL_GameControllerAxis)a);
-        for (int b = 0; b < GamepadRaw::kButtons; b++)
-            raw.button[b] = SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)b);
+        if (!(raw_source_ && pads_.size() == 1 && raw_source_(raw_user_, raw))) {
+            for (int a = 0; a < GamepadRaw::kAxes; a++)
+                raw.axis[a] = SDL_GameControllerGetAxis(gc, (SDL_GameControllerAxis)a);
+            for (int b = 0; b < GamepadRaw::kButtons; b++)
+                raw.button[b] = SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)b);
+        }
 
         NormalizedInput one;
         GamepadConvert::Convert(raw, deadzone_, one, sensitivity_, map_);

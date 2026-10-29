@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """root_mecha_bandicoot_meshes.py -- RootMechaBandicootMeshes: the owned mesh bucket after a savestate
 RESTORE never mixes owned and model producers inside one frame's material list, and the Mecha-Bandicoot
-fight resumed from the user's slot0 presents a frame.
+fight resumed from the tester's slot0 presents a frame.
 
 One play leg (`--harness-window`, the default profile, the state's own video.* selection, the s11 fight
 padlog: Resume from the pause menu, run/spin/jump/strafe inside the arena) of FRAMES frames from the
-state (`--state`; the user's slot0 saved on baf15a38 at frame 37165, in the pause menu of the boss arena).
+state (`--state`; the tester's slot0 saved on baf15a38 at frame 37165, in the pause menu of the boss arena).
 
 Census judge (run.meta of the leg):
   graphics_mesh_materials  mixed_frames=0            -- the admission gate: a frame is owned whole or model
@@ -24,7 +24,7 @@ arena box within the 5-bit floor; the comparison is REPORTED (play legs from a w
 frame-deterministic across binaries: the pace stall changes the title's own tick count) and judged
 only when `--judge-model-frame` is given.
 
-Red-before: the orchestrator's leg4 on baf15a38 read graphics_mesh_materials no_receipt=144000 next to
+Red-before: a reference leg on baf15a38 read graphics_mesh_materials no_receipt=144000 next to
 owned families replaced=0 -- every certifiable material of a restored image fell to the writer inside
 the owned bracket, which is the mixture this pin forbids (a state WITH receipts and one uncertifiable
 material would have mixed the two producers in one frame).

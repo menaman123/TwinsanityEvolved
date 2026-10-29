@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/platform/sdl/input/gamepad_convert.h"
 #include "engine/platform/sdl/input/input_backend.h"
 #include "engine/platform/sdl/input/pad_button_map.h"
 
@@ -72,6 +73,16 @@ public:
     // The gamepad-button remap (bindings.ini [pad]); default SDL standard layout.
     void SetButtonMap(const PadButtonMap& map) { map_ = map; }
     const PadButtonMap& ButtonMap() const { return map_; }
+    // A RAW SOURCE in place of SDL's GameController reads: Poll asks it for the one open pad's snapshot (the values
+    // SDL_GameControllerGetAxis / GetButton would answer) and converts it as before; `false` = SDL's reads this time. Only
+    // with exactly one pad open (several are merged by SDL's reads). Null (the default): SDL's reads. The PlayStation
+    // Vita's platform layer reads its controller straight from sceCtrl with SDL's own joystick values replicated: SDL's
+    // joystick update and its event chain cost the device's game thread ~0.3-0.5 ms a frame.
+    using RawSource = bool (*)(void* user, GamepadRaw& raw);
+    void SetRawSource(RawSource source, void* user) { raw_source_ = source; raw_user_ = user; }
+    // The open pads' SDL controllers (the raw source's check reads them): SDL_GameController* or null
+    size_t OpenPads() const { return pads_.size(); }
+    void* PadController(size_t i) const { return i < pads_.size() ? pads_[i].controller : nullptr; }
 
 private:
     struct Pad {
@@ -95,6 +106,8 @@ private:
     bool  enabled_ = true;
     bool  subsystem_ok_ = false;
     bool  ui_captured_ = false;
+    RawSource raw_source_ = nullptr;
+    void* raw_user_ = nullptr;
 };
 
 }  // namespace ps2r::platform::sdl

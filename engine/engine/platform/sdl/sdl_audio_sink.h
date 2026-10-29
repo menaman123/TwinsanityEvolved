@@ -1,8 +1,11 @@
 // platform/sdl/sdl_audio_sink.h -- the SDL2 audio device half: opens ONE output
 // device at the SPU2's native 48 kHz (no resampling on the main path), stereo
 // float, 512-sample buffer (~10.7 ms), and serves its callback from an
-// AudioPullRing. The device thread only ever READS the ring; it never calls
-// into the engine and nothing it observes flows back.
+// AudioPullRing. Without a refill (SetRefill) the device thread only ever READS
+// the ring; it never calls into the engine and nothing it observes flows back.
+// With one, the device thread first calls the owner's refill (a wall-clocked
+// producer that may push into the same ring, serialised with any other
+// producer by the owner's own lock), then pulls.
 //
 // Whether to open the device at all is the CALLER's rule: under the
 // deterministic profile (time.tick_sync = true) the composition root never
@@ -48,6 +51,12 @@ public:
     using Tap = void (*)(void* user, const float* interleaved, int frames);
     void SetTap(Tap tap, void* user) { tap_ = tap; tap_user_ = user; }
 
+    // A producer called on the device thread BEFORE every pull with the frames the device is about to pull: the owner
+    // tops the ring up (a play host mixing by wall time instead of by its game thread's ticks). Set before Open (the
+    // callback reads it unsynchronised); null = none, the ring is fed by its producer alone.
+    using Refill = void (*)(void* user, int frames);
+    void SetRefill(Refill refill, void* user) { refill_ = refill; refill_user_ = user; }
+
     // Format actually negotiated (equal to the request when Open returned true).
     int DeviceSampleRate() const;
     int DeviceChannels() const;
@@ -62,6 +71,8 @@ private:
     AudioPullRing* ring_          = nullptr;
     Tap            tap_           = nullptr;
     void*          tap_user_      = nullptr;
+    Refill         refill_        = nullptr;
+    void*          refill_user_   = nullptr;
     int            got_freq_      = 0;
     int            got_channels_  = 0;
     int            got_samples_   = 0;

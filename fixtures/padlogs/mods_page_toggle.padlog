@@ -1,0 +1,23 @@
+# twinsanityevolved padlog v1 -- the Mods page: the title -> main menu -> options -> mods (its rows: level select, speedrun mode -- the mods that apply while the game runs; a mod of the mods folder is switched in the launcher and has no row) -> down one row -> CROSS switches speedrun mode on at once -> held (16 boundaries a press, 60 after a page change)
+1 0000 128 128 128 128  # NONE
+1273 0008 128 128 128 128  # START
+1278 0000 128 128 128 128  # NONE
+1400 0040 128 128 128 128  # DOWN
+1404 0000 128 128 128 128  # NONE
+1416 0040 128 128 128 128  # DOWN
+1420 0000 128 128 128 128  # NONE
+1432 4000 128 128 128 128  # CROSS
+1436 0000 128 128 128 128  # NONE
+1508 0040 128 128 128 128  # DOWN
+1512 0000 128 128 128 128  # NONE
+1524 0040 128 128 128 128  # DOWN
+1528 0000 128 128 128 128  # NONE
+1540 0040 128 128 128 128  # DOWN
+1544 0000 128 128 128 128  # NONE
+1556 4000 128 128 128 128  # CROSS
+1560 0000 128 128 128 128  # NONE
+1632 0040 128 128 128 128  # DOWN
+1636 0000 128 128 128 128  # NONE
+1664 4000 128 128 128 128  # CROSS
+1668 0000 128 128 128 128  # NONE
+# end at boundary 1820

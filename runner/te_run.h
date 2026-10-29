@@ -15,6 +15,10 @@ size_t te_run_tls_size(void);
 void te_run_tls_save(void* out);
 void te_run_tls_restore(const void* in);
 uint32_t te_run_call_depth(void);
+#if defined(TE_W2C_COUNT)
+// a diagnosis build's module operation counters (te_run.c; CMake TE_VITA_W2C_COUNT)
+void te_w2c_count_read(uint32_t out[8]);
+#endif
 #ifdef __cplusplus
 }
 #endif

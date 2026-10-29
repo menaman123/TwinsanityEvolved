@@ -46,6 +46,9 @@ public:
     // The raw derived T0 count (no Start offset).
     uint64_t T0Counts() const;
     uint64_t DomainTick() const;
+    // The fields fired so far (every tick body: one per boundary under the deterministic profile; in play mode the fields
+    // the wall produced -- a late frame's and the tick lock's 2 / 3 per picture tick included): the stream drive's clock.
+    uint64_t Fields() const;
     // Boundaries passed (the logical boundary tick the engine's services take: Input::SampleBoundary, SaveStorage).
     uint64_t BoundaryCount() const { return boundaries_; }
     // The presenter's clock (Play only): the wall instant (steady-clock ns) of the pacer edge that delivered the latest
@@ -55,7 +58,7 @@ public:
     bool LatestFieldEdge(int64_t* edge_ns, uint64_t* field) const;
     // The game thread's time since the last boundary released it (ms; the frame's work so far): the presenter's census.
     double MsSinceRelease() const;
-    // T0 counts per field (9600 at 60 Hz): the game's frame budget (GameTimeHasTimeLeft's frameTicks).
+    // T0 counts per field (9600 at 60 Hz, 11520 at 50): one field of the game's clock (DerivedClocks::CountsPerTick(2)).
     uint64_t TicksPerField() const;
     // The in-frame charge (the stream drive model): T0 counts added to Ticks() for the rest of THIS frame --
     // the EE time a service's poll cost on the console (a STREAM status round trip), so the game's per-frame budget
@@ -96,6 +99,12 @@ public:
         // release and the next arrival): the EE's cost as the perf gate's ee_cpu_ms, independent of what the other threads
         // and the host's load do to the wall time.
         double tick_cpu_sum_ms;
+        // THE GAME TIME VS WALL: the T0 counts the game's clock advanced since Platform::Time::Initialise
+        // (576000 a second of game time), the wall seconds from then to the latest boundary (play; 0 deterministic), and
+        // the counts a field gives (576000 / field_hz: 9600 at 60, 11520 at 50).
+        uint64_t game_counts;
+        double game_wall_s;
+        uint64_t counts_per_field;
     };
     Census GetCensus() const;
 

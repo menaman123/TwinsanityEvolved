@@ -23,6 +23,9 @@ struct Settings {
     int frame_rate = 1;         // video.frame_rate: 0 = 30, 1 = 60 (default), 2 = 120, 3 = 144, 4 = 240, 5 = uncapped -- the
                                 // presenter's cadence (the engine's PresentPacer rates); `60` shows every picture the game makes,
                                 // so at a game rate of 50 Hz it is 50 frames a second
+    int tick_lock = 0;          // the Vita: display.tick_lock = auto | 60 | 30 -- the FRAME RATE row is the TICK LOCK there
+                                // (te_tick_lock.h): 0 auto (60/30, the default), 1 60, 2 30; the presenter stays at 60 (every
+                                // picture shown) and frame_rate is 1
     int game_hz = 60;           // game.hz as chosen: 50 (the PAL console's rate) or 60; takes effect at the next start
     int running_hz = 60;        // the game rate this run started with (te::Settings::field_hz)
 };

@@ -21,7 +21,7 @@ Sidebar::Sidebar(const QString& product, const QString& version, const QStringLi
     setMouseTracking(true);
     setAccessibleName(QStringLiteral("Pages"));
     open_ = new FlatButton(QStringLiteral("Open"), FlatButton::Quiet, this);
-    open_->setAccessibleName(QStringLiteral("Open the app-data folder"));
+    open_->setAccessibleName(QStringLiteral("Open the game folder"));
     connect(open_, &QAbstractButton::clicked, this, &Sidebar::openRequested);
     connect(&LauncherTheme::instance(), &LauncherTheme::changed, this, [this] { update(); });
 }
@@ -32,7 +32,12 @@ void Sidebar::setCurrent(int index) {
     update();
 }
 
-void Sidebar::setFooter(const QString& path) { footer_ = path; update(); }
+void Sidebar::setFooter(const QString& label, const QString& path) {
+    footerLabel_ = label;
+    footer_ = path;
+    open_->setVisible(!path.isEmpty());
+    update();
+}
 
 QRect Sidebar::itemRect(int index) const {
     return QRect(LauncherTheme::S2, kItemsTop + index * (kItemHeight + LauncherTheme::S1), width() - 2 * LauncherTheme::S2, kItemHeight);
@@ -88,7 +93,8 @@ void Sidebar::paintEvent(QPaintEvent*) {
     p.setFont(t.font(LauncherTheme::Caption));
     const QFontMetrics fm(p.font());
     const QRect footer(LauncherTheme::S3, height() - LauncherTheme::S3 - open_->height() - 18, width() - 2 * LauncherTheme::S3, 16);
-    p.drawText(footer, Qt::AlignLeft | Qt::AlignVCenter, fm.elidedText(QStringLiteral("app data: %1").arg(AppData::shortPath(footer_)), Qt::ElideMiddle, footer.width()));
+    if (!footer_.isEmpty())
+        p.drawText(footer, Qt::AlignLeft | Qt::AlignVCenter, fm.elidedText(QStringLiteral("%1: %2").arg(footerLabel_, AppData::shortPath(footer_)), Qt::ElideMiddle, footer.width()));
 }
 
 void Sidebar::mousePressEvent(QMouseEvent* event) {

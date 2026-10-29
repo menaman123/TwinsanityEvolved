@@ -39,4 +39,7 @@ public:
     // Decodes one block into 28 signed 16-bit samples, advancing `hist` so
     // consecutive blocks decode seamlessly. Returns the block's flags byte.
     static uint8_t DecodeBlock(const uint8_t block[kBlockBytes], History& hist, int16_t out[kBlockSamples]);
+    // The same decode in its first form (the nibble's scaling as a division per sample): the oracle DecodeBlock is
+    // tested against (bit for bit, every block), and the earlier builds' mix for an A/B (TE_AUDIO_MIX=legacy).
+    static uint8_t DecodeBlockReference(const uint8_t block[kBlockBytes], History& hist, int16_t out[kBlockSamples]);
 };

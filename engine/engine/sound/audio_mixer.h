@@ -9,6 +9,9 @@ namespace ps2r::sound {
 class PcmSource;
 class VoiceSource;
 
+// *out = std::clamp(x, -1.0f, 1.0f), bit for bit, through the float's bits (the mixer's output stage)
+void StoreUnitClamped(float* out, float x);
+
 // Ordered channel summation and Movie PCM on the game owner. This output
 // path has no register storage, command ring, sound RAM or retained voices.
 class AudioMixer final : public MixSource {

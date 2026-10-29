@@ -1,6 +1,9 @@
 // te_savestate.cpp -- see te_savestate.h.
 #include "te_savestate.h"
 
+#include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -75,6 +78,7 @@ w2c_env* g_env = nullptr;
 w2c_game* g_instance = nullptr;
 uint32_t g_build_id = 0;
 uint64_t g_loaded_boundary = 0;
+std::vector<std::string> g_last_sections;   // "TAG:vN" of the state Save wrote last (WriteSidecar's sections=)
 
 // The saved process's bases (from the head section) while a restore runs
 struct Bases {
@@ -388,6 +392,10 @@ ImageInfo Image() {
     return info;
 }
 
+#if defined(__APPLE__)
+namespace { volatile pid_t g_respawned_child = 0; }   // the game a respawning parent waits for (EnsureNoAslr)
+#endif
+
 void EnsureNoAslr(int argc, char** argv, std::string* warning) {
     if (std::getenv("TE_NO_RESPAWN")) return;
 #if defined(__APPLE__)
@@ -408,8 +416,15 @@ void EnsureNoAslr(int argc, char** argv, std::string* warning) {
     const int rc = posix_spawn(&pid, exe, nullptr, &attr, args.data(), environ);
     posix_spawnattr_destroy(&attr);
     if (rc != 0) { if (warning) *warning = "posix_spawn without ASLR failed; save states will be tied to this process's addresses"; return; }
+    // This process only waits now: what would stop it stops the game (the launcher's Stop is a SIGTERM to the process it
+    // started, a terminal's Ctrl-C a SIGINT), so those are forwarded to the child instead of leaving it running alone
+    g_respawned_child = pid;
+    struct sigaction forward {};
+    forward.sa_handler = [](int sig) { if (g_respawned_child > 0) kill(g_respawned_child, sig); };
+    sigemptyset(&forward.sa_mask);
+    for (int sig : {SIGTERM, SIGINT, SIGHUP, SIGQUIT}) sigaction(sig, &forward, nullptr);
     int status = 0;
-    waitpid(pid, &status, 0);
+    while (waitpid(pid, &status, 0) == -1 && errno == EINTR) {}
     std::fflush(stderr);
     _exit(WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status));
 #elif defined(__linux__)
@@ -453,8 +468,31 @@ bool Save(const std::string& path, uint64_t boundary, std::string* err) {
     uint64_t bytes = 0;
     for (const Blob& b : sections) bytes += b.payload.size();
     if (!ps2r::savestate::WriteStateFile(path, meta, sections, err)) return false;
+    g_last_sections.clear();
+    for (const Blob& b : sections) g_last_sections.push_back(ps2r::savestate::TagName(b.tag) + ":v" + std::to_string(b.version));
     std::fprintf(stderr, "[twinsanityevolved] savestate: saved %s at boundary %llu (%zu sections, %.1f MB)\n", path.c_str(),
                  (unsigned long long)boundary, sections.size(), double(bytes) / (1024.0 * 1024.0));
+    return true;
+}
+
+bool WriteSidecar(const std::string& path, uint64_t boundary, const std::string& detail, std::string* err) {
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    char build[48];
+    std::snprintf(build, sizeof build, "twinsanityevolved %08x", BuildId());
+    std::string text = "frame=" + std::to_string(boundary) + "\nwall_ms=" + std::to_string(ms) + "\nbuild_id=" + build +
+                       "\ncomposition=twinsanityevolved\nsections=";
+    for (size_t i = 0; i < g_last_sections.size(); ++i) text += (i ? "," : "") + g_last_sections[i];
+    text += "\n" + detail;
+    const std::string meta = path + ".meta", temporary = meta + ".tmp";
+    std::FILE* f = std::fopen(temporary.c_str(), "wb");
+    if (!f) { if (err) *err = "cannot create " + temporary; return false; }
+    const bool written = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+    const bool closed = std::fclose(f) == 0;
+    if (!written || !closed || std::rename(temporary.c_str(), meta.c_str()) != 0) {
+        std::remove(temporary.c_str());
+        if (err) *err = "cannot write " + meta;
+        return false;
+    }
     return true;
 }
 

@@ -95,6 +95,11 @@ public:
     // The common mixer asks before stepping the retained voice. A handled
     // silent voice still suppresses that old voice until an explicit handoff.
     bool StepVoice(uint32_t voice, float& left, float& right);
+    // `frames` StepVoice calls of one OWNED voice (the mixer's block form, VoiceSource::StepVoices): frame f's output into
+    // left[f] / right[f], the voice's state stepped exactly as by those calls. Returns false, writing nothing, when every
+    // output is +0 (the voice is held or not playing: its outputs are the +0 StepVoice writes). Voices step independently
+    // of one another: no voice's step reads or writes another's state.
+    bool StepVoices(uint32_t voice, uint32_t frames, float* left, float* right);
     void BeginMixTick();
     // Explicit service update: callers may share this with the owned command
     // batch/clock. It does not advance playback or read host wall time.

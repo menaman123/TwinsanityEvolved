@@ -14,7 +14,9 @@ add_library(ps2r_render_gl STATIC
     gl_texture_pool.cpp
     blend_ff_map.cpp
     cd_copy_policy.cpp
-    gl_draw_executor.cpp)
+    gl_fill_census.cpp
+    gl_draw_executor.cpp
+    gl_movie.cpp)
 target_include_directories(ps2r_render_gl PUBLIC ${CMAKE_SOURCE_DIR})
 # The GL header is PS2R_GL_HEADER from engine/platform/host/platform.h (the ONE
 # host header; it also defines GL_SILENCE_DEPRECATION / GL_GLEXT_PROTOTYPES). The

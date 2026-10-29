@@ -181,8 +181,14 @@ struct IopConfig {
 // SYSTEM (its font, its text quads: a seam call the title makes each frame), not
 // the host's perf overlay. Toggled on the title's Options > Display page,
 // persisted here, default off.
+// display.tick_lock -- the PlayStation Vita's FRAME RATE row (platform/nativeee te_tick_lock.h): `auto` (60/30: the game's
+// picture ticks at 60 while they fit a field, else locked to 30 -- 20 the floor -- each tick spanning its fields, every
+// picture drawn and held that many refreshes), `60` (every tick one field, as before), `30` (locked). Play mode on the Vita
+// only; nothing a deterministic run executes changes with it (not in the fingerprint).
+enum class TickLockSel : uint8_t { Auto = 0, Rate60, Rate30 };
 struct DisplayConfig {
     bool fps_counter = false;
+    TickLockSel tick_lock = TickLockSel::Auto;
 };
 
 struct GameConfig {
@@ -203,6 +209,12 @@ struct GameConfig {
     // no bank for falls back to the title's default bank, logged. Persisted
     // by the in-game Options menu / the launcher through SettingsFile.
     std::string language = "english";
+    // TwinsanityEvolved: the TEXT language and the SPEECH language as two settings (the Options
+    // menu's two rows; "" = not set). When both are absent `game.language` above names one language for both (the legacy
+    // key). Accepted by the reader and SettingsFile like the schema's keys, kept out of Keys() / settings_table.tsv and the
+    // fingerprint as the title's other keys are (TitleFields: the port's runner resolves them, the engine never does).
+    std::string text_language;
+    std::string speech_language;
 };
 
 struct LoaderConfig {
@@ -516,6 +528,11 @@ struct PathsConfig {
     // (+ .meta) and F8 / --load-state read them; empty = the harness out dir,
     // or <log_dir> when no harness is armed.
     std::string save_dir;
+    // TwinsanityEvolved's game folder: the memory cards' and the mods' folders, relative to the folder that
+    // holds ps2r.ini when not absolute ("" = <that folder>/memcards, <that folder>/mods). The port's runner resolves them;
+    // the engine never does (title-side keys: not in Keys()).
+    std::string memcards;
+    std::string mods;
 };
 
 struct MetaConfig {

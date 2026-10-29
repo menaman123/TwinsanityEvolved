@@ -9,6 +9,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <memory>
 
 #include "engine/gs/hle/ir/tex_read_view.h"
 #include "engine/gs/hle/texsrc/texture_decoder.h"
@@ -166,7 +167,15 @@ bool DecodeTextureResource(const te_gfx_texture_header& h, const uint8_t* packet
         if (error) *error = "texture size power out of range";
         return false;
     }
-    ps2r::gs::VramImage vram;
+    // one scratch GS memory per decoding thread, Reset between decodes (VramImage::Reset: the pages the last
+    // decode touched zeroed, every record as new) instead of a new 4 MiB image -- allocated and zero-filled per texture,
+    // the largest part of a texture's load on the device's CPU (the title loads ~320 of them, LoadingTitle and the boot's
+    // Starting state, the game thread waiting: device-run8.log "ps2e_gfx2_texture_loaded 26.6 %" of 601-900). The bytes
+    // and the records a decode reads are those of a new image.
+    static thread_local std::unique_ptr<ps2r::gs::VramImage> scratch;
+    if (scratch) scratch->Reset();
+    else scratch = std::make_unique<ps2r::gs::VramImage>();
+    ps2r::gs::VramImage& vram = *scratch;
     ps2r::gs::TransferEngine xfer(&vram);
     // The slot upload's BITBLTBUF (textures.cpp WriteTextureUpload): base 0 here, the buffer 64 pixels wide unless the
     // texels are 32-bit, the upload format.

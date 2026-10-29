@@ -25,7 +25,7 @@ composition (the deterministic fields stated one by one, `--profile deterministi
 pin scale 1 after them, plus video.scale=2) and judges the presenter's OUTPUT (p<key>.ppm,
 the window image after the display quad) beside the target grab (f<key>.ppm).
 
-This pin replays the user's s3 recording (tests/app/root_shadow_level_entry.padlog) for
+This pin replays the tester's s3 recording (tests/app/root_shadow_level_entry.padlog) for
 --frames N (default 7600: the autosave dialog is dismissed at tick 6477; Crash then stands
 idle on the beach) with --dump-frames, keeping only the pin frames, and judges:
 
@@ -394,7 +394,7 @@ def fake_frame(path, footprint, streak, presented=False, crash=True):
     write_ppm(path, w, h, pixel, flip=not presented)
 
 
-# The user's session 3 census (play_sessions/s3/run.meta, build 19:47:57): every default
+# The tester's session 3 census (play_sessions/s3/run.meta, build 19:47:57): every default
 # mesh refused at Shape and ran the model body inside the owned bracket; nothing accepted.
 S3_META = (
     "frames=7600\nfinalized=1\ngraphics_output_faulted=0\ngraphics_shadow_selection=owned\n"

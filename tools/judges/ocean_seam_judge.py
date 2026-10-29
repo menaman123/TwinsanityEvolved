@@ -7,7 +7,7 @@ texture at a grazing angle. The port divided every vertex's S and T by its Q and
 so the GPU interpolated the texture AFFINELY across each triangle (flat in screen space) where the GS interpolates S, T
 and Q linearly and divides PER PIXEL (perspective-correct). At a grazing angle the affine mapping bends the smooth sheen
 texture differently in every triangle: a lighter/darker region ending on a straight triangle edge -- the "hard angular
-seams" of the user's report. The judge measures, in fixed presented frames of the deterministic idle title run, the
+seams" of the report. The judge measures, in fixed presented frames of the deterministic idle title run, the
 longest THIN STRAIGHT luminance edge inside the water (the water mask from the frame's own blue range, the horizon's sheen
 band and a margin excluded): Sobel on the luminance, pixels over `grad_threshold` luminance/px, 8-connected components,
 each fitted by PCA -- a component is a straight seam when its extent along its major axis is >= N px and its RMS thickness

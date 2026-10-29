@@ -1,0 +1,109 @@
+{
+  "judge": "disc_identity_judge",
+  "description": "What a disc image IS, by content (retail = the whole image is a known retail dump, launcher/discs/redump.json). The PAL image used for development is a MODIFIED image (no dump matches it); a tiny ISO 9660 image the judge writes with SLES_525.68 and the core file names is 'unknown but plausible'; one without the core files is refused; one whose SYSTEM.CNF boots the North American program is refused by the region-aware loader with its sentence; the launcher's card says the same in plain words.",
+  "user_disc": {
+    "args": [
+      "--config",
+      "none",
+      "--dry-run"
+    ],
+    "disc_line": "[twinsanityevolved] disc: modified PAL image SLES-52568 (not the retail dump: 2,579,234,816 bytes vs 2,558,263,296; volume CRASH)",
+    "region_line": "[twinsanityevolved] region: PAL SLES-52568, the decompilation's own layout, 60 Hz (50 offered)",
+    "exit": 0,
+    "why": "the image is 2,579,234,816 bytes, the retail dump (Redump 4514, SLES-52568 v1.01) 2,558,263,296: the size alone is decisive, so the boot does not hash the image"
+  },
+  "user_disc_verified": {
+    "args": [
+      "--config",
+      "none",
+      "--dry-run",
+      "--verify-disc"
+    ],
+    "line_starts": "[twinsanityevolved] disc: modified PAL image SLES-52568 (not the retail dump: 2,579,234,816 bytes vs 2,558,263,296; volume CRASH); image crc32 bc22864a sha1 cf69ffd7ab5225ac5e8ffb6a494495743ba2b40a",
+    "why": "--verify-disc hashes the whole image: the CRC-32 and SHA-1 of this file (measured independently with shasum -a 1 / zlib), neither a Redump one"
+  },
+  "manifest": {
+    "identify_exit": 1,
+    "identify_text": "matches no known retail dump: 2,579,234,816 bytes vs 2,558,263,296 of Redump disc 4514 (SLES-52568 v1.01)",
+    "label_retail_exit": 2,
+    "label_retail_text": "REFUSED --label retail",
+    "why": "tools/discs/manifest.py compares the whole image with the table and refuses to label a file list retail unless the image is a known dump; no file is written"
+  },
+  "plausible": {
+    "volume": "JUDGEPAL",
+    "disc_line": "[twinsanityevolved] disc: unknown but plausible PAL image SLES-52568 (its program is not a known retail executable; volume JUDGEPAL) -- This disc of Crash Twinsanity (SLES-52568, PAL) does not carry the original release's program (SLES_525.68): it may not play as expected.",
+    "why": "a generated image: SYSTEM.CNF booting SLES_525.68, a made-up ELF of that name and the core files' names (byte patterns): the title's file set, but not the retail executable -- accepted with the warning"
+  },
+  "refused": {
+    "volume": "JUDGEBAD",
+    "disc_line": "[twinsanityevolved] disc: refused PAL image SLES-52568 (missing: CRASH6/CRASH.BD, CRASH6/CRASH.BH, CRASH6/MUSIC.MB, ...; volume JUDGEBAD) -- It is a PlayStation 2 disc (SLES-52568), but not Crash Twinsanity: CRASH6/CRASH.BD, CRASH6/CRASH.BH, CRASH6/MUSIC.MB and CRASH6/MUSIC.MH are missing.",
+    "why": "a generated image with SYSTEM.CNF and the program only: not the title's file set"
+  },
+  "ntsc_u": {
+    "volume": "JUDGEUSA",
+    "exit": 4,
+    "region_lines": [
+      "[twinsanityevolved] region: NTSC-U SLUS-20909, through an address map (built in), 60 Hz (50 not offered)",
+      "[twinsanityevolved] region: the European program's file names over this disc's archive index: StartUp\\Fonts\\Crash -> StartUp\\Fonts\\Crash_Euro"
+    ],
+    "refusal_line": "[twinsanityevolved] Crash Twinsanity: This disc's program (SLUS_209.09, sha256 894bbdca963ad021...) is not the one the port's address map for the North American disc was made from: another version or a modified program needs its own map (twinsanityevolved-modtool region-map --pal <the European disc> --disc <this disc>, put beside the game).",
+    "why": "a generated image whose SYSTEM.CNF boots a made-up SLUS_209.09 (with the core files): the region row is chosen by the disc's content, its built-in map is read (launcher/discs/region_map_SLUS-20909.json), but the map is keyed by the original program's sha256 -- the game stops before entering the game with the sentence a player reads",
+    "before_wave3": "exit 3 'needs an address map (region_map_SLUS-20909.json): none' -- the refusal of a release without a map (still the Japanese disc's: test_region_map)"
+  },
+  "launcher": {
+    "first_badge": "PAL · checking…",
+    "setup_badges": [
+      "PAL · modified disc"
+    ],
+    "setup_lines": [
+      "A modified copy of the PAL disc: 20 MB larger than the original."
+    ],
+    "games_badge": "PAL · modified disc",
+    "games_status": "Ready to play. A modified copy of the PAL disc: 20 MB larger than the original.",
+    "disc_verdict": "modified",
+    "disc_image_crc32": "bc22864a",
+    "disc_image_sha1": "cf69ffd7ab5225ac5e8ffb6a494495743ba2b40a",
+    "timeout_s": 600,
+    "why": "the launcher's own screens test (engine/tests/app/launcher/test_launcher_screens.cpp, offscreen) with the real title and the development disc: the card appears with the quick identity while the image is hashed on the worker ('PAL · checking…'), then reads 'PAL · modified disc' with the sentence; the Games card says the same"
+  },
+  "ntsc_u_real": {
+    "args": [
+      "--config",
+      "none",
+      "--dry-run"
+    ],
+    "disc_line": "[twinsanityevolved] disc: NTSC-U image SLUS-20909 v2.00 by size (the retail dump's 2,108,489,728 bytes; contents not verified: --verify-disc hashes the image; volume CRASH)",
+    "verify_args": [
+      "--config",
+      "none",
+      "--dry-run",
+      "--verify-disc"
+    ],
+    "verified_line_starts": "[twinsanityevolved] disc: retail NTSC-U image SLUS-20909 v2.00 (Redump disc 13689; volume CRASH); image crc32 06c5bb4a sha1 4f1a56f633c1b500bf3e39a0df1fdc8f101018ff",
+    "identify_text": "RETAIL: matches Redump disc 13689 (SLUS-20909 v2.00): size, CRC-32 and SHA-1",
+    "file_list": "launcher/discs/ntsc_u.json",
+    "check_text": "is the RETAIL file list -- every file matches",
+    "redump_id": 13689,
+    "launcher": {
+      "first_badge": "NTSC-U · checking…",
+      "badge": "NTSC-U · original disc",
+      "verdict": "retail",
+      "retail": true,
+      "region": "NTSC-U",
+      "serial": "SLUS-20909",
+      "executable": "SLUS_209.09",
+      "dump_version": "2.00",
+      "image_crc32": "06c5bb4a",
+      "image_sha1": "4f1a56f633c1b500bf3e39a0df1fdc8f101018ff",
+      "timeout_s": 900,
+      "why": "the launcher's models test (engine/tests/app/launcher/test_launcher_models.cpp realDiscIdentity, offscreen) with the real title's tables: the card says 'NTSC-U · checking…' while the image is hashed, then 'NTSC-U · original disc'",
+      "playable": true,
+      "state_badge": ""
+    },
+    "why": "the test set holds a retail NTSC-U v2.00 image (2,108,489,728 bytes, sha1 4f1a56f6... = Redump disc 13689, measured with shasum): the size names the dump at boot, --verify-disc proves it; tools/discs/manifest.py --label retail wrote launcher/discs/ntsc_u.json from it (the first file list of retail provenance: names, sizes, sha256s)"
+  },
+  "not_made": "a one-byte-modified copy of the development image: the image is a modified image already (it matches no dump), and no file list of retail provenance exists to name a changed file against -- a copy would only repeat 'modified' at the cost of a 2.6 GB file",
+  "refrozen": "2026-10-25 (same day): the refusal names the mod tool's region-map sub-command (engine/app/host/region_map_make.h, written after this fixture was first frozen) with the Python tool as the alternative",
+  "refrozen_ntsc": "2026-10-26: the real NTSC-U case (6) added with a retail NTSC-U v2.00 image (--ntsc-iso; SKIPPED without it); the synthetic NTSC-U case (4) refrozen: the North American disc now has a built-in map, so a made-up program is refused by the map's executable hash (exit 4) instead of 'no map' (exit 3); the launcher plays the real disc (playable, no second badge). RED on 59a161b (no launcher/discs/ntsc_u.json, no realDiscIdentity test), GREEN on its change",
+  "frozen": "2026-10-25: RED on the base (edb23b8: 'disc: PAL retail SLES-52568 (volume CRASH); 18 of 45 files hashed', no --verify-disc, no region line, the NTSC-U image fails later on SLES_525.68 not found, the card 'Original disc'); GREEN on its change"
+}

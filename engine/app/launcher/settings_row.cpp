@@ -26,39 +26,62 @@ SettingsRow::SettingsRow(const SettingsRowSpec& spec, QWidget* parent) : QWidget
     help_->setWordWrap(true);
     help_->setFixedWidth(420);
     help_->setVisible(!spec.help.isEmpty());
-    help_->setMinimumHeight(help_->heightForWidth(420));   // a wrapped label's height, so the row below never overlaps
-    QWidget* control = nullptr;
+    help_->setMinimumHeight(qMax(0, help_->heightForWidth(420)));   // a wrapped label's height, so the row below never overlaps
     if (spec.kind == "switch") {
         switch_ = new SwitchControl(this);
         switch_->setAccessibleName(spec.label);
         connect(switch_, &QAbstractButton::toggled, this, [this](bool on) { emit valueChanged(spec_.key, on ? QStringLiteral("on") : QStringLiteral("off")); });
-        control = switch_;
-    } else if (spec.choices.size() <= kMaxSegments) {
-        segmented_ = new SegmentedControl(this);
-        QStringList labels, values;
-        for (const SettingsChoice& c : spec.choices) { labels << c.label; values << c.value; }
-        segmented_->setItems(labels, values);
-        segmented_->setAccessibleName(spec.label);
-        connect(segmented_, &SegmentedControl::valueChanged, this, [this](const QString& v) { emit valueChanged(spec_.key, v); });
-        control = segmented_;
+        control_ = switch_;
     } else {
-        popup_ = new FlatButton(spec.choices.isEmpty() ? QString() : spec.choices.first().label, FlatButton::Secondary, this);
-        popup_->setAccessibleName(spec.label);
-        popupValue_ = spec.choices.isEmpty() ? QString() : spec.choices.first().value;
-        connect(popup_, &QAbstractButton::clicked, this, &SettingsRow::showPopup);
-        control = popup_;
+        control_ = buildChoiceControl();
     }
     auto* grid = new QGridLayout(this);
     grid->setContentsMargins(0, LauncherTheme::S2, 0, LauncherTheme::S2);
     grid->setHorizontalSpacing(LauncherTheme::S3);
     grid->setVerticalSpacing(LauncherTheme::S1);
     grid->addWidget(label_, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
-    grid->addWidget(control, 0, 1, Qt::AlignLeft | Qt::AlignVCenter);
+    grid->addWidget(control_, 0, 1, Qt::AlignLeft | Qt::AlignVCenter);
     grid->addWidget(help_, 1, 1, Qt::AlignLeft);
     grid->setColumnStretch(2, 1);
     connect(&t, &LauncherTheme::changed, this, &SettingsRow::restyle);
     restyle();
     setValue(spec.defaultValue);
+}
+
+QWidget* SettingsRow::buildChoiceControl() {
+    if (spec_.choices.size() <= kMaxSegments) {
+        segmented_ = new SegmentedControl(this);
+        QStringList labels, values;
+        for (const SettingsChoice& c : spec_.choices) { labels << c.label; values << c.value; }
+        segmented_->setItems(labels, values);
+        segmented_->setAccessibleName(spec_.label);
+        connect(segmented_, &SegmentedControl::valueChanged, this, [this](const QString& v) { emit valueChanged(spec_.key, v); });
+        return segmented_;
+    }
+    popup_ = new FlatButton(spec_.choices.first().label, FlatButton::Secondary, this);
+    popup_->setAccessibleName(spec_.label);
+    popupValue_ = spec_.choices.first().value;
+    connect(popup_, &QAbstractButton::clicked, this, &SettingsRow::showPopup);
+    return popup_;
+}
+
+void SettingsRow::setChoices(const QVector<SettingsChoice>& choices) {
+    if (switch_ || choices.isEmpty()) return;
+    bool same = choices.size() == spec_.choices.size();
+    for (int i = 0; same && i < choices.size(); ++i) same = choices[i].value == spec_.choices[i].value && choices[i].label == spec_.choices[i].label;
+    if (same) return;
+    const QString was = value();
+    spec_.choices = choices;
+    auto* grid = static_cast<QGridLayout*>(layout());
+    grid->removeWidget(control_);
+    control_->hide();
+    control_->deleteLater();
+    segmented_ = nullptr;
+    popup_ = nullptr;
+    control_ = buildChoiceControl();
+    grid->addWidget(control_, 0, 1, Qt::AlignLeft | Qt::AlignVCenter);
+    setLocked(locked_);
+    setValue(was);
 }
 
 QString SettingsRow::value() const {
@@ -83,10 +106,11 @@ void SettingsRow::setValue(const QString& value) {
 void SettingsRow::setHelpOverride(const QString& help) {
     help_->setText(help.isEmpty() ? spec_.help : help);
     help_->setVisible(!help_->text().isEmpty());
-    help_->setMinimumHeight(help_->heightForWidth(420));
+    help_->setMinimumHeight(qMax(0, help_->heightForWidth(420)));
 }
 
 void SettingsRow::setLocked(bool locked) {
+    locked_ = locked;
     if (switch_) switch_->setEnabled(!locked);
     if (segmented_) segmented_->setEnabled(!locked);
     if (popup_) popup_->setEnabled(!locked);

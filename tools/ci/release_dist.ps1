@@ -12,8 +12,9 @@
 #      ffmpeg[avcodec,swscale] -- LGPL features only) through the vcpkg toolchain file chain-loaded by ours; the same
 #      toolchain file is forwarded to the engine's ExternalProject (CMakeLists.txt). -BuildDir defaults to the preset's
 #      binaryDir (build-windows-release[-lto]);
-#   3. stage dist\windows-x64\: twinsanityevolved.exe + every DLL vcpkg's applocal deployment placed beside the built exe,
-#      BUILD-ID, README.md (the user half), LICENSE, THIRD_PARTY_NOTICES.md +
+#   3. stage dist\windows-x64\: twinsanityevolved.exe, twinsanityevolved-modtool.exe + every DLL vcpkg's applocal deployment placed beside the built exe,
+#      BUILD-ID, README.md (the player half), RELEASE-NOTES.txt (what the README's What's new links), LICENSE,
+#      THIRD_PARTY_NOTICES.md +
 #      licenses\ (the engine's committed texts + vcpkg's share\<port>\copyright), fixtures\padlogs\;
 #   4. the asset scan over the staged folder (tools/ci/asset_scan.py: zero findings);
 #   5. dist\twinsanityevolved-windows-x64.zip + .sha256.
@@ -115,7 +116,7 @@ if (-not $SkipBuild) {
     if ($rc -ne 0) { throw "release_dist.ps1: configure failed ($rc)" }
 
     Step "build (game wasm, wasm2c, engine libs, runner, tests)"
-    $buildArgs = @("--build", $BuildDir, "--target", "twinsanityevolved", "te_tests", "te_fiber_test")
+    $buildArgs = @("--build", $BuildDir, "--target", "twinsanityevolved", "twinsanityevolved-modtool", "te_tests", "te_fiber_test")
     if ($Jobs -gt 0) { $buildArgs += @("-j", "$Jobs") }
     $rc = Invoke-Native { cmake @buildArgs }
     if ($rc -ne 0) { throw "release_dist.ps1: build failed ($rc)" }
@@ -132,6 +133,10 @@ Step "stage ($Dist)"
 if (Test-Path $Dist) { Remove-Item -Recurse -Force $Dist }
 New-Item -ItemType Directory -Force -Path $Dist, (Join-Path $Dist "licenses"), (Join-Path $Dist "fixtures") | Out-Null
 Copy-Item $Bin (Join-Path $Dist "twinsanityevolved.exe")
+# the mod importer on the command line (the launcher's Mods page uses the same library)
+$ModTool = Join-Path $BuildDir "twinsanityevolved-modtool.exe"
+if (-not (Test-Path $ModTool)) { throw "release_dist: no mod tool at $ModTool (build first)" }
+Copy-Item $ModTool (Join-Path $Dist "twinsanityevolved-modtool.exe")
 # Every DLL vcpkg's applocal deployment placed beside the built exe (SDL2, avcodec, avutil, swscale and their closure).
 Get-ChildItem -Path $BuildDir -Filter "*.dll" -File | ForEach-Object { Copy-Item $_.FullName (Join-Path $Dist $_.Name) }
 $pdb = Join-Path $BuildDir "twinsanityevolved.pdb"
@@ -147,13 +152,21 @@ $gameRev = (git -C (Join-Path $Root "game") rev-parse HEAD).Trim()
     "built   $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
 ) | Set-Content -Encoding ASCII (Join-Path $Dist "BUILD-ID")
 Get-Content (Join-Path $Dist "BUILD-ID")
-# The user half of README.md: from the top to the first "## Build" heading.
+# The player half of README.md: from the top to the first "## Build" heading.
 $readme = Get-Content (Join-Path $Root "README.md")
 $cut = [Array]::IndexOf(($readme | ForEach-Object { $_ -match '^## Build' }), $true)
 if ($cut -lt 0) { $cut = $readme.Count }
 $readme[0..([Math]::Max($cut - 1, 0))] | Set-Content -Encoding UTF8 (Join-Path $Dist "README.md")
+Copy-Item (Join-Path $Root "RELEASE-NOTES.txt") (Join-Path $Dist "RELEASE-NOTES.txt")   # the README's What's new links it
 Copy-Item (Join-Path $Root "LICENSE") (Join-Path $Dist "LICENSE")
 Copy-Item -Recurse (Join-Path $Root "fixtures\padlogs") (Join-Path $Dist "fixtures\padlogs")
+# The repository's own mods (mods\<id>\mod.json; the compiled-in C mods excepted): the Arabic text-only language today
+Get-ChildItem (Join-Path $Root "mods") -Directory | ForEach-Object {
+    $mj = Join-Path $_.FullName "mod.json"
+    if ((Test-Path $mj) -and -not ((Get-Content $mj -Raw) -match '"kind":\s*"builtin"|"api":\s*"c"')) {
+        Copy-Item -Recurse $_.FullName (Join-Path (Join-Path $Dist "mods") $_.Name)
+    }
+}
 # Licence texts: the engine's committed set + vcpkg's copyright files for the two ports.
 $licSrc = Join-Path $Engine "tools\dist\licenses"
 foreach ($f in @("SDL2-LICENSE.txt", "FFmpeg-COPYING.LGPLv2.1.txt")) { Copy-Item (Join-Path $licSrc $f) (Join-Path $Dist "licenses\$f") }

@@ -16,7 +16,7 @@ compile_commands.json
 !/tools/toolchain/README.md
 !/tools/toolchain/PINS.sha256
 
-# --- GAME DATA OF ANY KIND: never in this tree (charter) ---
+# --- GAME DATA OF ANY KIND: never in this tree (tools/ci/asset_scan.py) ---
 *.iso
 *.ISO
 *.bin
@@ -98,6 +98,6 @@ __pycache__/
 *.py[cod]
 .venv/
 
-# --- the user's manual play dirs and build logs in the checkout (never committed) ---
+# --- manual play dirs and build logs in the checkout (never committed) ---
 my_play*/
 build*.log

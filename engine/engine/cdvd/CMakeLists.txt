@@ -1,9 +1,10 @@
 # engine/cdvd -- the disc. Stage 4D: the ISO9660
-# volume (IsoFs), the sector/file read service the IOP readers park on
+# volume (IsoFs) and the mods' overlay composed over it (DiscOverlay), the sector/file read service the IOP readers park on
 # (ReadEngine = CdvdReader), the libcdvd SDK rows (LibcdvdBindings). Stage 4D': the
 # sceCdSt* ring (StreamReader) and the completion-visibility meter (DeliveryMeter).
 add_library(ps2r_cdvd STATIC
     iso_fs.cpp
+    disc_overlay.cpp
     read_engine.cpp
     stream_reader.cpp
     delivery_meter.cpp

@@ -1,0 +1,133 @@
+{
+  "judge": "mods_page_judge",
+  "disc": "PAL SLES-52568 (the development image). Every run deterministic headless: --deterministic --no-sdl-input --no-audio --skip-movies --trace-state, an empty --mc-dir, TE_GFX_HEADLESS=1 TE_GFX_DIAG_TEXT=1 (every text the game draws logged with its string)",
+  "generator": "tools/mods/make_fixture_overlay.py",
+  "generator_kinds": "order",
+  "code_mod": {
+    "id": "antagony",
+    "why": "a modified executable as the importer records one: data changes and code changes, no payload (only mod.json and an empty disc/ tree); OFF -- the base drew its 'code changes not supported' note under its row whatever its switch",
+    "manifest": {
+      "schema": 2,
+      "id": "antagony",
+      "kind": "disc",
+      "name": "Ant Agony [remix]",
+      "author": "the mods page judge",
+      "version": "1.2",
+      "description": "A modified executable: its data changes apply, its code changes cannot (no payload: an empty disc tree).",
+      "source": {
+        "kind": "folder",
+        "artefact": "antagony",
+        "sha256": ""
+      },
+      "base": {
+        "region": "PAL",
+        "executable": "SLES_525.68"
+      },
+      "files": [],
+      "executable": {
+        "data_changes": {
+          ".rodata": 4
+        },
+        "code_changes": [
+          "FUN_001ac8d0 Font::ConstructBase",
+          "FUN_001acb10 Font::Draw"
+        ]
+      }
+    }
+  },
+  "usa_mod": {
+    "id": "usa_left_out",
+    "why": "a mod made over the North American disc as the importer writes one (a real USA crate's import row: the North American archive's size and hashes, no game data): ON, and on this European disc the base check leaves it out at the start -- the census does not count it, the start-up log line names the region; the base drew 'made for the north american disc' under its row. Its recipe is the identity over this disc's archive (base 0 <the disc's CRASH6/CRASH.BD size>), so a game that composed it anyway would read the disc's own bytes",
+    "manifest": {
+      "schema": 2,
+      "id": "usa_left_out",
+      "kind": "disc",
+      "name": "Nitro USA [judge]",
+      "author": "the mods page judge",
+      "version": "v1.64",
+      "description": "A mod made over the North American disc (its archive recipe records that disc's archive).",
+      "source": {
+        "kind": "modcrate",
+        "artefact": "Nitro_USA.zip",
+        "sha256": ""
+      },
+      "base": {
+        "region": "NTSC-U",
+        "executable": "SLUS_209.09"
+      },
+      "files": [
+        {
+          "path": "CRASH6/CRASH.BD",
+          "form": "ranges",
+          "bytes": 1041890518,
+          "base_bytes": 890851747,
+          "base_sha256": "eeedcae83d4e0c3ff483fe9f8afa8d3822bd734027434a7a1abbb84273dd17d7",
+          "base_sample_sha256": "580d3a04a2a0644b2a712e57d324b800e871d01a4b693bb00bfc324866ebcd56",
+          "base_sample_windows": 64,
+          "base_sample_window_bytes": 65536
+        }
+      ]
+    }
+  },
+  "language_mod": "mods/arabic",
+  "settings": [
+    "mods.order = arabic,antagony,order_a,order_b,usa_left_out",
+    "mods.arabic.enabled = on",
+    "mods.order_a.enabled = on",
+    "mods.order_b.enabled = on",
+    "mods.usa_left_out.enabled = on"
+  ],
+  "page": {
+    "padlog": "fixtures/padlogs/mods_page_toggle.padlog",
+    "stop_at": 1820,
+    "run_seconds": 600,
+    "rows": [
+      "level select",
+      "speedrun mode : off"
+    ],
+    "row_pattern": " : (off|on)$",
+    "toggled": "speedrun",
+    "toggle_log": "mods: speedrun ON",
+    "row_after": "speedrun mode : on",
+    "min_draws": 10,
+    "never_drawn": [
+      "order a",
+      "order b",
+      "ant agony",
+      "nitro usa",
+      "arabic",
+      "code changes not supported",
+      "could not be applied to this disc",
+      "made for the",
+      "at the next start",
+      "in game options, language"
+    ],
+    "left_out_log": "mods: the disc overlay left out usa_left_out: it was made for the North American disc, and this is the European disc (",
+    "folder_keys": [
+      "mods.order_a.enabled = on",
+      "mods.order_b.enabled = on",
+      "mods.usa_left_out.enabled = on"
+    ],
+    "never_written": [
+      "mods.antagony.enabled"
+    ],
+    "why": "the route walks title -> main menu -> options -> mods, one row down and CROSS. The mods folder holds the order pair (order_a, order_b: ON, switched in the launcher -- the settings file), the code-changes mod (OFF), a North American mod (ON, left out on this disc by the base check) and the Arabic language pack (an earlier version's switch on, first in mods.order). The page lists ONLY the mods that apply while the game runs: 'level select' and 'speedrun mode : off|on' -- no folder mod's name, no note, nothing about the pack, and no other '<name> : off|on' row; the second row is speedrun mode, and CROSS switches it on at once (the log, the row reads 'speedrun mode : on', the settings file gets mods.speedrun.enabled = on). Nothing in the game writes a folder mod's key: the launcher's lines are as they were and none is added. The start-up log keeps the left-out line"
+  },
+  "applied": {
+    "changed": "graphic optionb",
+    "also": "sound optionz",
+    "original": "graphic options",
+    "census_layers": 2,
+    "min_draws": 50,
+    "why": "the overlays the launcher switched on still apply in the same run: the OPTIONS page the route passes draws order_b's line (mods.order puts order_b last: 'graphic optionb', and its 'sound optionz'), never the disc's 'graphic options'; the census row counts two layers (the left-out mod is not one)"
+  },
+  "base_route": {
+    "padlog": "fixtures/padlogs/options_graphic.padlog",
+    "stop_at": 1700,
+    "run_seconds": 600,
+    "string": "graphic options",
+    "min_draws": 100,
+    "why": "the vanilla run of the OPTIONS route (no settings file, no mods folder) draws the disc's 'graphic options' (the route reaches the page): the reference for 'applied'"
+  },
+  "frozen": "2026-10-25: RED on the base (edb23b8: its Mods page holds four mods -- the built-ins and the first two of the folder by id --, has no notes and switches a folder mod for the session; the route's fourth DOWN lands on back); GREEN on its change | 2026-10-27: a language pack is not a mod -- the page has no row, switch or note for mods/arabic (in the folder, first in mods.order, its old switch on); the route's toggle is the third row down (one fewer DOWN in mods_page_toggle.padlog). RED on 43e9989 (the page draws the pack's row and its 'in game options, language' note -- 'arabic' x526 -- and the route's CROSS lands on another row: no 'order_a ON from the next start'), GREEN on its change. | 2026-10-27: a mod of the mods folder is switched in the launcher only -- the page lists level select and speedrun mode alone (no folder mod's row, switch or note); the overlays still apply; the route's CROSS is speedrun mode (one row down, mods_page_toggle.padlog rewritten). Frozen with RED on 21f1107 and GREEN on its change"
+}

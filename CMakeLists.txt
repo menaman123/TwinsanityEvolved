@@ -36,11 +36,22 @@ endif()
 # arm-vita-eabi GCC, newlib; armv7-a, 32-bit pointers) with TE_VITA=ON. Every Vita difference in this tree sits under
 # `if(TE_VITA)`; the macOS, Linux and Windows configurations are untouched by it. What differs: no window and no GL 4.1
 # adapter (the engine's ps2e draw surface is its NULL arm: draws counted, nothing rasterised), SDL2's Vita port for the
-# pads (sceCtrl) and the audio device (sceAudioOut), FFmpeg from the VitaSDK packages, no save states / autopilot /
+# pads (sceCtrl) and the audio device (sceAudioOut), FFmpeg built for the lane (tools/vita/ffmpeg_vita.sh: the engine's
+# LGPL recipe cross-compiled), no save states / autopilot /
 # probe (host-process features), the runner's arguments baked in (ux0:data/twinsanity/), and the eboot packed as a .vpk.
 option(TE_VITA "The PlayStation Vita lane: cross-compiled through cmake/vita.toolchain.cmake (the vita-* presets)" OFF)
 if(TE_VITA AND NOT VITA)
     message(FATAL_ERROR "TwinsanityEvolved: TE_VITA=ON needs the Vita toolchain -- configure with --preset vita-release (cmake/vita.toolchain.cmake)")
+endif()
+# TE_VITA_NATIVE (the Vita lane only; OFF = the wasm32 + wasm2c module as before): the game's code compiled NATIVELY for
+# the Vita's armv7 by the Vita's GCC (cmake/native_lane.cmake, runner/te_native.h) instead of wasm32 -> wasm2c -> C. The
+# desktop lanes keep the module (the decomp is ILP32: a 64-bit host cannot compile it natively).
+option(TE_VITA_NATIVE "Vita: the game code compiled natively for ARM (no wasm2c module)" OFF)
+if(TE_VITA_NATIVE AND NOT TE_VITA)
+    message(FATAL_ERROR "TwinsanityEvolved: TE_VITA_NATIVE=ON is the Vita lane's (configure with --preset vita-native-release)")
+endif()
+if(TE_VITA_NATIVE)
+    add_compile_definitions(TE_NATIVE=1)   # the runner and the host side (te_host.h's address model, runner/te_native.h)
 endif()
 find_package(Python3 3.8 COMPONENTS Interpreter REQUIRED)
 
@@ -64,7 +75,7 @@ else()
     set(TE_FETCH_TOOLCHAIN "tools/fetch_toolchain.sh")
 endif()
 foreach(tool "${TE_WASI_SDK}/bin/clang++${TE_EXE}" "${TE_WASI_SDK}/bin/wasm-ld${TE_EXE}" "${TE_WABT}/bin/wasm2c${TE_EXE}" "${TE_WABT}/bin/wasm-objdump${TE_EXE}")
-    if(NOT EXISTS "${tool}")
+    if(NOT EXISTS "${tool}" AND NOT TE_VITA_NATIVE)
         message(FATAL_ERROR "TwinsanityEvolved: ${tool} missing -- run ${TE_FETCH_TOOLCHAIN} (pinned wasi-sdk 24.0 + wabt 1.0.42)")
     endif()
 endforeach()
@@ -90,7 +101,7 @@ foreach(h ${TE_SEAM_HEADERS})
 endforeach()
 list(APPEND TE_SEAM_FORWARDERS "${TE_GEN}/seam/seam_forwarders_second.cpp")
 set(TE_SEAM_OUTPUTS "${TE_GEN}/seam/ps2e_seam.h" "${TE_GEN}/seam/seam_imports.txt" "${TE_GEN}/seam/seam_host_thunks.c"
-    "${TE_GEN}/seam/seam_stubs.cpp" "${TE_GEN}/seam/seam_manifest.json" ${TE_SEAM_FORWARDERS})
+    "${TE_GEN}/seam/seam_stubs.cpp" "${TE_GEN}/seam/seam_manifest.json" "${TE_GEN}/seam/seam_prof_names.c" ${TE_SEAM_FORWARDERS})
 add_custom_command(OUTPUT ${TE_SEAM_OUTPUTS}
     COMMAND ${Python3_EXECUTABLE} "${TE_TOOLS}/gen_seam.py" --game "${TE_GAME}" --out "${TE_GEN}/seam" --module game
     DEPENDS "${TE_TOOLS}/gen_seam.py" "${TE_TOOLS}/second_seam.tsv" "${TE_TOOLS}/wasm_side_functions.txt"
@@ -98,6 +109,9 @@ add_custom_command(OUTPUT ${TE_SEAM_OUTPUTS}
     COMMENT "gen_seam: the platform seam (imports, forwarders, host thunks, stubs)")
 add_custom_target(te_seam DEPENDS ${TE_SEAM_OUTPUTS})
 
+if(TE_VITA_NATIVE)
+    include("${CMAKE_SOURCE_DIR}/cmake/native_lane.cmake")   # sections 2-5 for the Vita's native build of the game code
+else()
 # ---------------------------------------------------------------------------------------------------------------------
 # 2. Game TUs -> wasm32 objects (tools/te_cxx.py: ZERO edits to game code, the MIPS-only constructs rewritten)
 # ---------------------------------------------------------------------------------------------------------------------
@@ -246,11 +260,12 @@ math(EXPR last "${TE_W2C_PARTS} - 1")
 foreach(i RANGE 0 ${last})
     list(APPEND TE_W2C_SOURCES "${TE_W2C}/game_${i}.c")
 endforeach()
-# The Vita lane compiles the loads and stores unchecked (below): its header carries the switch
+# The Vita lane compiles the loads and stores unchecked (below): its header carries the switch. The rewrite also reads
+# the parts (the table's allocation; no table.grow) for TE_W2C_FIXED_TABLE; every switch is a -D, the text is the same.
 set(TE_W2C_UNCHECKED_STEP)
 set(TE_W2C_UNCHECKED_DEP)
 if(TE_VITA)
-    set(TE_W2C_UNCHECKED_STEP COMMAND ${Python3_EXECUTABLE} "${TE_TOOLS}/w2c_unchecked.py" "${TE_W2C}/game-impl.h")
+    set(TE_W2C_UNCHECKED_STEP COMMAND ${Python3_EXECUTABLE} "${TE_TOOLS}/w2c_unchecked.py" "${TE_W2C}/game-impl.h" ${TE_W2C_SOURCES})
     set(TE_W2C_UNCHECKED_DEP "${TE_TOOLS}/w2c_unchecked.py")
 endif()
 add_custom_command(OUTPUT ${TE_W2C_SOURCES} "${TE_W2C}/game.h" "${TE_W2C}/game-impl.h"
@@ -290,7 +305,42 @@ target_include_directories(tegame PUBLIC "${TE_W2C}" "${TE_WABT}/include" "${TE_
 # retail game was written for faults the application there instead of trapping (the desktop lanes keep the checks).
 target_compile_definitions(tegame PUBLIC WASM_RT_USE_MMAP=0 WASM_RT_MEMCHECK_BOUNDS_CHECK=1)
 if(TE_VITA)
-    target_compile_definitions(tegame PUBLIC TE_W2C_UNCHECKED_MEMORY=1)   # tools/w2c_unchecked.py
+    # TE_VITA_UNCHECKED_MEMORY (ON): the per-access check compiled out (tools/w2c_unchecked.py; a shipped Vita build has
+    # had it since 2026-10-22: the hot TransformJoints is 278 instructions instead of the checked form's 754, game_7.c's
+    # code 187 KB instead of 591 KB). Safe for the game as it runs: the checked lanes (the desktop, this option OFF) trap
+    # on any access outside the 32 MB ("wasm trap: out of bounds memory access", fatal) and no judged route or recorded
+    # run has ever trapped; a run that would trap there faults or reads beside the memory here. OFF = the checked build
+    # (the 64-bit compare per access, the base reloaded per access, the trapping float->int; with TE_VITA_W2C_LEAN=OFF
+    # too, exactly the desktop lanes' module code) for a device A/B or a hunt for a stray access.
+    option(TE_VITA_UNCHECKED_MEMORY "Vita: the module's loads and stores without the per-access bounds check (OFF = the checked build)" ON)
+    if(TE_VITA_UNCHECKED_MEMORY)
+        target_compile_definitions(tegame PUBLIC TE_W2C_UNCHECKED_MEMORY=1)   # tools/w2c_unchecked.py
+    endif()
+    # TE_VITA_W2C_LEAN (ON): three more of wasm2c's semantic guards, each identical in value (tools/w2c_unchecked.py):
+    # f32/f64.abs as the bare VABS (ARM's FPAbs IS wasm's abs for every input, NaNs and denormals included: no NaN test,
+    # no VMRS -- runner/te_vita.cpp checks VABS at start-up under the game thread's FPSCR), i32.trunc_f32 as the bare VCVT
+    # (the same value wherever the checked form does not trap; it never has), call_indirect's bound against the table's
+    # fixed size (no load of table.size). Measured on the 451 game functions the Totem Hokum profile runs: -2.3 % of
+    # their instructions, -24 % of their VMRS flag transfers, -18 % of their VFP-to-core moves. OFF = the earlier, checked code.
+    option(TE_VITA_W2C_LEAN "Vita: wasm's abs as VABS, float->int as the bare VCVT, call_indirect against the fixed table size" ON)
+    if(TE_VITA_W2C_LEAN)
+        target_compile_definitions(tegame PUBLIC TE_W2C_VFP_ABS=1 TE_W2C_UNCHECKED_TRUNC=1 TE_W2C_FIXED_TABLE=1)
+    endif()
+    # TE_VITA_W2C_COUNT (OFF; a diagnosis build, never shipped): the module counts its function entries, loads and stores,
+    # abs, float->int, call_indirect and sqrt; "[te.w2c.count]" lines per TE_W2C_COUNT_EVERY boundaries (runner/main.cpp)
+    option(TE_VITA_W2C_COUNT "Vita diagnosis: count the module's operations per boundary (slower; never ship)" OFF)
+    if(TE_VITA_W2C_COUNT)
+        target_compile_definitions(tegame PUBLIC TE_W2C_COUNT=1)
+    endif()
+    # TE_PROF_SEAM=ON (a profiling build): the seam thunks mark the game thread's section for the sampling profiler
+    # (platform/nativeee/host/te_prof.h, TE_PROF=1 in args.txt) -- a load and two stores per host call, and the thunk is
+    # no longer a tail call (~5-6 thousand host calls a picture in the title and the hub, measured: by the instruction
+    # count ~0.1 ms of the game thread a frame). Off, the shipped build's thunks are plain branches; TE_PROF=1 then reports
+    # the host sections, the imports inside "(own code)".
+    option(TE_PROF_SEAM "Vita: the profiler's section markers in the seam thunks (TE_PROF=1 names the game thread's imports)" OFF)
+    if(TE_PROF_SEAM)
+        set_source_files_properties("${TE_GEN}/seam/seam_host_thunks.c" PROPERTIES COMPILE_DEFINITIONS TE_PROF_SEAM=1)
+    endif()
     # and without the call-depth count: every function's entry and exit would bump a global the Vita reads and writes
     # back on every call; the retail game's recursion is the game's own (the fiber's stack is its bound)
     target_compile_definitions(tegame PUBLIC WASM_RT_NONCONFORMING_UNCHECKED_STACK_EXHAUSTION=1)
@@ -302,7 +352,25 @@ endif()
 set_target_properties(tegame PROPERTIES C_STANDARD 99 C_EXTENSIONS ON)
 target_compile_options(tegame PRIVATE -O2 -w)
 if(TE_VITA)
-    set_source_files_properties(${TE_W2C_SOURCES} PROPERTIES COMPILE_OPTIONS "-O2")   # the Vita's CPU needs the optimiser's every pass
+    # The Vita's CPU needs the optimiser's every pass. The VitaSDK GCC already targets the Cortex-A9 by default
+    # (--with-arch=armv7-a --with-tune=cortex-a9 --with-fpu=neon --with-float=hard --with-mode=thumb: Thumb-2, unaligned
+    # LDR/STR for the memcpy loads, VFPv3-D32 + NEON), so nothing is added for the target. Measured on w2c/game_3.c
+    # (GCC 15.2): -O3 grows the code 18 % (a 32 KB I-cache) and -Os shrinks it 11 %; over the whole module -O3 is +9 % of
+    # w2c code, -O3 -fno-tree-vectorize the same, LTO (TE_VITA_W2C_LTO) +0.3 % -- and in the emulator's game-thread profile
+    # (the instruction-count proxy: deterministic routes, the module's own code in ms per picture) none of them moves the
+    # game's own code beyond +-1-2 % of -O2 (the game's cost is spread over hundreds of functions): -O2 stays. The knobs
+    # TE_VITA_W2C_FLAGS / TE_VITA_W2C_LTO are for a device A/B. -fno-math-errno: the module's sqrtf (wasm's f32.sqrt) is a
+    # bare VSQRT instead of VSQRT + a compare +
+    # an errno-setting libcall for negative inputs (the value is the same: the default NaN either way; nothing reads errno).
+    set(TE_VITA_W2C_FLAGS "-O2;-fno-math-errno" CACHE STRING "Vita: the w2c parts' optimisation flags (a ;-list)")
+    set_source_files_properties(${TE_W2C_SOURCES} PROPERTIES COMPILE_OPTIONS "${TE_VITA_W2C_FLAGS}")
+    # TE_VITA_W2C_LTO: the module (the 8 parts, the seam thunks, the dispatchers: everything in tegame) as GCC LTO
+    # objects, optimised as one unit at the eboot's link (the rest of the eboot is ordinary objects)
+    option(TE_VITA_W2C_LTO "Vita: link-time optimisation across the wasm2c module (tegame) only" OFF)
+    set(TE_VITA_W2C_LTO_JOBS 8 CACHE STRING "Vita: the LTRANS jobs of TE_VITA_W2C_LTO")
+    if(TE_VITA_W2C_LTO)
+        target_compile_options(tegame PRIVATE -flto -fno-fat-lto-objects)
+    endif()
 else()
     set_source_files_properties(${TE_W2C_SOURCES} PROPERTIES COMPILE_OPTIONS "-O1")   # 39 MB of C: -O1 keeps the build minutes, not hours
 endif()
@@ -341,6 +409,7 @@ if(WIN32)
     # 65535-section limit (clang-cl honours it; harmless where not needed).
     target_compile_options(tegame PRIVATE /bigobj)
 endif()
+endif()   # TE_VITA_NATIVE (sections 2-5)
 
 # ---------------------------------------------------------------------------------------------------------------------
 # 6. NativeEE as a library: the engine root configured as its OWN project (never patched, consumed by tag),
@@ -381,6 +450,31 @@ if(TE_VITA)
     # The engine's ps2e draw surface without a GL 4.1 context (engine/platform/ps2e: PS2R_PS2E_DRAW_BACKEND); the
     # engine's own configure reads the same toolchain file (forwarded above) and so builds its vita target folder.
     list(APPEND TE_ENGINE_FORWARDED_ARGS -DPS2R_PS2E_DRAW_BACKEND=gl)
+    # FFmpeg for the movies' MPEG-2 decoder (engine/ipu/hle/ffmpeg_video_decoder.cpp: the mpeg2video decoder, the
+    # mpegvideo parser, swscale). Not the VitaSDK's FFmpeg package: it is configured for audio / MPEG-4 players
+    # (--enable-decoder=aac,...,mpeg4,...) and has neither, so every movie opened "0x0 @ 0.000 fps" and ended at once.
+    # The engine's static LGPL recipe (engine/tools/ci/ffmpeg_static.sh, the desktop release's FFmpeg) cross-compiled by
+    # tools/vita/ffmpeg_vita.sh into <build>/third_party/ffmpeg -- at build time (the target te_ffmpeg_vita, ~3 min once
+    # per build dir; the script caches on its configure record) and before the engine's configure, which is pointed at
+    # the same headers and archives (the decoder must be compiled against the headers of the library it links).
+    # TE_VITA_FFMPEG_SOURCE: a local copy of the pinned release tarball for an offline build (empty: the script downloads
+    # it and checks its sha256).
+    set(TE_VITA_FFMPEG "${CMAKE_BINARY_DIR}/third_party/ffmpeg")
+    set(TE_VITA_FFMPEG_SOURCE "" CACHE FILEPATH "a local ffmpeg-<version>.tar.xz for tools/vita/ffmpeg_vita.sh (empty: download the pinned release)")
+    set(TE_VITA_FFMPEG_LIBS "${TE_VITA_FFMPEG}/lib/libavcodec.a" "${TE_VITA_FFMPEG}/lib/libswscale.a" "${TE_VITA_FFMPEG}/lib/libavutil.a")
+    add_custom_command(OUTPUT "${TE_VITA_FFMPEG}/PS2R_FFMPEG_CONFIGURE"
+        BYPRODUCTS ${TE_VITA_FFMPEG_LIBS}
+        COMMAND ${CMAKE_COMMAND} -E env "VITASDK=${VITASDK}" "FFMPEG_SOURCE=${TE_VITA_FFMPEG_SOURCE}"
+                bash "${CMAKE_SOURCE_DIR}/tools/vita/ffmpeg_vita.sh" "${TE_VITA_FFMPEG}"
+        DEPENDS "${CMAKE_SOURCE_DIR}/tools/vita/ffmpeg_vita.sh" "${TE_ENGINE}/tools/ci/ffmpeg_static.sh"
+        COMMENT "FFmpeg for the Vita: the engine's LGPL recipe cross-compiled (tools/vita/ffmpeg_vita.sh) -> ${TE_VITA_FFMPEG}"
+        USES_TERMINAL VERBATIM)
+    add_custom_target(te_ffmpeg_vita DEPENDS "${TE_VITA_FFMPEG}/PS2R_FFMPEG_CONFIGURE")
+    file(MAKE_DIRECTORY "${TE_VITA_FFMPEG}/include")   # an imported target's include directory must exist when generating
+    list(APPEND TE_ENGINE_FORWARDED_ARGS "-DFFMPEG_INCLUDE_DIR=${TE_VITA_FFMPEG}/include"
+         "-DFFMPEG_AVCODEC_LIBRARY=${TE_VITA_FFMPEG}/lib/libavcodec.a"
+         "-DFFMPEG_AVUTIL_LIBRARY=${TE_VITA_FFMPEG}/lib/libavutil.a"
+         "-DFFMPEG_SWSCALE_LIBRARY=${TE_VITA_FFMPEG}/lib/libswscale.a")
 endif()
 if(TE_DIST)
     set(PS2R_FETCH_SDL2 ON CACHE BOOL "" FORCE)
@@ -466,6 +560,9 @@ ExternalProject_Add(nativeee
     # headers see the new engine while its libraries are the old pin's (undefined symbols at link). Up to date, the
     # engine's ninja pass is a no-op of ~1 s.
     BUILD_ALWAYS ON)
+if(TE_VITA)
+    add_dependencies(nativeee te_ffmpeg_vita)   # the engine's configure reads the lane's FFmpeg (above)
+endif()
 add_library(nativeee_libs INTERFACE)
 target_link_libraries(nativeee_libs INTERFACE ${TE_ENGINE_LIB_FILES})
 target_include_directories(nativeee_libs INTERFACE "${TE_ENGINE}")
@@ -477,17 +574,22 @@ find_package(Threads REQUIRED)
 # TE_DIST / PS2R_FETCH_SDL2 the pinned release fetched and built statically -- the target SDL2::SDL2 either way.
 include("${TE_ENGINE}/cmake/Sdl2Dependency.cmake")
 if(TE_VITA)
-    # vitaGL (and the kernel stubs it calls); FFmpeg is the VitaSDK package's static build, whose libavcodec
-    # also wants libswresample and the mp3 encoder it was configured with (its pkg-config Libs line).
+    # vitaGL (and the kernel stubs it calls); FFmpeg is the lane's own static LGPL build (te_ffmpeg_vita above:
+    # libavcodec with the mpeg1/mpeg2 video decoders only, libswscale, libavutil), never the VitaSDK package's: the
+    # finder's cache entries are pinned to it, so a build dir configured before keeps no path into the SDK's copy.
+    set(FFMPEG_INCLUDE_DIR "${TE_VITA_FFMPEG}/include" CACHE PATH "FFmpeg headers (the Vita lane's own build)" FORCE)
+    set(FFMPEG_AVCODEC_LIBRARY "${TE_VITA_FFMPEG}/lib/libavcodec.a" CACHE FILEPATH "libavcodec (the Vita lane's own build)" FORCE)
+    set(FFMPEG_AVUTIL_LIBRARY "${TE_VITA_FFMPEG}/lib/libavutil.a" CACHE FILEPATH "libavutil (the Vita lane's own build)" FORCE)
+    set(FFMPEG_SWSCALE_LIBRARY "${TE_VITA_FFMPEG}/lib/libswscale.a" CACHE FILEPATH "libswscale (the Vita lane's own build)" FORCE)
     include("${TE_ENGINE}/cmake/FindFFmpeg.cmake")
     set(TE_HAVE_SDL_INPUT 1)
-    # Static archives: each after the ones that use it (avcodec -> swscale -> swresample -> avutil, then the codecs' libs,
-    # then libm and libpthread, which everything above uses).
+    # Static archives: each after the ones that use it (avcodec -> swscale -> avutil, then libm and libpthread, which
+    # everything above uses).
     # libpthread WHOLE: libstdc++'s std::thread / mutex / condition_variable test `__gthread_active_p()` through weak
     # pthread symbols -- an archive pulled in piecemeal leaves them unresolved and every std::thread throws
     # "Enable multithreading to use std::thread".
     include("${TE_ENGINE}/cmake/OpenGlDependency.cmake")
-    target_link_libraries(nativeee_libs INTERFACE SDL2::SDL2 OpenGL::GL FFmpeg::avcodec FFmpeg::swscale swresample FFmpeg::avutil mp3lame mpg123 m)
+    target_link_libraries(nativeee_libs INTERFACE SDL2::SDL2 OpenGL::GL FFmpeg::avcodec FFmpeg::swscale FFmpeg::avutil m)
     target_link_options(nativeee_libs INTERFACE "LINKER:--whole-archive,-lpthread,--no-whole-archive")
 else()
 find_package(OpenGL REQUIRED)
@@ -505,6 +607,60 @@ endif()
 message(STATUS "TwinsanityEvolved: SDL2 ${SDL2_VERSION} -- window + GL (graphics), pads over the engine's InputSystem, audio sink")
 add_dependencies(nativeee_libs nativeee)
 enable_testing()
+
+# The disc identity (engine/app/host/disc_identity: what a disc image IS by its content -- the program SYSTEM.CNF boots,
+# the region, and whether the whole image is a known retail dump: launcher/discs/redump.json; the file lists
+# launcher/discs/<id>.json, labelled by provenance; the region maps launcher/discs/region_map_<serial>.json). The game logs
+# it at boot; the tables are metadata (names, sizes, hashes, addresses), embedded here at configure time as raw string
+# literals so the binary needs no file beside it. The launcher reads the same JSON files at run time (title.json).
+file(GLOB TE_RETAIL_LISTS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/launcher/discs/*.json")
+list(SORT TE_RETAIL_LISTS)
+# the tables' CONTENTS are embedded at configure time: an edit of one re-runs the configure (else the binary would keep
+# the table it was configured with)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${TE_RETAIL_LISTS})
+set(_te_lists_cpp "// Generated by CMakeLists.txt from launcher/discs/*.json -- do not edit.\nnamespace te::discs {\nextern const char* const kRetailLists[];\nconst char* const kRetailLists[] = {\n")
+foreach(_list ${TE_RETAIL_LISTS})
+    file(READ "${_list}" _json)
+    string(APPEND _te_lists_cpp "R\"TEJSON(${_json})TEJSON\",\n")
+endforeach()
+string(APPEND _te_lists_cpp "nullptr};\n}  // namespace te::discs\n")
+file(WRITE "${TE_GEN}/disc/retail_lists.cpp.in" "${_te_lists_cpp}")
+configure_file("${TE_GEN}/disc/retail_lists.cpp.in" "${TE_GEN}/disc/retail_lists.cpp" COPYONLY)
+add_library(te_disc_identity STATIC "${TE_ENGINE}/app/host/disc_identity.cpp" "${TE_ENGINE}/app/host/disc_json.cpp"
+                                    "${TE_ENGINE}/app/host/disc_image_hash.cpp" "${TE_ENGINE}/app/host/disc_regions.cpp"
+                                    "${TE_ENGINE}/app/host/disc_languages.cpp"
+                                    "${TE_ENGINE}/app/host/region_map_make.cpp"
+                                    "${TE_GEN}/disc/retail_lists.cpp")
+target_include_directories(te_disc_identity PUBLIC "${TE_ENGINE}")
+target_link_libraries(te_disc_identity PUBLIC nativeee_libs)
+if(NOT MSVC)
+    target_compile_options(te_disc_identity PRIVATE -Wall -Wextra)
+endif()
+
+# The mod importer (engine/app/host/mod_import: a Mod Crate, a modified disc image, an xdelta / PPF / BPS patch or a folder of
+# files into one overlay folder of the mods folder) and its command line tool. The launcher's Mods
+# page links the same library (engine/app/host/mod_import/mod_import.cmake). Desktop only: the Vita never imports.
+if(NOT TE_VITA)
+    set(MOD_IMPORT_ENGINE_ROOT "${TE_ENGINE}")
+    set(MOD_IMPORT_GAME_DIR "${CMAKE_SOURCE_DIR}/game")
+    include("${TE_ENGINE}/app/host/mod_import/mod_import.cmake")
+    # the PAL symbol list the region-map sub-command reads (game/symbol_addrs.txt: names and addresses, no game data),
+    # embedded at configure time so the tool needs no repository beside it
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/game/symbol_addrs.txt")
+    file(READ "${CMAKE_SOURCE_DIR}/game/symbol_addrs.txt" _te_symbols)
+    file(WRITE "${TE_GEN}/disc/pal_symbol_addrs.cpp.in" "// Generated by CMakeLists.txt from game/symbol_addrs.txt -- do not edit.\n#include \"app/host/region_map_make.h\"\nnamespace {\nconst char* const kSymbolAddrs = R\"TESYM(${_te_symbols})TESYM\";\nstruct Register { Register() { ps2r::app::SetDefaultPalSymbols(kSymbolAddrs); } } g_register;\n}  // namespace\n")
+    configure_file("${TE_GEN}/disc/pal_symbol_addrs.cpp.in" "${TE_GEN}/disc/pal_symbol_addrs.cpp" COPYONLY)
+    add_executable(twinsanityevolved-modtool "${TE_ENGINE}/app/host/mod_import/modtool_main.cpp"
+        # the region-map sub-command (engine/app/host/region_map_make.h: another region's executable mapped onto the European one)
+        "${TE_ENGINE}/app/host/region_map_make.cpp" "${TE_ENGINE}/app/host/disc_regions.cpp" "${TE_ENGINE}/app/host/disc_identity.cpp"
+        "${TE_ENGINE}/app/host/disc_json.cpp" "${TE_ENGINE}/app/host/disc_image_hash.cpp" "${TE_GEN}/disc/pal_symbol_addrs.cpp")
+    target_include_directories(twinsanityevolved-modtool PRIVATE "${TE_ENGINE}")
+    target_link_libraries(twinsanityevolved-modtool PRIVATE ps2r_mod_import)
+    set_target_properties(twinsanityevolved-modtool PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    if(NOT MSVC)
+        target_compile_options(twinsanityevolved-modtool PRIVATE -Wall -Wextra)
+    endif()
+endif()
 
 # ---------------------------------------------------------------------------------------------------------------------
 # 7. platform/nativeee host side (the seam bodies over the engine) and the runner
@@ -526,7 +682,9 @@ else()
 endif()
 add_executable(twinsanityevolved runner/main.cpp runner/te_env.cpp runner/te_run.c runner/te_startup.cpp
     runner/te_fiber.c ${TE_FIBER_SWITCH} runner/te_game.cpp ${TE_SAVESTATE_RUNNER}
-    runner/te_probe.cpp runner/te_autopilot.cpp runner/te_profile.cpp)
+    runner/te_probe.cpp runner/te_autopilot.cpp runner/te_profile.cpp runner/te_disc_log.cpp runner/te_region.cpp)
+# the game folder (ps2r.ini beside the game, its memory cards and mods): shared host code the launcher resolves the same way
+target_sources(twinsanityevolved PRIVATE "${TE_ENGINE}/app/host/game_folder.cpp")
 set_target_properties(twinsanityevolved PROPERTIES C_STANDARD 99 C_EXTENSIONS ON)   # te_run.c: as tegame (above)
 if(TE_VITA)
     # The Vita runner: the baked arguments + the heap size + the log file (runner/te_vita.cpp), the AAPCS32 fiber switch
@@ -535,11 +693,49 @@ if(TE_VITA)
     # supplies the declarations (never called: WASM_RT_USE_MMAP=0) from platform/nativeee/vita/shim.
     target_sources(twinsanityevolved PRIVATE runner/te_vita.cpp)
     target_link_libraries(twinsanityevolved PRIVATE ScePower_stub)   # the clocks te_vita.cpp raises
+    if(TE_VITA_NATIVE)
+        # the native game (cmake/native_lane.cmake): its prelinked object, the trampolines and tables of the runner
+        target_sources(twinsanityevolved PRIVATE runner/te_native.cpp ${TE_NATIVE_RUNNER_SOURCES} "${TE_NATIVE_GAME_OBJECT}")
+        add_dependencies(twinsanityevolved te_native_game)
+        # the game's object uses 32-bit enums (-fno-short-enums: the R5900's and wasm32's size) beside the Vita's short ones;
+        # no enum type crosses the seam (its arguments are s32), so ld's attribute warning says nothing here
+        target_link_options(twinsanityevolved PRIVATE -Wl,--no-enum-size-warning)
+    else()
     target_include_directories(tegame BEFORE PUBLIC "${CMAKE_SOURCE_DIR}/platform/nativeee/vita/shim")
     # wasm-rt.h unwinds traps with sigsetjmp / siglongjmp, which the Vita's newlib has only for Cygwin / RTEMS: the plain
     # pair stands in (no signals on the device) through a force-included header on the module and the runner.
     target_compile_options(tegame PUBLIC "$<$<COMPILE_LANGUAGE:C,CXX>:-include${CMAKE_SOURCE_DIR}/platform/nativeee/vita/shim/te_vita_setjmp.h>")
+    endif()
     target_link_options(twinsanityevolved PRIVATE -Wl,-q)   # the relocations vita-elf-create reads
+    if(TE_VITA_W2C_LTO AND NOT TE_VITA_NATIVE)
+        # the LTO objects (tegame) are optimised here, with the parts' own flags; -Wl,-q keeps the LTRANS objects'
+        # relocations like any other input's
+        target_link_options(twinsanityevolved PRIVATE "-flto=${TE_VITA_W2C_LTO_JOBS}" ${TE_VITA_W2C_FLAGS} -w)
+    endif()
+    # The drawing thread's census on the device (platform/nativeee/host/vita_gpu_census.cpp): the GXM calls vitaGL can
+    # block in, its pool allocator and frees, glFinish and the long sleeps of its out-of-memory path, each timed or
+    # counted through a wrapper (the wrapped call itself unchanged) -- and the GXM LAST-STATE CACHE in the per-draw
+    # wrappers: a set that hands vitaGL's context, inside its scene, the value it already holds is not made
+    # (TE_GFX_VITA_GXM_CACHE=0: every call made)
+    foreach(te_wrapped sceGxmBeginScene sceGxmEndScene sceGxmDisplayQueueAddEntry sceGxmFinish sceGxmNotificationWait
+                       sceGxmShaderPatcherCreateFragmentProgram sceGxmShaderPatcherCreateVertexProgram sceGxmDraw
+                       vgl_memalign vgl_free glFinish sceKernelDelayThread glDrawArrays
+                       # the per-frame GXM call census (counted only)
+                       sceGxmDrawInstanced sceGxmSetVertexStream sceGxmSetFragmentTexture sceGxmSetVertexProgram
+                       sceGxmSetFragmentProgram sceGxmSetVertexDefaultUniformBuffer sceGxmSetFragmentDefaultUniformBuffer
+                       sceGxmSetFrontDepthFunc sceGxmSetBackDepthFunc sceGxmSetFrontDepthWriteEnable sceGxmSetBackDepthWriteEnable
+                       sceGxmSetFrontFragmentProgramEnable sceGxmSetBackFragmentProgramEnable sceGxmSetFrontStencilRef
+                       sceGxmSetBackStencilRef sceGxmSetFrontPolygonMode sceGxmSetBackPolygonMode sceGxmSetCullMode
+                       sceGxmSetFrontStencilFunc sceGxmSetBackStencilFunc sceGxmSetFrontDepthBias sceGxmSetBackDepthBias
+                       sceGxmSetRegionClip
+                       # the GXM last-state cache's invalidations: the calls that change a cached value other than
+                       # through its setter (vita_gpu_census.cpp)
+                       sceGxmReserveVertexDefaultUniformBuffer sceGxmReserveFragmentDefaultUniformBuffer
+                       sceGxmSetVertexUniformBuffer sceGxmSetFragmentUniformBuffer sceGxmSetTwoSidedEnable
+                       sceGxmShaderPatcherReleaseVertexProgram sceGxmShaderPatcherReleaseFragmentProgram
+                       sceGxmShaderPatcherUnregisterProgram sceGxmShaderPatcherForceUnregisterProgram)
+        target_link_options(twinsanityevolved PRIVATE "-Wl,--wrap=${te_wrapped}")
+    endforeach()
     # vita-elf-create appends its module data (4 KB and more) after the code segment, in the space before the data
     # segment, which the default script starts at the next 64 KB boundary: code ending in a page's last few KB left no
     # room ("segment 1 overlaps"), so whether the image converted depended on the code's size. The default script with
@@ -588,9 +784,13 @@ target_compile_options(twinsanityevolved PRIVATE -Wall -Wextra)
 if(TE_VITA)
     # CMake's WHOLE_ARCHIVE link feature knows Linux / Darwin / Windows, not the Generic system the Vita toolchain names:
     # the same GNU ld bracket spelled out.
-    target_link_libraries(twinsanityevolved PRIVATE tegame -Wl,--whole-archive te_platform_host -Wl,--no-whole-archive nativeee_libs te_seam_stubs)
+    if(TE_VITA_NATIVE)
+        target_link_libraries(twinsanityevolved PRIVATE -Wl,--whole-archive te_platform_host -Wl,--no-whole-archive te_disc_identity nativeee_libs te_seam_stubs)
+    else()
+    target_link_libraries(twinsanityevolved PRIVATE tegame -Wl,--whole-archive te_platform_host -Wl,--no-whole-archive te_disc_identity nativeee_libs te_seam_stubs)
+    endif()
 else()
-target_link_libraries(twinsanityevolved PRIVATE tegame "$<LINK_LIBRARY:WHOLE_ARCHIVE,te_platform_host>" nativeee_libs te_seam_stubs)
+target_link_libraries(twinsanityevolved PRIVATE tegame "$<LINK_LIBRARY:WHOLE_ARCHIVE,te_platform_host>" te_disc_identity nativeee_libs te_seam_stubs)
 endif()
 add_dependencies(twinsanityevolved nativeee)
 
@@ -605,7 +805,22 @@ if(TE_VITA)
     set(VITA_VERSION "01.00")
     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12")
     vita_create_self(eboot.bin twinsanityevolved UNSAFE)
-    vita_create_vpk(twinsanityevolved.vpk ${VITA_TITLEID} eboot.bin VERSION ${VITA_VERSION} NAME ${VITA_APP_NAME})
+    # The shipped shader cache: every <key>.tegxp of TE_VITA_SHADER_SEED_DIR packed as app0:shaders/<key>.tegxp -- read when
+    # the memory card's cache (ux0:data/twinsanity/shaders) has no file for a key (gl_shader_library.cpp SeedDir), so a
+    # first launch compiles none of the programs whose sources the set was made from. tools/vita/shader_cache_seed.sh makes
+    # the set (the package run once in Vita3K: the same libshacccg) and either packs it into a built .vpk or installs it
+    # here for the next build. An empty directory ships none: the first launch compiles, as before.
+    set(TE_VITA_SHADER_SEED_DIR "${CMAKE_SOURCE_DIR}/tools/vita/shader_seed" CACHE PATH
+        "the shipped shader cache (.tegxp files) packed into the .vpk as app0:shaders/")
+    file(GLOB TE_VITA_SHADER_SEED_FILES CONFIGURE_DEPENDS "${TE_VITA_SHADER_SEED_DIR}/*.tegxp")
+    set(TE_VITA_VPK_EXTRA "")
+    foreach(seed_file ${TE_VITA_SHADER_SEED_FILES})
+        get_filename_component(seed_name "${seed_file}" NAME)
+        list(APPEND TE_VITA_VPK_EXTRA FILE "${seed_file}" "shaders/${seed_name}")
+    endforeach()
+    list(LENGTH TE_VITA_SHADER_SEED_FILES TE_VITA_SHADER_SEED_COUNT)
+    message(STATUS "TwinsanityEvolved: the shipped shader cache -- ${TE_VITA_SHADER_SEED_COUNT} programs from ${TE_VITA_SHADER_SEED_DIR}")
+    vita_create_vpk(twinsanityevolved.vpk ${VITA_TITLEID} eboot.bin VERSION ${VITA_VERSION} NAME ${VITA_APP_NAME} ${TE_VITA_VPK_EXTRA})
     add_custom_target(twinsanityevolved_vpk ALL DEPENDS twinsanityevolved.vpk)
     message(STATUS "TwinsanityEvolved: the Vita lane -- ${CMAKE_BINARY_DIR}/twinsanityevolved.vpk (title id ${VITA_TITLEID}); the judges' tools and the tests are host-only and skipped")
 else()

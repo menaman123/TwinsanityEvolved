@@ -18,6 +18,10 @@ public:
     void setValue(const QString& value);   // without emitting
     void setHelpOverride(const QString& help);   // a row's state explained (e.g. "off (uncapped)")
     void setLocked(bool locked);
+    // A derived row's choices (the disc's languages): the control is rebuilt when they differ; the value is kept when it is
+    // still offered (else the first choice is shown). Without emitting.
+    void setChoices(const QVector<SettingsChoice>& choices);
+    const QVector<SettingsChoice>& choices() const { return spec_.choices; }
     SegmentedControl* segmented() const { return segmented_; }
     SwitchControl* toggle() const { return switch_; }
     FlatButton* popup() const { return popup_; }
@@ -31,6 +35,7 @@ protected:
 private:
     void restyle();
     void showPopup();
+    QWidget* buildChoiceControl();   // the segmented choice or the popup for spec_.choices
     SettingsRowSpec spec_;
     QLabel* label_;
     QLabel* help_;
@@ -38,6 +43,8 @@ private:
     SwitchControl* switch_ = nullptr;
     FlatButton* popup_ = nullptr;
     QString popupValue_;
+    QWidget* control_ = nullptr;
+    bool locked_ = false;
 };
 
 }  // namespace ps2r::launcher

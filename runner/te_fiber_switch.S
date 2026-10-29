@@ -78,7 +78,7 @@ SYM(te_fiber_trampoline):
     callq   *%r12
     ud2
 
-#elif defined(__arm__)
+#elif defined(__arm__) && !defined(__vita__)   /* the Vita runs the game on a kernel thread instead (te_fiber.c) */
 
     // AAPCS32 (the PlayStation Vita: armv7-a, Thumb-2, VFPv3-D32 + NEON). Callee-saved: r4-r11, lr, d8-d15; sp is 8-byte
     // aligned at a function's entry. te_fiber_ctx: sp at 0, r4..r11 + lr at 4..36 (9 words), d8..d15 at 40.

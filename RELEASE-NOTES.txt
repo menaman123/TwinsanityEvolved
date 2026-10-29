@@ -1,0 +1,164 @@
+# TwinsanityEvolved -- what's new since v0.1.8
+
+Crash Twinsanity as a native game for Windows, macOS, Linux and the PS Vita: the twinsanity-reversed decompilation running
+on the NativeEE engine. **No game data is included: you play with your own disc image.**
+
+## Install
+
+1. Download the zip for your system from this release (the table at the end names each file), or the launcher (see
+   Play below), which does every step for you.
+2. Unzip it anywhere, on any drive (Windows: right-click the zip > *Properties* > tick **Unblock** first, so SmartScreen
+   does not warn about the unsigned program).
+3. Run `twinsanityevolved` (`twinsanityevolved.exe` on Windows; on macOS, the first time, right-click it > **Open**). The
+   first time it asks for your disc image: your own Crash Twinsanity `.iso`, the European (PAL) or the North American disc.
+
+Nothing is installed and nothing else is downloaded. Requirements: a graphics driver with OpenGL 4.1 (any current NVIDIA,
+AMD, Intel or Apple GPU); keyboard and mouse or a gamepad (Space = cross, Left Shift = square, right mouse = circle,
+E = triangle, W A S D = left stick, mouse = camera, Y = start, Tab = select).
+
+## Play
+
+- **The launcher installs the finished game.** It no longer makes the game from its source on your computer: it
+  downloads the game for your system from the newest release, checks it against the release's checksums and puts it in your game folder. Its
+  first run is one sheet of four questions -- where your game is, where it should live, where you will play (this
+  computer, a PS Vita or another computer), then the download with its size and speed -- with Back on every step and
+  nothing to type.
+- **It finds your disc for you.** It looks in Downloads, Desktop, Documents, its own folder and any removable drive, and
+  recognises the disc by what is on it (see Discs). Drop the file on the window if it is somewhere else. A disc you remove
+  from the list stays off it on later searches.
+- **One game folder holds everything.** `~/Games/Crash Twinsanity` (`%USERPROFILE%\Games\Crash Twinsanity` on Windows)
+  unless you choose another: the game, your settings (`ps2r.ini`), your memory cards (`memcards`) and your mods (`mods`).
+  Move the folder and everything moves with it: the game reads the `ps2r.ini` beside it first (on macOS, beside the app).
+- **Pages: Games, Mods, Settings, About.** Games shows your discs, each with **Play** and, when a new version is out,
+  **Update**; an update never overwrites your settings, saves or mods. Settings is the game's own Options in plain words --
+  the same `ps2r.ini` the in-game menu writes, so a change in one is a change in the other. About can remove what the
+  launcher keeps and says what it could not remove.
+- **Launchers for every desktop.** A portable zip for Windows, a `.dmg` for macOS and, new, an AppImage for Linux.
+- Quitting the launcher during a download is safe: nothing half-downloaded is left in your game folder.
+- Every release zip also holds the mod tool and the Arabic language pack (see Mods and Languages).
+
+- **Save states:** F5 saves the running game to `savestates/slot0.ps2st` in the game folder and F8 loads it back where it
+  was; the game says so on screen. On the PS Vita the folder is `ux0:data/twinsanity/savestates/`.
+
+## Discs
+
+- **The European (PAL) disc** (SLES-52568) plays as before.
+- **The North American disc plays** (SLUS-20909 v2.00, the "Action Pack" release): choose it and play. It runs at 60
+  frames a second (its console's rate), in English with its own voices and movies, and keeps its own memory card
+  (`memcards-SLUS-20909` beside `memcards`), so the two discs never overwrite each other's saves. Its program's own code
+  changes are played the European way.
+- **Every disc is identified by its content**, compared with the known dumps of the original discs (redump.org): the
+  launcher shows `PAL · original disc`, `NTSC-U · original disc`, `PAL · modified disc` (the original program with other
+  files, such as a translation patch -- it plays like the original) or `PAL · unrecognised version` (accepted with a
+  warning). It reads the whole image once, a few seconds, and remembers the answer. The game checks the size at every
+  start; `--verify-disc` checks the whole image.
+- The Japanese disc and the first North American release (v1.00) are recognised but **not playable in this version**:
+  each needs an address map, which `twinsanityevolved-modtool region-map` makes from the two discs for someone who has
+  both.
+
+## Mods
+
+- **Mods packaged as Mod Crates are supported** -- the community's usual shape (a `.zip` or a folder with
+  `ModCrateInfo.txt`, `layer0/` and `layer1/`), including large ones of over a gigabyte (about half a minute to add). The
+  author's notes are shown under the mod.
+- **Also taken as they are shipped:** a patched disc image (only the files that differ from your disc are kept), an
+  xdelta, PPF or BPS patch made against the original disc, a folder of files laid out like the disc (or a loose
+  `CRASH.BD` + `CRASH.BH`), and one file of the game's archive passed around on its own (such as a `Default.rm2`), placed
+  by its name.
+- **The launcher's Mods page:** drop a mod on the page (or **Add a mod…**) and it is added to your mods folder; each mod
+  has a switch, a line saying what it changes and its region; drag the mods into order (the lower one wins where two
+  change the same file); **Remove** deletes one after asking. Adding a mod you already have (a new version) asks first,
+  then replaces it and keeps its switch and its place. A change takes effect the next time the game starts.
+- **The mod tool** (`twinsanityevolved-modtool`, in every zip) does the same on the command line: `import`, `inspect`
+  (what a file is, without adding it) and `verify` (every file of a mod checked byte for byte).
+- **A mod is checked against your disc.** A mod records the disc it was made over; the game leaves out a mod made for
+  another disc and says so in its log, and the Mods page says "Left out on this disc: made for the North American disc."
+  where that applies. A loose archive file made for the other release is refused when you add it.
+- While any mod is on, the game saves to its own memory card (`memcards-mods`): your normal saves are never touched.
+- In the game, OPTIONS > MODS now lists the built-in mods (level select, speedrun mode); the mods of your mods folder are
+  switched on the launcher's Mods page.
+- **What cannot apply:** code changes in a mod's modified game program (its data changes -- tables, texts, numbers -- do
+  apply; the code changes are listed under the mod); Crate Mod Loader's game-code settings (a crate carrying
+  `ModCrateSettings.txt` is refused with the reason; settings a crate's notes ask for are named in a warning); xdelta
+  patches made with secondary compression; RAR / 7-Zip archives, CHD / CSO / ECM images, `.cue` sheets, UPS / IPS patches;
+  emulator texture packs and cheat codes.
+
+- **Where a mod is switched:** a mod that changes the disc's files is switched on and off in the launcher only and is in
+  place when the game starts; the game's own OPTIONS > MODS page keeps the two built-in mods (level select, speedrun mode),
+  which work while you play. A mod made for the other region's disc is left out, and the launcher's row says so.
+- **On the PS Vita** the switch is the `mods.<id>.enabled` line in `ux0:data/twinsanity/ps2r.ini` (the launcher writes it
+  into the PS Vita folder; VitaShell's text editor changes it on the console); the mod's files stay on the card either way,
+  and modded saves live on their own memory card (`memcards-mods/`).
+
+## Languages
+
+- **The text and the speech are two settings:** GAME OPTIONS > TEXT LANGUAGE and SPEECH LANGUAGE (and the launcher's
+  Settings). Any text with any speech: Portuguese text with Spanish voices, Arabic text with French voices. The text
+  languages are recognised by what the disc's text banks contain, so on a translated disc "english" is still English. The
+  movies' sound and the title cards follow the speech. An older `game.language` setting keeps working.
+- **Arabic:** every menu, notice and hint (305 texts, our own translation), drawn right to left in Arabic letters made in
+  the game's lettering style. It comes with every zip and the launcher places it in your mods folder; there is nothing to
+  switch on: TEXT LANGUAGE offers **arabic** after the disc's languages. It translates the European disc's English texts
+  and is offered on a disc that carries them (not on the North American disc); the speech is any language your disc
+  speaks.
+
+- **A language pack is not a mod:** the Arabic text is one entry of the TEXT LANGUAGE row, like French or German; it has no
+  switch anywhere and never moves your saves to the modded memory card.
+
+## PS Vita
+
+- **A PS Vita package in every release** (`twinsanityevolved-<version>-vita.vpk`): install it with VitaShell, copy your
+  disc image to `ux0:data/twinsanity/game.iso`, and make sure the system's shader library `ur0:data/libshacccg.suprx` is
+  present (the usual homebrew step). The package carries the game's GPU programs ready-made, so the first start does not
+  stop to prepare them.
+- **The launcher makes a ready-to-copy PS Vita folder** in your game folder (`vita/`: the package, the steps, and
+  `ux0/data/twinsanity/` with your settings, the language pack and the mods you switched on). Two disc images can sit side
+  by side on the console; `ux0:data/twinsanity/disc-image.txt` names the one the game starts. The North American disc
+  plays on the PS Vita too (at 60). Mods are added on a computer and copied over.
+- **The PAL console's 50 Hz game loop by default:** the game ticks 50 times a second as the PAL game did. GAME RATE in
+  Options > graphic options switches between `60` and `50 hz (pal)` from the next start.
+- **FRAME RATE auto:** the game runs at the full rate while it keeps up and otherwise holds a steady 25 (at 50 Hz) or 30
+  (at 60 Hz) frames a second, so the picture moves evenly instead of swinging; `60` / `30` (`50` / `25`) fix the rate.
+- **Fixed on the PS Vita:** the movies play (the boot logos and the story movies did not play at all); the intro movie
+  of a new game is no longer corrupted; shadows are drawn; the title sequence's iceberg and logo draw cleanly; Cavern
+  Catastrophe's puzzle crystals are visible; at 50 Hz the game no longer runs in slow motion with the sound running ahead
+  of it; the GAME RATE setting takes effect.
+- **Faster:** the drawing, the GPU work per picture, the geometry and the game code itself were all made quicker,
+  measured scene by scene.
+- **Still limited:** the heaviest levels and fights fall back to a steady 25 (at 50 Hz) or 30 (at 60 Hz; 20 in the very
+  heaviest scenes) frames a second; importing mods is done on a computer.
+
+## The launcher keeps itself up to date
+
+- The launcher checks the releases when it starts (and from About): a newer launcher is offered on the Games page with one
+  button; it downloads it, checks it against the release's SHA256SUMS, swaps itself and reopens. Your games, settings, saves
+  and mods are not touched. The game's own **Update** button is unchanged. On the PS Vita the Installed list's **Update**
+  fetches the new package into the PS Vita folder for you to install with VitaShell.
+- The Mods page explains the PS Vita: switch mods here, press **Make the PS Vita folder**, copy `ux0/data/twinsanity` to the
+  card. The folder's README names the disc file to copy and how two discs (European and North American) live side by side.
+
+## PS Vita: faster in the heavy levels
+
+- The refractive ice's frame copies (Ice Climb) are taken only when needed and only for the region drawn since the last
+  one, with the same pictures: on the emulator the copy passes' pixels per picture fell from 6.1 M to 0.27 M.
+- **A second PS Vita package to try:** `twinsanityevolved-<version>-vita-native.vpk` runs the game's code natively on the
+  console's ARM processor instead of through a translation layer. In the emulator it is identical in game state, sound and
+  picture sequence to the main package on every tested route, and its hot functions have about half the instructions; how
+  much faster the console runs it is what the console's own log tells. Same title: installing it replaces the program and
+  keeps `ux0:data/twinsanity/`; reinstall the main package to go back. The main package stays the proven one until the
+  console's figures make the native one the default.
+
+## Fixes
+
+- Depth: surfaces drawn on top of other surfaces -- the light patterns on cave walls, the ripple rings around floating ice,
+  decals -- no longer flicker or vanish in pieces as the camera moves. The game's depth values are kept exactly (the PS2's
+  24-bit depth) instead of being rounded, so the depth test gives the PS2's answer everywhere (every system).
+- PS Vita: entering a new area or loading a level no longer stalls the picture for whole frames: a chunk's textures are
+  decoded and its meshes prepared in the background as the chunk arrives, instead of in the first frame that shows it.
+- At 50 Hz (`game rate: 50 hz (pal)`), on every system, the game no longer plays in slow motion: the game and its sound
+  run at real speed at 50 and at 60.
+- A settings file holding the game folder's own keys (`paths.memcards`, `paths.mods`, `mods.order`) is read instead of
+  being refused whole.
+- A disc this version cannot play is refused at the start with a sentence saying why, instead of failing on a missing
+  file.
+- An update by the launcher keeps an older game folder's language setting (`game.language`).

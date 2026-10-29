@@ -25,6 +25,7 @@ EmptyState::EmptyState(const QString& title, const QString& body, const QString&
     quiet_ = new FlatButton(quietText, FlatButton::Quiet, this);
     quiet_->setVisible(!quietText.isEmpty());
     auto* col = new QVBoxLayout(this);
+    col_ = col;
     col->setContentsMargins(LauncherTheme::S6 * 2, LauncherTheme::S6, LauncherTheme::S6 * 2, LauncherTheme::S6);
     col->setSpacing(LauncherTheme::S3);
     col->addStretch(1);
@@ -49,6 +50,12 @@ void EmptyState::setTexts(const QString& title, const QString& body) {
 }
 
 void EmptyState::setTone(Tone tone) { tone_ = tone; update(); }
+
+void EmptyState::setCompact(bool compact) {
+    const int side = compact ? LauncherTheme::S5 : LauncherTheme::S6 * 2, top = compact ? LauncherTheme::S2 : LauncherTheme::S6;
+    col_->setContentsMargins(side, top, side, top);
+    col_->setSpacing(compact ? LauncherTheme::S2 : LauncherTheme::S3);
+}
 
 void EmptyState::restyle() {
     const LauncherTheme& t = LauncherTheme::instance();

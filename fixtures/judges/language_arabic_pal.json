@@ -1,0 +1,29 @@
+{
+  "padlog": "fixtures/padlogs/title_main_menu.padlog",
+  "disc": "PAL SLES-52568 (the development image: a Brazilian-Portuguese patch -- the English slot holds Portuguese, the Spanish slot the English text); deterministic headless: --deterministic --no-sdl-input --no-audio --skip-movies --trace-state, an empty --mc-dir; TE_GFX_DUMP_EVERY=100, TE_GFX_DIAG_TEXT=1",
+  "stop_at": 1600,
+  "run_seconds": 600,
+  "dump_every": 100,
+  "present": 1400,
+  "region": {
+    "name": "main menu rows",
+    "box": [
+      0.27,
+      0.68,
+      0.75,
+      0.85
+    ],
+    "why": "the main menu's three rows (new game / load game / options) over the blue orb at the title; MainMenu from boundary 1275, present 1400 is ~125 presents into it (the breathing selected row is at the same phase in every deterministic run of the same bank)"
+  },
+  "min_text_pixels": 400,
+  "frozen": "2026-10-17: RED on bin/twinsanityevolved.32e1174 (--language 1 draws the English slot = Portuguese 'novo jogo'; the English-content slot 3 by code 3 draws 'new game': A != B), GREEN on the language-setting build for english and french (A == B exactly, A != C; quad hashes agree; game text 9 = the disc's line) | 2026-10-25 (arabic): the same arms with the Arabic language mod on (runner_args): GREEN for english, french, german, spanish and italian on the Arabic change's runner; the base runner refuses --mods-dir (exit 2: the run fails) | 2026-10-27: A and C choose the TEXT row alone (--text-language) with French speech; the text region, the quad hashes and text 9 are judged as before, and the selection line must show the speech left at french. RED on 43e9989 (no --text-language: one language for both), GREEN on its change; the pack is present (--mods-dir mods) instead of switched on (--mod arabic: no switch any more)",
+  "runner_args": [
+    "--mods-dir",
+    "mods"
+  ],
+  "mod": "the Arabic language pack in the mods folder (mods/arabic: a language pack is not a mod -- present = offered, no switch): the disc's languages must be drawn exactly as without it",
+  "text_row": {
+    "speech": "french",
+    "why": "The TEXT language is a setting of its own -- A and C name only the text row (--text-language), with French speech; A must draw exactly B's text (the raw slot: text and voice the slot) and report the speech untouched (french by name)"
+  }
+}

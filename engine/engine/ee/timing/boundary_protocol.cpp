@@ -147,6 +147,50 @@ bool BoundaryProtocol::ParkForPacerTick() {
     return true;
 }
 
+bool BoundaryProtocol::ParkForPacerTicks(uint64_t n) {
+    if (n <= 1) return ParkForPacerTick();
+    const auto t0 = std::chrono::steady_clock::now();
+    const uint32_t field_us = source_.PeriodUs() ? source_.PeriodUs() : TickSource::kBasePeriodUs;
+    const uint32_t period_us = field_us * static_cast<uint32_t>(n);   // the locked tick's period
+    // The frame's own work: from the previous boundary's release to here (as ParkForPacerTick, against the locked period).
+    uint64_t work_us = 0;
+    const uint64_t pending = ticks_.Pending();
+    if (work_from_valid_) {
+        work_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t0 - work_from_).count());
+        if (work_us > work_max_us_) work_max_us_ = work_us;
+        if (work_marked_ && work_us > work_marked_max_us_) work_marked_max_us_ = work_us;
+        NoteWork(pace_parks_ + pace_late_, work_us, pending, period_us);
+    }
+    if (pending >= n) {   // the locked period elapsed during the frame's work: late, no park
+        ++pace_late_;
+        if (pending > n) {
+            ++late_trace_count_;
+            if (late_trace_count_ <= kLateTraceMax) {
+                if (!late_trace_.empty()) late_trace_ += ',';
+                late_trace_ += std::to_string(pace_parks_ + pace_late_) + ':' + std::to_string(work_us) + ':' +
+                               std::to_string(pending);
+            }
+        }
+        work_from_ = t0;
+        work_from_valid_ = true;
+        ps2r::ee::TickProfile::ArmOverrun(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t0.time_since_epoch()).count()), period_us);
+        return false;
+    }
+    ++pace_parks_;
+    std::unique_lock<std::mutex> lk(mu_);
+    // every pacer tick notifies; the predicate holds once the n-th is noted (a stopped pacer: the bounded deadline)
+    const bool ticked = cv_.wait_for(lk, std::chrono::microseconds(field_us) * (kBoundaryParkPeriods * n),
+                                     [&] { return ticks_.Pending() >= n; });
+    lk.unlock();
+    const auto t1 = std::chrono::steady_clock::now();
+    pace_slept_us_ += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+    if (!ticked) ++pace_timeouts_;
+    work_from_ = t1;
+    work_from_valid_ = true;
+    ps2r::ee::TickProfile::ArmOverrun(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1.time_since_epoch()).count()), period_us);
+    return true;
+}
+
 void BoundaryProtocol::NoteCatchUpBoundary() {
     const auto t0 = std::chrono::steady_clock::now();
     const uint32_t period_us = source_.PeriodUs() ? source_.PeriodUs() : TickSource::kBasePeriodUs;

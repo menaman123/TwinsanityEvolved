@@ -156,6 +156,18 @@ void Services::StartServices() {
 
 }  // namespace te
 
+// A host string into the guest buffer `out` (`size` bytes, NUL-terminated)
+namespace {
+void CopyText(const std::string& text, ps2e_u32 out, ps2e_s32 size) {
+    if (size <= 0) return;
+    uint8_t* p = te::GuestPointer(out, static_cast<size_t>(size));
+    if (!p) return;
+    const size_t n = std::min(text.size(), static_cast<size_t>(size) - 1);
+    std::memcpy(p, text.data(), n);
+    p[n] = 0;
+}
+}  // namespace
+
 extern "C" {
 
 void ps2e_system_initialise(void) { te::Services::Get().Initialise(); }
@@ -178,32 +190,46 @@ void ps2e_system_exit(ps2e_s32 status) {
 // pictures and the credits follow it exactly as retail did. The two TEXT files follow LanguageTextBank() instead.
 ps2e_s32 ps2e_system_language(void) { return te::language::ConsoleLanguage(); }
 
-// Platform::System::LanguageTextBank: the slot whose Code/AgentLab text files are in the selected language -- the same
-// slot Language() names on a retail disc; another one on a disc whose text banks were moved (the user's Portuguese patch:
+// Platform::System::LanguageTextBank: the slot whose Code/AgentLab text files are in the TEXT language in force -- the same
+// slot Language() names on a retail disc; another one on a disc whose text banks were moved (the development image's Portuguese patch:
 // English text in the `Spanish` slot). -1 = none selected: the game reads the slot Language() names.
 ps2e_s32 ps2e_system_language_text_bank(void) { return te::language::TextBank(); }
 
-// Platform::System::LanguageCount / LanguageSelected / LanguageLabel / SetLanguage: the Options menu's language row --
-// the languages the inserted disc carries (one per TEXT language: no "Spanish" row when no Spanish text exists), the one in
-// force, a row's label (the text's language, " (<x> voice)" appended when its speech is another language's), and the
-// player's choice persisted (ps2r.ini) + answered by Language() / LanguageTextBank() from then on.
-ps2e_s32 ps2e_system_language_count(void) { return static_cast<ps2e_s32>(te::language::Count()); }
+// Platform::System::TextLanguage* / SpeechLanguage* / LanguageRowTitle: the Options menu's two language rows -- the
+// TEXT languages (one per text content the disc carries, then the language packs) and the SPEECH languages (one per speech
+// bank), the one in force (-1 = NoLanguage: a raw slot whose language the row has not), a choice's word, the player's choice
+// persisted (ps2r.ini game.text_language / game.speech_language) and answered by Language() / LanguageTextBank() from then
+// on, and the rows' titles in the text language in force.
+ps2e_s32 ps2e_system_text_language_count(void) { return static_cast<ps2e_s32>(te::language::TextCount()); }
 
-ps2e_s32 ps2e_system_language_selected(void) { return te::language::Selected(); }
+ps2e_s32 ps2e_system_text_language_selected(void) { return te::language::TextSelected(); }
 
-void ps2e_system_language_label(ps2e_s32 language, ps2e_u32 out, ps2e_s32 size) {
-    if (size <= 0) return;
-    uint8_t* p = te::GuestPointer(out, static_cast<size_t>(size));
-    if (!p) return;
-    std::string label = language >= 0 ? te::language::Label(static_cast<uint32_t>(language)) : "";
+void ps2e_system_text_language_label(ps2e_s32 language, ps2e_u32 out, ps2e_s32 size) {
+    std::string label = language >= 0 ? te::language::TextLabel(static_cast<uint32_t>(language)) : "";
     if (label.empty()) label = "language " + std::to_string(language);
-    const size_t n = std::min(label.size(), static_cast<size_t>(size) - 1);
-    std::memcpy(p, label.data(), n);
-    p[n] = 0;
+    CopyText(label, out, size);
 }
 
-void ps2e_system_set_language(ps2e_s32 language) {
-    if (language >= 0) te::language::Select(static_cast<uint32_t>(language));
+void ps2e_system_set_text_language(ps2e_s32 language) {
+    if (language >= 0) te::language::SelectText(static_cast<uint32_t>(language));
+}
+
+ps2e_s32 ps2e_system_speech_language_count(void) { return static_cast<ps2e_s32>(te::language::SpeechCount()); }
+
+ps2e_s32 ps2e_system_speech_language_selected(void) { return te::language::SpeechSelected(); }
+
+void ps2e_system_speech_language_label(ps2e_s32 language, ps2e_u32 out, ps2e_s32 size) {
+    std::string label = language >= 0 ? te::language::SpeechLabel(static_cast<uint32_t>(language)) : "";
+    if (label.empty()) label = "language " + std::to_string(language);
+    CopyText(label, out, size);
+}
+
+void ps2e_system_set_speech_language(ps2e_s32 language) {
+    if (language >= 0) te::language::SelectSpeech(static_cast<uint32_t>(language));
+}
+
+void ps2e_system_language_row_title(ps2e_s32 row, ps2e_u32 out, ps2e_s32 size) {
+    CopyText(row >= 0 ? te::language::RowTitle(static_cast<uint32_t>(row)) : "", out, size);
 }
 
 // Platform::System::LocalTime -> DateTime{u16 year; u8 month, day, hour, minute, second} (8 bytes, padded) at `out`

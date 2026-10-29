@@ -1,0 +1,115 @@
+{
+  "judge": "region_map_judge",
+  "description": "The region-aware loader's mechanism and the committed North American map: tools/discs/elf_region_map.py makes the identity map from the PAL executable against itself and recovers a synthetic relocation (+0x10000: every section and the segment moved, every pointer word and the code's lui of the program's addresses rebased) from the PAL executable against the moved copy; the map applied -- by the tool and by the game's own loader -- rebuilds the PAL data image byte for byte; the game RUNS from the moved executable through its map (the hub leg's pictures, sound and states equal the PAL executable's); the mod tool's C++ map maker writes the same files; and with the retail North American disc both tools make launcher/discs/region_map_SLUS-20909.json byte for byte. The executables are read from the discs into a temporary folder and deleted at the end (no game data in the tree).",
+  "shift": "0x10000",
+  "identity": {
+    "segments": 5,
+    "aligned_bytes": 198234,
+    "pointer_words": 0,
+    "code_pairs_min": 6000,
+    "code_conflicts": 0,
+    "symbols_mapped_all": true,
+    "rebuilt_differing_bytes": 0
+  },
+  "shifted": {
+    "segment_delta": "0x10000",
+    "bss_delta": "0x10000",
+    "pointer_words_min": 11000,
+    "unmapped": 0,
+    "code_conflicts": 0,
+    "symbols_mapped_all": true,
+    "rebuilt_differing_bytes": 0
+  },
+  "loader_test": {
+    "identity_line": "PAL against PAL through the tool's map: 5 segments, 198234 bytes, 0 pointers (0 code, 0 data, 0 by range, 0 unmapped), 0 fills -- 0 of 1053808 image bytes differ (the map lists 0)",
+    "shifted_line": "the moved executable through the tool's map: 5 segments, 198234 bytes, 11964 pointers (11511 code, 0 data, 453 by range, 0 unmapped), 0 fills -- 0 of 1053808 image bytes differ (the map lists 0)",
+    "identity_cpp_line": "the C++ map maker, PAL against PAL: 283991 bytes -- byte for byte the Python tool's file",
+    "shifted_cpp_line": "the C++ map maker, the moved executable: 475529 bytes -- byte for byte the Python tool's file",
+    "ntsc_line": "the North American executable through the tool's map: 42 segments, 197990 bytes, 12355 pointers (11914 code, 2 data, 439 by range, 0 unmapped), 13 fills -- 146 of 1053808 image bytes differ (the map lists 146)",
+    "ntsc_cpp_line": "the C++ map maker, the North American executable: 495013 bytes -- byte for byte the Python tool's file",
+    "why": "platform/nativeee/tests/test_region_map with TE_TEST_ISO + TE_TEST_REGION_MAP_DIR: engine/app/host/disc_regions.cpp LoadImageThroughMap against the native load, and engine/app/host/region_map_make.cpp MakeRegionMap against the Python tool's file (the North American lines only with --ntsc-iso)"
+  },
+  "boot": {
+    "padlog": "fixtures/padlogs/hub_entry.padlog",
+    "stop_at": 4200,
+    "run_seconds": 900,
+    "mod_id": "relocatedexe",
+    "files": [
+      "frames.fhash",
+      "audio.ahash",
+      "state.trace",
+      "frames.pdesc"
+    ],
+    "loader_line": "[twinsanityevolved] region: SLES_525.68 laid out at the PAL addresses through",
+    "patch_line": "code pointers: 36184 words scanned, 7234 patched, 526 unported bodies, 4207 stray in code range",
+    "why": "the moved executable reaches the game as a mod's disc/SLES_525.68 (the disc overlay); --region-map names its map; the runner finds the map by the executable's sha256, lays the data image out through it, the code-pointer patch then counts exactly what it counts for the PAL executable, and the hub leg (deterministic, headless, to 4200) is byte-identical to the same binary's run of the PAL executable"
+  },
+  "ntsc_row": {
+    "region_line_starts": "[twinsanityevolved] region: NTSC-U SLUS-20909, through an address map (",
+    "rate_line": "[twinsanityevolved] settings: game.hz = 50 is the PAL console's rate: this disc runs at 60",
+    "loader_line_starts": "[twinsanityevolved] region: SLUS_209.09 laid out at the PAL addresses through",
+    "loader_line_ends": "5 segments, 198234 bytes, 11964 pointer words (11511 code, 0 data, 453 by range, 0 unmapped)",
+    "patch_line": "code pointers: 36184 words scanned, 7234 patched, 526 unported bodies, 4207 stray in code range",
+    "why": "the North American row end to end without a North American disc: the row is chosen by the generated disc's SYSTEM.CNF (SLUS_209.09), the map (made for that executable under SLUS-20909) is found by its sha256, the PAL-only game.hz = 50 is refused for this row (60), and the data image the C++ reads is laid out at the PAL addresses through the map exactly as for the PAL executable (the patch counts equal)"
+  },
+  "frozen": "2026-10-25: RED on the base (edb23b8: no elf_region_map.py in its tree, no test_region_map, the runner refuses --region-map); GREEN on its change",
+  "real_pair": {
+    "committed": "launcher/discs/region_map_SLUS-20909.json",
+    "timeout_s": 900,
+    "names": [
+      {
+        "pal": "StartUp\\Fonts\\Crash_Euro",
+        "other": "StartUp\\Fonts\\Crash",
+        "at": "0x002F49B0"
+      }
+    ],
+    "bounds": {
+      "aligned_bytes": [
+        197900,
+        null
+      ],
+      "pointer_words": [
+        12300,
+        12400
+      ],
+      "code_pointers_no_pal_function": [
+        null,
+        6
+      ],
+      "code_pointers_to_another_function": [
+        null,
+        14
+      ],
+      "data_pointers_unmapped": [
+        null,
+        0
+      ],
+      "fills": [
+        null,
+        13
+      ],
+      "differing_bytes": [
+        null,
+        146
+      ],
+      "pal_data_symbols_mapped": [
+        1503,
+        null
+      ],
+      "pal_data_symbols": [
+        1506,
+        1506
+      ],
+      "objects_pal_only": [
+        null,
+        8
+      ],
+      "names": [
+        1,
+        1
+      ]
+    },
+    "why": "the retail NTSC-U v2.00 disc (Redump 13689) against the PAL disc used for development (its SLES_525.68 is the decompilation's: game/splat.yaml's sha1): the map both tools make IS the committed file; the census as measured 2026-10-26: 197,990 of 198,384 data-image bytes laid out, 12,355 pointer words translated, 6 code pointers whose function the PAL program does not have (jump-table cases), 0 data pointers unmapped, 146 bytes of the PAL image differ (each one explained), 1,503 of 1,506 PAL data symbols mapped, one file name (the font)"
+  },
+  "refrozen_v2": "2026-10-26: the map algorithm per object (schema 2: the code aligned and voting, the content, the calls, the pointers; fills and file names) learned on the real NTSC-U pair; the synthetic shift is 0x10000 so the code's addresses move too (with +0x1000 the code keeps its old addresses and votes against the data: not a relocation); the loader test lines are the new test's; the real pair (7) added. RED on 59a161b (its tool is schema 1: the 0x10000 shift gives no lui rebasing, no C++ file comparison, no committed map)"
+}

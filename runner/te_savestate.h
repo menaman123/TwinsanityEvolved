@@ -17,6 +17,12 @@ void Register(w2c_env& env, w2c_game& instance);
 // Host side, game fiber suspended at a checkpoint: capture everything to `path`.
 bool Save(const std::string& path, uint64_t boundary, std::string* err);
 
+// The sidecar of the state Save just wrote: <path>.meta, key=value lines (the engine's savestate-slot sidecar keys --
+// frame= the boundary, wall_ms=, build_id=, composition=, sections= the file's TAG:vN in order -- then `detail`'s own lines,
+// e.g. level= and place=): what the state is without loading it (a player's F5 state attached to a report). Written
+// atomically (a .tmp renamed over it); false + *err when it cannot be.
+bool WriteSidecar(const std::string& path, uint64_t boundary, const std::string& detail, std::string* err);
+
 // Host side, before the game fiber ever ran: restore everything from `path` (memory, module, services, the fiber's
 // stack and register file). On success the next te::game::Resume() continues the saved game at its checkpoint.
 bool Load(const std::string& path, std::string* err);

@@ -1,0 +1,33 @@
+# fixtures/padlogs/iceclimb_bergs.padlog's plan: LOAD GAME on the caveent card (tools/warp_save.py), walk to the stream,
+# land on the first berg and stand on it 8 s (it settles 1.1 lower under Crash), cross the other three, stand on the far
+# bank, turn the camera back to the stream and wait while the bergs are put back
+at 1273
+hold 0008 5
+at 1353
+hold 0040 3
+at 1403
+hold 4000 5
+at 1803
+hold 0040 3
+at 1903
+hold 4000 3
+at 2900
+hold CROSS 4
+until-gstate 12 200
+wait 20
+goto 14 10 1.5 900
+goto 8.5 11 0.8 300
+gotoj 0.8 11.3 0.8 200
+wait 480
+gotoj -4.0 18.8 0.8 200
+wait 30
+gotoj -2.9 26.9 0.8 240
+wait 30
+gotoj -1.0 37.5 0.8 240
+wait 30
+goto -4.0 38.5 0.6 120
+gotoj -13 39 1.0 300
+wait 30
+hold NONE 70 128 128 255 128
+wait 40
+stop

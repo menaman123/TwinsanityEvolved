@@ -30,7 +30,13 @@ public:
     static bool RunB(const Vu1HleInput& in, Vu1HleOutput& out);
     static bool RunC(const Vu1HleInput& in, Vu1HleOutput& out);
     static bool RunCCont(const Vu1HleInput& in, Vu1HleOutput& out);
+    // RunCCont's kicks alone, for a caller that reads nothing else and discards the image afterwards: the program runs in
+    // place over `memory` (== in.data, mutable: the caller's own image), with no working copy, no MAC / STATUS chain and no
+    // data writes (out.has_regs false). The kicks are RunCCont's byte for byte.
+    static bool RunCContKicks(const Vu1HleInput& in, uint8_t* memory, Vu1HleOutput& out);
     static bool RunACont(const Vu1HleInput& in, Vu1HleOutput& out);
+    // RunACont's kicks alone, in place over `memory` (== in.data), as RunCContKicks
+    static bool RunAContKicks(const Vu1HleInput& in, uint8_t* memory, Vu1HleOutput& out);
 
 private:
     // cls: 0 = A (five LQs), 1 = B (node regs + two LQs), 2 = C.

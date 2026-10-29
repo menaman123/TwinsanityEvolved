@@ -1,0 +1,39 @@
+{
+  "disc": "PAL SLES-52568 (the development image; on it the English text is the `Spanish` Code bank). Every run deterministic headless: --deterministic --no-sdl-input --no-audio --skip-movies --trace-state, an empty --mc-dir; the mods are made at run time by tools/mods/make_fixture_overlay.py from the disc and deleted afterwards",
+  "generator": "tools/mods/make_fixture_overlay.py",
+  "text": {
+    "padlog": "fixtures/padlogs/options_graphic.padlog",
+    "stop_at": 1700,
+    "run_seconds": 600,
+    "string": "graphic options",
+    "min_draws": 100,
+    "why": "the title -> main menu -> OPTIONS (its rows: graphic options, sound options, game options ...) -> GRAPHIC OPTIONS; TE_GFX_DIAG_TEXT=1 logs every text the game draws with its string. Vanilla draws 'graphic options' 266 times on this route (the OPTIONS row from boundary ~1440, the GRAPHIC OPTIONS page's title from ~1545); with the text-bank mod on the same draws read 'graphic optionz' and the original string is never drawn"
+  },
+  "chunk": {
+    "padlog": "fixtures/padlogs/hub_entry.padlog",
+    "stop_at": 4200,
+    "run_seconds": 600,
+    "final_state": "Playing",
+    "playing_by": 2700,
+    "min_hits": 1,
+    "frames_identical_to_vanilla": true,
+    "why": "the hub entry route loads Levels\\Earth\\Hub\\beach.rm2 (49 archive reads, the first at its offset 0); the mod flips its root section's version 1 -> 0, which the game reads only as `version >= 2` (harmless): the run must reach 4200 with Playing held from <= playing_by, the stream trace must show an archive read covering the flipped byte, the census row must count reads served from the overlay (300 at 4200 on the overlay build), and the pictures, sound and states must be byte-identical to the vanilla hub run"
+  },
+  "order": {
+    "padlog": "fixtures/padlogs/options_graphic.padlog",
+    "stop_at": 1700,
+    "run_seconds": 600,
+    "min_draws": 100,
+    "why": "order_a makes the line 'graphic optiona', order_b 'graphic optionb' and also 'sound optionz'; with mods.order = order_a,order_b the screen must read 'graphic optionb' (later wins) and with order_b,order_a 'graphic optiona' -- and 'sound optionz' in both (order_b's other change survives under order_a: a recipe's base is the layer below)"
+  },
+  "det": {
+    "legs": [
+      {"name": "title_intro", "padlog": "fixtures/padlogs/title_intro_idle.padlog", "stop_at": 3300},
+      {"name": "hub_entry", "padlog": "fixtures/padlogs/hub_entry.padlog", "stop_at": 4200}
+    ],
+    "files": ["frames.fhash", "audio.ahash", "state.trace"],
+    "run_seconds": 900,
+    "why": "the determinism gate's two legs with NO mod on: run N without a mods folder, run F with the fixture mods in the folder but none switched on -- their harness streams must be byte-identical (and identical to --ref-bin's when one is given: the base build)"
+  },
+  "frozen": "2026-10-25: RED on the base (234718f: the runner refuses --mods-dir, so no mod can be loaded -- every mod check RED); GREEN on the disc overlay build: 'graphic optionz' drawn 266 times and 'graphic options' 0; the hub run Playing held from 2629, mods=1:1:300, a read over the flipped byte, its streams identical to vanilla; the order pair 'graphic optionb' / 'graphic optiona' with 'sound optionz' both ways; no-mod legs identical with and without the mods folder and to the base build"
+}

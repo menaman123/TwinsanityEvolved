@@ -46,6 +46,7 @@
 #include <ctime>
 #include <chrono>
 #include <string>
+#include <vector>
 
 #include "engine/platform/platform.h"
 
@@ -293,6 +294,14 @@ int StrNCaseCmp(const char* a, const char* b, size_t n);    // strncasecmp / _st
 // --- paths ---
 bool MakeDirectory(const char* path);   // true if created or already a directory
 bool IsDirectory(const char* path);
+// The entries of one directory (never "." / ".."), each with whether it is a directory itself, in the host's order (callers
+// sort): opendir / readdir (+ stat where readdir does not say -- the Vita's newlib) or FindFirstFile / FindNextFile. False
+// when `path` is not a directory that can be read. The mods folder and a mod's disc/ tree are listed through it.
+struct DirectoryEntry {
+    std::string name;
+    bool directory = false;
+};
+bool ListDirectory(const char* path, std::vector<DirectoryEntry>* out);
 int64_t FileSeek64(std::FILE* f, int64_t offset, int whence);   // fseeko / _fseeki64
 int64_t FileTell64(std::FILE* f);                                // ftello / _ftelli64
 

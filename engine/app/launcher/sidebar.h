@@ -1,5 +1,5 @@
-// app/launcher/sidebar.h -- the 220 px column: the product name and version at the top, the four pages (Games,
-// Settings, Targets, About), the app-data path with Open at the bottom. Painted flat; Cmd/Ctrl+1..4 select.
+// app/launcher/sidebar.h -- the 220 px column: the product name and version at the top, the four pages (Games, Mods,
+// Settings, About), the game folder with Open at the bottom. Painted flat; Cmd/Ctrl+1..4 select.
 #pragma once
 #include <QStringList>
 #include <QWidget>
@@ -12,7 +12,7 @@ public:
     Sidebar(const QString& product, const QString& version, const QStringList& pages, QWidget* parent = nullptr);
     int current() const { return current_; }
     void setCurrent(int index);
-    void setFooter(const QString& path);
+    void setFooter(const QString& label, const QString& path);
     QString pageName(int index) const { return pages_.value(index); }
     FlatButton* openButton() const { return open_; }
 
@@ -31,7 +31,7 @@ protected:
 private:
     QRect itemRect(int index) const;
     int itemAt(const QPoint& pos) const;
-    QString product_, version_, footer_;
+    QString product_, version_, footerLabel_, footer_;
     QStringList pages_;
     FlatButton* open_;
     int current_ = 0, hover_ = -1;

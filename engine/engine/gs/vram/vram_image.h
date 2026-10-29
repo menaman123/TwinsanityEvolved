@@ -64,6 +64,13 @@ public:
 
     VramImage();
 
+    // The freshly constructed state again (every byte 0, every page record, sequence, counter and watermark as a new
+    // image has them, no shadow, no mirror) at the cost of the pages that were ever touched: a page whose record moved
+    // (a write, a stamp, a deposit) has its 8 KiB zeroed, the others are zero already. A reader of the bytes or the
+    // records cannot tell a Reset image from a new one; it saves a scratch user (one texture decode at a time:
+    // te::gfx::DecodeTextureResource) the 4 MiB allocation and zero-fill per use.
+    void Reset();
+
     // ---- EE side --------------------------------------------------------------
     // Store `len` bytes at `byte_off` (wrapping at 4 MiB); marks write bits,
     // CPU authorship and the pending-settle watermark.

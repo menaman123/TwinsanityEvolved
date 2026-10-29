@@ -23,17 +23,17 @@ qint64 GameProcess::elapsedSeconds() const { return running() ? timer_.elapsed()
 QString GameProcess::logPath() const { return proc_->logPath(); }
 qint64 GameProcess::processId() const { return proc_->processId(); }
 
-bool GameProcess::start(const QString& binary, const QString& isoPath, const QString& configPath, const QString& memoryCardsDir,
-                        const QStringList& extraArgs, const QString& logPath, QString* error) {
-    if (running()) { if (error) *error = QStringLiteral("the game is already running"); return false; }
-    if (!QFileInfo(binary).isExecutable()) { if (error) *error = QStringLiteral("%1 is not there -- build first").arg(binary); return false; }
-    if (!QFileInfo::exists(isoPath)) { if (error) *error = QStringLiteral("the disc image %1 is gone").arg(isoPath); return false; }
+bool GameProcess::start(const QString& binary, const QString& isoPath, const QString& configPath, const QStringList& extraArgs,
+                        const QString& logPath, QString* error) {
+    if (running()) { if (error) *error = QStringLiteral("The game is already running."); return false; }
+    if (!QFileInfo(binary).isExecutable()) { if (error) *error = QStringLiteral("The game is not in its folder any more (%1). Install it again from the Games page.").arg(binary); return false; }
+    if (!QFileInfo::exists(isoPath)) { if (error) *error = QStringLiteral("The disc image is no longer at %1.").arg(isoPath); return false; }
     QStringList args;
     args << manifest_->runIsoFlag() << isoPath;
     if (!configPath.isEmpty() && !manifest_->runConfigFlag().isEmpty()) args << manifest_->runConfigFlag() << configPath;
-    if (!memoryCardsDir.isEmpty() && !manifest_->runMemoryCardsFlag().isEmpty()) args << manifest_->runMemoryCardsFlag() << memoryCardsDir;
     args << manifest_->runArgs() << extraArgs;
     iso_ = isoPath;
+    args_ = args;
     reachedTitle_ = false;
     proc_->setLogPath(logPath);
     proc_->setWorkingDirectory(QFileInfo(binary).absolutePath());

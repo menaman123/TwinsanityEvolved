@@ -43,6 +43,12 @@ bool Save(const std::string& path, uint64_t boundary, std::string* err) {
     return false;
 }
 
+bool WriteSidecar(const std::string& path, uint64_t boundary, const std::string& detail, std::string* err) {
+    (void)path; (void)boundary; (void)detail;
+    if (err) *err = kRefusal;
+    return false;
+}
+
 bool Load(const std::string& path, std::string* err) {
     (void)path;
     if (err) *err = kRefusal;

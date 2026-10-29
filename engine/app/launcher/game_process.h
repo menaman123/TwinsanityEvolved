@@ -1,6 +1,7 @@
-// app/launcher/game_process.h -- Play: the built binary launched with the disc image, the options file and the
-// memory-card folder, its output in Logs/play-*.log; one game at a time; the playtime and the moment the game reached
-// its title screen (the manifest's state line) reported for the card and the judge.
+// app/launcher/game_process.h -- Play: the installed game started with the card's disc image and the game folder's
+// options file (nothing else ps2r.ini already says), its output in Logs/play-*.log; one game at a time; the
+// playtime and the moment the game reached its title screen (the manifest's state line) reported for the card and the
+// judge.
 #pragma once
 #include <QElapsedTimer>
 #include <QObject>
@@ -21,8 +22,9 @@ public:
     qint64 processId() const;
 
     // Starts the game; false (with *error) when the binary cannot start or one is already running.
-    bool start(const QString& binary, const QString& isoPath, const QString& configPath, const QString& memoryCardsDir,
-               const QStringList& extraArgs, const QString& logPath, QString* error);
+    bool start(const QString& binary, const QString& isoPath, const QString& configPath, const QStringList& extraArgs,
+               const QString& logPath, QString* error);
+    QStringList lastArguments() const { return args_; }
     void stop();
 
 signals:
@@ -35,6 +37,7 @@ private:
     const TitleManifest* manifest_;
     ProcessRunner* proc_;
     QString iso_;
+    QStringList args_;
     QElapsedTimer timer_;
     bool reachedTitle_ = false;
 };

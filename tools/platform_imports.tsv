@@ -13,3 +13,8 @@ ps2e_gfx2_skin_loaded	void	u32:skin,s32:index,s32:count,u32:packet,s32:size,s32:
 ps2e_gfx2_skin_released	void	u32:skin	graphics: the Skin is destroyed; its geometry is forgotten
 ps2e_gfx2_blend_skin_released	void	u32:skin	graphics: the BlendSkin is destroyed; its parts' decoded geometry (read from the heap packets at the first draw) is forgotten
 ps2e_gfx2_platform_texts	s32	u32:out,s32:max	graphics: Platform::Graphics::QueuePlatformTexts -- the host fills up to max te_platform_text records (the fps counter, a mod's timer) into out; returns how many
+ps2e_text_direction	s32		text: Font::Begin -- 1 while the language in force reads right to left (a language mod's direction rtl): Font::Draw shapes the texts that hold its letters (te_text_shape.h)
+ps2e_text_font_size	s32		text: the size of the language in force's own font file (a language mod's), 0 when it has none
+ps2e_text_font_read	s32	u32:out,s32:size	text: the language's own font file copied into out (size bytes); returns the bytes copied
+ps2e_text_diag	s32		text: 1 when the shaped texts are logged (TE_GFX_DIAG_TEXT)
+ps2e_text_shaped	void	u32:record	text: Font::Draw -- one shaped text's census (te::text::Diag in guest memory): the host prints its lines' boxes and glyphs

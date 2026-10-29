@@ -38,6 +38,8 @@ typedef struct ps2e_movie_config {
                             single-track movie) */
     int max_pictures;    /* decoded pictures kept waiting before feed stops decoding video (the rest of the fed bytes
                             wait inside the decoder); 0 = the default (4) */
+    int planar;          /* 1 = 4:2:0 pictures come out as their Y, U, V planes (ps2e_movie_picture.planes), no RGBA
+                            conversion (a consumer that converts on the GPU: the Vita's movie textures); 0 = RGBA8 */
 } ps2e_movie_config;
 
 ps2e_movie* ps2e_movie_create(const ps2e_movie_config* config);
@@ -54,7 +56,12 @@ void ps2e_movie_end_input(ps2e_movie* movie);
 typedef struct ps2e_movie_picture {
     int width;             /* the picture's own size (the sequence header's; the game knows the movie's) */
     int height;
-    const uint8_t* rgba8;  /* width * height * 4 bytes, top row first, alpha 0xFF; valid until the next take or destroy */
+    const uint8_t* rgba8;  /* width * height * 4 bytes, top row first, alpha 0xFF; valid until the next take or destroy
+                              (NULL for a planar picture) */
+    int planar;            /* 1: a planar picture (ps2e_movie_config.planar): `planes` holds Y (width x height), then U,
+                              then V (each (width + 1) / 2 x (height + 1) / 2), top rows first, no row padding, limited
+                              (MPEG) range; valid until the next take or destroy. 0: RGBA in rgba8 */
+    const uint8_t* planes;
 } ps2e_movie_picture;
 
 int ps2e_movie_pictures_ready(const ps2e_movie* movie);

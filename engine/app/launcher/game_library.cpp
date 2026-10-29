@@ -1,4 +1,4 @@
-// app/launcher/game_library.cpp -- the known discs and their facts.
+// app/launcher/game_library.cpp -- the chosen discs and their facts.
 #include "game_library.h"
 #include <QFileInfo>
 #include <QJsonArray>
@@ -10,15 +10,16 @@ GameLibrary::GameLibrary(AppData* appData, QObject* parent) : QObject(parent), a
 
 void GameLibrary::load() {
     games_.clear();
+    removed_.clear();
+    for (const QJsonValue& v : appData_->value("removed_discs").toArray()) removed_ << v.toString();
     for (const QJsonValue& v : appData_->value("games").toArray()) {
         const QJsonObject o = v.toObject();
         GameEntry e;
-        e.path = o.value("path").toString();
-        e.fingerprintFile = o.value("fingerprint").toString();
-        e.sizeBytes = qint64(o.value("size").toDouble());
+        e.disc = DiscScanner::fromJson(o.value("identity").toObject());
+        e.disc.path = o.value("path").toString();
         e.lastPlayed = QDateTime::fromString(o.value("last_played").toString(), Qt::ISODate);
         e.playtimeSeconds = qint64(o.value("playtime_seconds").toDouble());
-        if (!e.path.isEmpty()) games_ << e;
+        if (!e.disc.path.isEmpty()) games_ << e;
     }
     refreshMissing();
 }
@@ -27,19 +28,19 @@ void GameLibrary::save() {
     QJsonArray arr;
     for (const GameEntry& e : games_) {
         QJsonObject o;
-        o["path"] = e.path;
-        o["fingerprint"] = e.fingerprintFile;
-        o["size"] = double(e.sizeBytes);
+        o["path"] = e.disc.path;
+        o["identity"] = DiscScanner::toJson(e.disc);
         if (e.lastPlayed.isValid()) o["last_played"] = e.lastPlayed.toString(Qt::ISODate);
         o["playtime_seconds"] = double(e.playtimeSeconds);
         arr << o;
     }
     appData_->setValue("games", arr);
+    appData_->setValue("removed_discs", QJsonArray::fromStringList(removed_));
     appData_->save();
 }
 
 int GameLibrary::indexOf(const QString& path) const {
-    for (int i = 0; i < games_.size(); ++i) if (games_[i].path == path) return i;
+    for (int i = 0; i < games_.size(); ++i) if (games_[i].disc.path == path) return i;
     return -1;
 }
 
@@ -48,30 +49,60 @@ const GameEntry* GameLibrary::game(const QString& path) const {
     return i < 0 ? nullptr : &games_[i];
 }
 
-bool GameLibrary::add(const QString& path, const QString& fingerprintFile, qint64 sizeBytes) {
-    const int i = indexOf(path);
+bool GameLibrary::add(const DiscFound& disc) {
+    if (disc.fromSearch && removed_.contains(disc.path)) return false;   // the user took it off the list
+    removed_.removeAll(disc.path);
+    const int i = indexOf(disc.path);
     if (i >= 0) {
-        games_[i].fingerprintFile = fingerprintFile;
-        games_[i].sizeBytes = sizeBytes;
+        games_[i].disc = disc;
         games_[i].missing = false;
         save();
         emit changed();
         return false;
     }
     GameEntry e;
-    e.path = path;
-    e.fingerprintFile = fingerprintFile;
-    e.sizeBytes = sizeBytes;
+    e.disc = disc;
     games_ << e;
     save();
     emit changed();
     return true;
 }
 
-void GameLibrary::remove(const QString& path) {
+bool GameLibrary::relocate(const QString& oldPath, const DiscFound& disc) {
+    const int i = indexOf(oldPath);
+    if (i < 0) return add(disc);
+    if (indexOf(disc.path) >= 0 && disc.path != oldPath) { games_.remove(i); save(); emit changed(); return false; }
+    games_[i].disc = disc;
+    games_[i].missing = false;
+    save();
+    emit changed();
+    return true;
+}
+
+bool GameLibrary::updateIdentity(const DiscFound& disc) {
+    const int i = indexOf(disc.path);
+    if (i < 0) return false;
+    DiscFound next = disc;
+    next.fromSearch = games_[i].disc.fromSearch;
+    games_[i].disc = next;
+    games_[i].missing = false;
+    save();
+    emit changed();
+    return true;
+}
+
+QStringList GameLibrary::staleIdentities() const {
+    QStringList out;
+    for (const GameEntry& e : games_)
+        if (!e.missing && (e.disc.verdict.isEmpty() || !e.disc.checked)) out << e.disc.path;
+    return out;
+}
+
+void GameLibrary::remove(const QString& path, bool byUser) {
     const int i = indexOf(path);
     if (i < 0) return;
     games_.remove(i);
+    if (byUser && !removed_.contains(path)) removed_ << path;
     save();
     emit changed();
 }
@@ -93,7 +124,7 @@ void GameLibrary::recordPlayEnd(const QString& path, qint64 seconds) {
 }
 
 void GameLibrary::refreshMissing() {
-    for (GameEntry& e : games_) e.missing = !QFileInfo::exists(e.path);
+    for (GameEntry& e : games_) e.missing = !QFileInfo::exists(e.disc.path);
 }
 
 QString GameLibrary::relativeTime(const QDateTime& when, const QDateTime& now) {

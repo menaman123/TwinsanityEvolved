@@ -1,11 +1,13 @@
 #include "games/slus_20909_crash_twinsanity/hle/graphics/skin_geometry.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <utility>
 
 #include "engine/vu/vu_chop_round_guard.h"
+#include "engine/vu/vu_float.h"
 #include "games/slus_20909_crash_twinsanity/vu1_library/qw_ptr.h"
 #include "games/slus_20909_crash_twinsanity/vu1_library/skinned_lit_strip.h"
 
@@ -46,25 +48,37 @@ bool SetImageQw(BatchImage& image, uint32_t at, const Qw& value) {
     return true;
 }
 
+// The last three vertices of a batch's strip (a ring: `count` pushed since Clear, the oldest at count % 3)
+struct Queue {
+    Vertex v[3];
+    unsigned count = 0;
+    void Clear() { count = 0; }
+};
 // The GS strip assembly of VertexKick::AssembleStrip over one batch's output
 // (the ADC bit restarts the strip; a degenerate triangle still advances the
 // parity; even parity q0 q1 q2, odd q1 q0 q2).
-void Assemble(std::vector<Vertex>& queue, unsigned& parity, const Vertex& v, bool draw, std::vector<Vertex>& out) {
-    queue.push_back(v);
-    while (queue.size() > 3) queue.erase(queue.begin());
+void Assemble(Queue& queue, unsigned& parity, const Vertex& v, bool draw, std::vector<Vertex>& out) {
+    queue.v[queue.count % 3] = v;
+    ++queue.count;
     if (!draw) {
         parity = 0;
         return;
     }
-    if (queue.size() != 3) return;
-    const Vertex& q0 = queue[0];
-    const Vertex& q1 = queue[1];
-    const Vertex& q2 = queue[2];
+    if (queue.count < 3) return;
+    const Vertex& q0 = queue.v[queue.count % 3];
+    const Vertex& q1 = queue.v[(queue.count + 1) % 3];
+    const Vertex& q2 = queue.v[(queue.count + 2) % 3];
     const bool degenerate = (q0.x == q1.x && q0.y == q1.y) || (q1.x == q2.x && q1.y == q2.y) ||
                             (q0.x == q2.x && q0.y == q2.y);
     if (!degenerate) {
-        if (parity % 2 == 0) out.insert(out.end(), {q0, q1, q2});
-        else out.insert(out.end(), {q1, q0, q2});
+        if (parity % 2 == 0) {
+            out.push_back(q0);
+            out.push_back(q1);
+        } else {
+            out.push_back(q1);
+            out.push_back(q0);
+        }
+        out.push_back(q2);
     }
     ++parity;
 }
@@ -272,12 +286,25 @@ bool RunDisplace(QwPtr m, uint32_t top, const SkinGeometry::Shape& shape, const 
 #if defined(__vita__)
 // The Vita's skinning: what the 0xcb0 scale + skin and the 0x1720 lit emitter compute, done per vertex in plain floats
 // straight from the batch (no VU memory image, no clamped operands, the CPU's rounding) -- the faithful programs cost
-// the Vita's builders most of their frame. An unclipped plain skin only (the clip marks and the blends keep the programs).
+// the Vita's builders most of their frame. The plain skins, clipped or not, and the blend skins (SetFastPaths(false), the
+// TE_GFX_SKIN_FAST=0 knob: the clipped plain skins and the blend skins through their VU programs again, as before).
 //   position, normal x: QW0 ints x the batch's x scale; S, T, normal y z: QW1 ints x its y scale; QW2: the three weights
 //   (each one's low 9 bits its bone's quadword in the palette), w = the flags (bits 0-1 the bone count, 15 ADC); QW3 the
 //   vertex colour. Bones blend in order; the normal turns by the first bone; the colour is lit by the three lights'
 //   (direction . normal, at least 0) times their colours plus the ambient, times the vertex colour, at most 255.
-SkinGeometry::Result FastSkin(const SkinGeometry::Part& part, const SkinGeometry::Inputs& in, const Draw& state, std::vector<Draw>& out) {
+//   A blend skin (`blend`): every shape adds its int8 row x factors.xyz x weight to the scaled position (the 0x1400 /
+//   0x15a0 displacement passes), then it skins as a plain skin (the 0x1040 float-input skin = the same blend of bones).
+//   Clipped (in.clipped: the 0xb30 clip mark): the skinned position through the matrix to the camera, scaled by the clip
+//   vector, judged against its w as the CLIP instruction judges (VuFloat::ClipNf of the clamped lanes); a vertex whose
+//   judgement or either of the two before it in the batch is outside takes the ADC bit (the triangle it closes is not
+//   drawn) -- the guard-band rule of the program; nothing is cut.
+// The batches' triangle lists appended to `verts`, each batch's end in `ends` (a batch with no triangle adds none): the
+// runs FastSkin publishes one DrawIr each (SkinGeometry::BuildRuns hands them over without the DrawIr per batch)
+std::atomic<bool> g_fastPaths{true};
+
+SkinGeometry::Result FastSkinRuns(const SkinGeometry::Part& part, const SkinGeometry::Inputs& in, const Draw& state,
+                                  std::vector<Vertex>& verts, std::vector<uint32_t>& ends,
+                                  const SkinGeometry::BlendInputs* blend = nullptr) {
     using Result = SkinGeometry::Result;
     const auto F = [](uint32_t b) { float f; std::memcpy(&f, &b, 4); return f; };
     float screen[4][4], light[3][3], colour[3][3], ambient[3];
@@ -286,28 +313,57 @@ SkinGeometry::Result FastSkin(const SkinGeometry::Part& part, const SkinGeometry
     for (int l = 0; l < 3; ++l)
         for (int k = 0; k < 3; ++k) { light[l][k] = F(in.lights[l][k]); colour[l][k] = F(in.colours[l][k]); }
     for (int k = 0; k < 3; ++k) ambient[k] = F(in.ambient[k]);
+    // the clip mark's rows: the matrix to the camera and the clip (guard) vector
+    const bool clipped = in.clipped;
+    float camera[4][4] = {}, guard[4] = {};
+    if (clipped) {
+        for (int r = 0; r < 4; ++r)
+            for (int k = 0; k < 4; ++k) camera[r][k] = F(in.to_camera[r][k]);
+        for (int k = 0; k < 4; ++k) guard[k] = F(in.clip[k]);
+    }
+    // a blend skin's shapes: each one's factors x weight per lane (the displacement's two products, in their order); the
+    // caller (DrawBlendSkin) passes at most 64
+    struct ShapeScale { const uint8_t* rows; uint32_t count; float factor[3]; float weight; };
+    ShapeScale shapes[64];
+    size_t shapeCount = 0;
+    if (blend) {
+        if (blend->shapes.size() > 64) return Result::LimitExceeded;
+        for (const auto& sh : blend->shapes) {
+            ShapeScale& s = shapes[shapeCount++];
+            s.rows = sh.rows;
+            s.count = sh.count;
+            for (int k = 0; k < 3; ++k) s.factor[k] = blend->factors[size_t(k)];
+            s.weight = sh.weight;
+        }
+    }
     const size_t palette = in.joints.size();
-    std::vector<Draw> result;
-    thread_local std::vector<Vertex> queue;
-    size_t output = 0;
+    Queue queue;
+    const size_t first = verts.size();
     for (const auto& batch : part.batches) {
         const uint32_t count = batch.Vertices();
         if (count < 3 || count > SkinGeometry::kMaxBatchVertices || batch.vertices.size() != 4 * size_t(count))
             return Result::InvalidGeometry;
+        for (size_t s = 0; s < shapeCount; ++s)   // RunDisplace's refusal: a shape without a row for every vertex
+            if (!shapes[s].rows || shapes[s].count < count) return Result::InvalidGeometry;
         const float sx = F(batch.scale[0]), sy = F(batch.scale[1]);
-        Draw draw = state;
-        draw.verts.clear();
-        draw.verts.reserve(size_t(count) * 3);
-        queue.clear();
+        const size_t start = verts.size();
+        queue.Clear();
         unsigned parity = 0;
+        unsigned outside1 = 0, outside2 = 0;   // the clip mark's window: the two judgements before this vertex's
         for (uint32_t j = 0; j < count; ++j) {
             const auto& q0 = batch.vertices[4 * j];
             const auto& q1 = batch.vertices[4 * j + 1];
             const auto& q2 = batch.vertices[4 * j + 2];
             const auto& q3 = batch.vertices[4 * j + 3];
-            const float px = float(int32_t(q0[0])) * sx, py = float(int32_t(q0[1])) * sx, pz = float(int32_t(q0[2])) * sx;
+            float px = float(int32_t(q0[0])) * sx, py = float(int32_t(q0[1])) * sx, pz = float(int32_t(q0[2])) * sx;
             const float nx = float(int32_t(q0[3])) * sx, ny = float(int32_t(q1[2])) * sy, nz = float(int32_t(q1[3])) * sy;
             const float s0 = float(int32_t(q1[0])) * sy, t0 = float(int32_t(q1[1])) * sy;
+            for (size_t s = 0; s < shapeCount; ++s) {
+                const uint8_t* row = shapes[s].rows + size_t(j) * 4;   // V4-8: sign-extended
+                px += float(int32_t(int8_t(row[0]))) * shapes[s].factor[0] * shapes[s].weight;
+                py += float(int32_t(int8_t(row[1]))) * shapes[s].factor[1] * shapes[s].weight;
+                pz += float(int32_t(int8_t(row[2]))) * shapes[s].factor[2] * shapes[s].weight;
+            }
             const uint32_t flags = q2[3] & 0xFFFFu;
             const uint32_t bones = flags & 3u;
             const int used = bones == 1 ? 1 : bones == 2 ? 2 : 3;
@@ -349,17 +405,48 @@ SkinGeometry::Result FastSkin(const SkinGeometry::Part& part, const SkinGeometry
             v.x = float(uint16_t(fixed(T[0] * Q))) / 16.0f - state.off_x;
             v.y = float(uint16_t(fixed(T[1] * Q))) / 16.0f - state.off_y;
             v.z = float(fixed(T[2] * Q));
-            const bool adc = (flags & 0x8000u) != 0;
+            bool adc = (flags & 0x8000u) != 0;
+            if (clipped) {
+                // the clip mark: XformClip (to the camera) then GuardScale (x the clip vector), judged by CLIP on the
+                // clamped lanes; the window of this judgement and the two before it in the batch
+                uint32_t g[4];
+                for (int k = 0; k < 4; ++k) {
+                    const float c = camera[3][k] + camera[0][k] * po[0] + camera[1][k] * po[1] + camera[2][k] * po[2];
+                    const float scaled = VuFloat::ClampFloat(guard[k] * c);
+                    std::memcpy(&g[k], &scaled, 4);
+                }
+                const unsigned outside = VuFloat::ClipNf(g[0], g[1], g[2], g[3]) != 0 ? 1u : 0u;
+                if (outside | outside1 | outside2) adc = true;
+                outside2 = outside1;
+                outside1 = outside;
+            }
             v.draw_kick = adc ? 0 : 1;
-            Assemble(queue, parity, v, !adc, draw.verts);
+            Assemble(queue, parity, v, !adc, verts);
         }
-        output += draw.verts.size();
-        if (output > SkinGeometry::kMaxVertices * 24) return Result::LimitExceeded;
-        if (draw.verts.empty()) continue;
-        draw.vertex_count = uint32_t(draw.verts.size());
-        result.push_back(std::move(draw));
+        if (verts.size() - first > SkinGeometry::kMaxVertices * 24) return Result::LimitExceeded;
+        if (verts.size() == start) continue;
+        ends.push_back(uint32_t(verts.size()));
     }
-    out.insert(out.end(), std::make_move_iterator(result.begin()), std::make_move_iterator(result.end()));
+    return Result::Ok;
+}
+
+SkinGeometry::Result FastSkin(const SkinGeometry::Part& part, const SkinGeometry::Inputs& in, const Draw& state, std::vector<Draw>& out,
+                              const SkinGeometry::BlendInputs* blend = nullptr) {
+    using Result = SkinGeometry::Result;
+    thread_local std::vector<Vertex> verts;
+    thread_local std::vector<uint32_t> ends;
+    verts.clear();
+    ends.clear();
+    const Result r = FastSkinRuns(part, in, state, verts, ends, blend);
+    if (r != Result::Ok) return r;
+    size_t at = 0;
+    for (const uint32_t end : ends) {
+        Draw draw = state;
+        draw.verts.assign(verts.begin() + std::ptrdiff_t(at), verts.begin() + std::ptrdiff_t(end));
+        draw.vertex_count = uint32_t(draw.verts.size());
+        out.push_back(std::move(draw));
+        at = end;
+    }
     return Result::Ok;
 }
 #endif
@@ -375,6 +462,7 @@ SkinGeometry::Result BuildBatches(const SkinGeometry::Part& part, const SkinGeom
         return Result::InvalidGeometry;
 #if defined(__vita__)
     if (!program.blend && !inputs.clipped) return FastSkin(part, inputs, state, out);
+    if (g_fastPaths.load(std::memory_order_relaxed)) return FastSkin(part, inputs, state, out, program.blend);
 #endif
     // The image: the header (QW1.x = the output list, QW3.x = the material's
     // buffer), the joints at 13.., the material's buffer B (the dispatcher
@@ -427,7 +515,7 @@ SkinGeometry::Result BuildBatches(const SkinGeometry::Part& part, const SkinGeom
     std::vector<Draw> result;
     size_t output = 0;
     VuChopRoundGuard rounding;
-    thread_local std::vector<Vertex> queue;
+    Queue queue;
     for (const auto& batch : part.batches) {
         const uint32_t count = batch.Vertices();
         if (count < 3 || count > SkinGeometry::kMaxBatchVertices || batch.vertices.size() != 4 * size_t(count))
@@ -459,7 +547,8 @@ SkinGeometry::Result BuildBatches(const SkinGeometry::Part& part, const SkinGeom
         // PACKED lanes the GS reads: VertexKick::PackedXyz, PackedSt, PackedRgbaq).
         Draw draw = state;
         draw.verts.clear();
-        queue.clear();
+        draw.verts.reserve(size_t(count) * 3);   // a triangle per vertex at most (no regrowth while assembling)
+        queue.Clear();
         unsigned parity = 0;
         for (uint32_t j = 0; j < count; ++j) {
             const uint32_t st = list + 1 + 3 * j;
@@ -494,11 +583,57 @@ SkinGeometry::Result SkinGeometry::Build(const Part& part, const Inputs& inputs,
     return BuildBatches(part, inputs, BatchProgram{}, state, out);
 }
 
+SkinGeometry::Result SkinGeometry::BuildRuns(const Part& part, const Inputs& inputs, const Draw& state,
+                                             std::vector<ps2r::gs::VertexRec>& verts, std::vector<uint32_t>& ends) {
+#if defined(__vita__)
+    // BuildBatches' checks, then its Vita fast path for a plain skin (a clipped one while the fast paths are on)
+    if (!state.tex_enabled || state.use_fst || state.tex.fst || state.ctx || state.fog || state.prim_type != 4 ||
+        state.raster.frame.psm || state.raster.zbuf.psm)
+        return Result::UnsupportedState;
+    if (inputs.joints.empty() || (inputs.joints.size() & 3) || inputs.joints.size() / 4 > kMaxJoints || part.batches.empty())
+        return Result::InvalidGeometry;
+    if (inputs.clipped && !g_fastPaths.load(std::memory_order_relaxed)) return Result::UnsupportedState;
+    verts.clear();
+    ends.clear();
+    return FastSkinRuns(part, inputs, state, verts, ends);
+#else
+    (void)part; (void)inputs; (void)state; (void)verts; (void)ends;
+    return Result::UnsupportedState;
+#endif
+}
+
 SkinGeometry::Result SkinGeometry::BuildBlend(const Part& part, const Inputs& inputs, const BlendInputs& blend,
                                               const Draw& state, std::vector<Draw>& out) {
     BatchProgram program;
     program.blend = &blend;
     return BuildBatches(part, inputs, program, state, out);
+}
+
+SkinGeometry::Result SkinGeometry::BuildBlendRuns(const Part& part, const Inputs& inputs, const BlendInputs& blend,
+                                                  const Draw& state, std::vector<ps2r::gs::VertexRec>& verts,
+                                                  std::vector<uint32_t>& ends) {
+#if defined(__vita__)
+    if (!g_fastPaths.load(std::memory_order_relaxed)) return Result::UnsupportedState;
+    if (!state.tex_enabled || state.use_fst || state.tex.fst || state.ctx || state.fog || state.prim_type != 4 ||
+        state.raster.frame.psm || state.raster.zbuf.psm)
+        return Result::UnsupportedState;
+    if (inputs.joints.empty() || (inputs.joints.size() & 3) || inputs.joints.size() / 4 > kMaxJoints || part.batches.empty())
+        return Result::InvalidGeometry;
+    verts.clear();
+    ends.clear();
+    return FastSkinRuns(part, inputs, state, verts, ends, &blend);
+#else
+    (void)part; (void)inputs; (void)blend; (void)state; (void)verts; (void)ends;
+    return Result::UnsupportedState;
+#endif
+}
+
+void SkinGeometry::SetFastPaths(bool on) {
+#if defined(__vita__)
+    g_fastPaths.store(on, std::memory_order_relaxed);
+#else
+    (void)on;
+#endif
 }
 
 }  // namespace title

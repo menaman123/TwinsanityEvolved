@@ -67,6 +67,16 @@ public:
     // as one DrawIr per batch with a non-empty triangle list.
     static Result Build(const Part& part, const Inputs& inputs, const ps2r::gs::DrawIr& state,
                         std::vector<ps2r::gs::DrawIr>& out);
+    // Build's batches as runs of one vertex array (`ends`: each batch's end; batches without a triangle add none) -- the
+    // same vertices without a DrawIr and a vector per batch. Only where Build takes the Vita's direct skinning (a plain
+    // skin on the Vita; a clipped one while the fast paths are on): UnsupportedState otherwise (and for an unsupported
+    // state), the caller then Builds.
+    static Result BuildRuns(const Part& part, const Inputs& inputs, const ps2r::gs::DrawIr& state,
+                            std::vector<ps2r::gs::VertexRec>& verts, std::vector<uint32_t>& ends);
+    // The Vita's direct skinning for the CLIPPED plain skins and the BLEND skins (skin_geometry.cpp FastSkinRuns: plain
+    // floats, the guard-band marks of the clip program; on by default). false = their VU programs, as before. Elsewhere
+    // a no-op (the desktop always runs the programs).
+    static void SetFastPaths(bool on);
 
     // ---- blend skins (TR skins.cpp SetBlendSkinDMA / WriteBlendPart) --------------------------------------------------
     // A blend skin's part is ONE batch whose packet (BlendPart::packet, a chain fragment CALLed from the bucket) carries
@@ -87,6 +97,11 @@ public:
     };
     static Result BuildBlend(const Part& part, const Inputs& inputs, const BlendInputs& blend,
                              const ps2r::gs::DrawIr& state, std::vector<ps2r::gs::DrawIr>& out);
+    // BuildBlend's batches as runs of one vertex array (as BuildRuns): the Vita's direct path only (the fast paths on);
+    // UnsupportedState otherwise, the caller then BuildBlends.
+    static Result BuildBlendRuns(const Part& part, const Inputs& inputs, const BlendInputs& blend,
+                                 const ps2r::gs::DrawIr& state, std::vector<ps2r::gs::VertexRec>& verts,
+                                 std::vector<uint32_t>& ends);
 };
 
 }  // namespace title

@@ -5,8 +5,8 @@
 # lint, vita lane.
 #
 #   tools/ci/build_all.sh [--iso <disc image>] [--no-vita] [--update-snapshots] [--build-dir DIR]
-#   env: TE_MIN_FREE_GB (disk floor), TE_CI_COVERAGE=1 (level_entries + make_states --verify: opt-in -- the user plays
-#        the levels), TE_CI_LONG_WALKS=0 (skip padlog_smoke's jungle / mecha walks for a quick pass; default on).
+#   env: TE_MIN_FREE_GB (disk floor), TE_CI_COVERAGE=1 (level_entries + make_states --verify: opt-in -- play-testing
+#        covers the levels), TE_CI_LONG_WALKS=0 (skip padlog_smoke's jungle / mecha walks for a quick pass; default on).
 #
 # Exit non-zero on the first failing gate. Game data is read at run time only; nothing is written from it.
 set -euo pipefail
@@ -27,16 +27,16 @@ step() { echo; echo "=== $*"; }
 
 step "disk"
 free_gb=$(df -g "$ROOT" | awk 'NR==2{print $4}')
-# the charter's floor is 15 GB; TE_MIN_FREE_GB lowers it for a run on a disk whose remaining space is not ours to prune
+# the default floor is 15 GB; TE_MIN_FREE_GB lowers it for a run on a disk whose remaining space is not ours to prune
 # (records the value used)
 min_free_gb="${TE_MIN_FREE_GB:-15}"
 echo "free: ${free_gb} GB (floor ${min_free_gb} GB)"
-if [ "$free_gb" -lt "$min_free_gb" ]; then echo "build_all: < ${min_free_gb} GB free -- prune reproducible build dirs first (charter)"; exit 3; fi
+if [ "$free_gb" -lt "$min_free_gb" ]; then echo "build_all: < ${min_free_gb} GB free -- prune reproducible build dirs first"; exit 3; fi
 
 step "one game process at a time"
 if pgrep -f '(^|/)(twinsanityevolved|ps2recomp|ps2recomp_oracle|ps2recomp_release[.0-9a-f]*)( |$)' > /dev/null; then
   pgrep -fl '(^|/)(twinsanityevolved|ps2recomp|ps2recomp_oracle|ps2recomp_release[.0-9a-f]*)( |$)'
-  echo "build_all: a game process is running; refusing to start another (charter: one at a time)"; exit 3
+  echo "build_all: a game process is running; refusing to start another (one at a time)"; exit 3
 fi
 echo "none running"
 
@@ -119,7 +119,7 @@ if [ -n "$ISO" ]; then
   # (TE_CI_LONG_WALKS=0 skips the jungle / mecha walks for a quick pass; the short logs always; all ten by default)
   step "every pad log to its end: tools/ci/padlog_smoke.sh (TE_CI_LONG_WALKS=${TE_CI_LONG_WALKS:-1})"
   tools/ci/padlog_smoke.sh --iso "$ISO" --build-dir "$BUILD"
-  # Coverage (2026-10-17: the pad-log coverage work is stopped; the user plays and reports bugs): the COVERAGE gates --
+  # Coverage (2026-10-17: the pad-log coverage work is stopped; play-testing reports the bugs): the COVERAGE gates --
   # every level's first chunk on the warp (level_entries, 21 runs) and the level-entry states regenerated + verified from the
   # long logs (make_states --verify, regenerated from metadata) -- are opt-in with TE_CI_COVERAGE=1. The fixtures stay in the tree; a
   # reported level bug re-runs its row by hand.
@@ -144,6 +144,9 @@ fi
 
 step "asset scan (zero findings)"
 python3 tools/ci/asset_scan.py
+
+step "no developer vocabulary where a player reads (tools/ci/no_codenames_lint.py: the launcher's strings, title.json, the README's user sections)"
+python3 tools/ci/no_codenames_lint.py
 
 if [ "$VITA" = 1 ]; then
   step "armv7 vitasdk syntax lane"

@@ -383,7 +383,7 @@ int EeBootstrap::ArmParkSink(LegState& s) {
             ps2r::app::ShutdownCensus& census = session->Shutdown();
             {
                 // Bounded: a guest worker parked in a wait the cancel cannot
-                // reach (the user's frozen Quit tick) is abandoned after the
+                // reach (the tester's frozen Quit tick) is abandoned after the
                 // deadline and NAMED -- the close completes without it; the leg
                 // then leaves through _Exit (no static teardown around a live
                 // thread) once the census is on disk.

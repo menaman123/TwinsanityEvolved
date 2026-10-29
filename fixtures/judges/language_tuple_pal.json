@@ -1,24 +1,100 @@
 {
   "judge": "tools/judges/language_tuple_judge.py",
   "plan": "fixtures/padlogs/language_tuple.plan",
-  "disc": "PAL SLES-52568, the user's image: a Brazilian-Portuguese fan patch of CRASH6/CRASH.BH+BD only (2013 dates; every .mb/.mh/.pss is the 2004 retail file). Deterministic headless: --deterministic --no-sdl-input --no-audio --trace-state, an empty --mc-dir, movies NOT skipped (the intro's sound track is the evidence), TE_STREAM_TRACE=1 (the speech bank's open line), --stop-at 12000.",
+  "disc": "PAL SLES-52568, the development image: a Brazilian-Portuguese fan patch of CRASH6/CRASH.BH+BD only (2013 dates; every .mb/.mh/.pss is the 2004 retail file). Deterministic headless: --deterministic --no-sdl-input --no-audio --trace-state, an empty --mc-dir, movies NOT skipped (the intro's sound track is the evidence), TE_STREAM_TRACE=1 (the speech bank's open line), --stop-at 12000.",
   "intro_movie": "\\FMV\\H01_A.PSS;1",
   "slots": {
-    "0": {"name": "English", "text": "portuguese", "text9": "novo jogo", "speech": "english", "speech_bank": "Crash6\\English.mb"},
-    "1": {"name": "French", "text": "french", "text9": "nouvelle partie", "speech": "french", "speech_bank": "Crash6\\French.mb"},
-    "2": {"name": "German", "text": "german", "text9": "neues spiel", "speech": "german", "speech_bank": "Crash6\\German.mb"},
-    "3": {"name": "Spanish", "text": "english", "text9": "new game", "speech": "spanish", "speech_bank": "Crash6\\Spanish.mb"},
-    "4": {"name": "Italian", "text": "italian", "text9": "nuova partita", "speech": "italian", "speech_bank": "Crash6\\Italian.mb"}
+    "0": {
+      "name": "English",
+      "text": "portuguese",
+      "text9": "novo jogo",
+      "speech": "english",
+      "speech_bank": "Crash6\\English.mb"
+    },
+    "1": {
+      "name": "French",
+      "text": "french",
+      "text9": "nouvelle partie",
+      "speech": "french",
+      "speech_bank": "Crash6\\French.mb"
+    },
+    "2": {
+      "name": "German",
+      "text": "german",
+      "text9": "neues spiel",
+      "speech": "german",
+      "speech_bank": "Crash6\\German.mb"
+    },
+    "3": {
+      "name": "Spanish",
+      "text": "english",
+      "text9": "new game",
+      "speech": "spanish",
+      "speech_bank": "Crash6\\Spanish.mb"
+    },
+    "4": {
+      "name": "Italian",
+      "text": "italian",
+      "text9": "nuova partita",
+      "speech": "italian",
+      "speech_bank": "Crash6\\Italian.mb"
+    }
   },
-  "languages": {
-    "english":    {"text_slot": 3, "voice_slot": 0, "fmv_track": 0, "speech_bank": "Crash6\\English.mb", "row": "english"},
-    "portuguese": {"text_slot": 0, "voice_slot": 0, "fmv_track": 0, "speech_bank": "Crash6\\English.mb", "row": "portuguese (english voice)"},
-    "french":     {"text_slot": 1, "voice_slot": 1, "fmv_track": 1, "speech_bank": "Crash6\\French.mb", "row": "french"},
-    "german":     {"text_slot": 2, "voice_slot": 2, "fmv_track": 2, "speech_bank": "Crash6\\German.mb", "row": "german"},
-    "italian":    {"text_slot": 4, "voice_slot": 4, "fmv_track": 4, "speech_bank": "Crash6\\Italian.mb", "row": "italian"},
-    "spanish":    {"text_slot": 3, "voice_slot": 3, "fmv_track": 3, "speech_bank": "Crash6\\Spanish.mb", "row": "spanish (english text)"}
-  },
-  "rows": ["english", "portuguese (english voice)", "french", "german", "italian", "spanish (english text)"],
   "evidence": "tools/judges/language_disc_evidence.py --pal <PAL> --ntsc <NTSC-U>: slot 0's Crash6\\English.mb has 141/143 tracks byte-identical to the NTSC-U CRASH6\\AMERICAN.MB (the English speech; the other banks 81/143 = the shared placeholder entries), its Titles\\English\\*.psm 18/18 identical to Titles\\American (the other slots 1/18), and H01_A.PSS sound track 0 correlates 0.97 (envelope) / 0.68 (speech residual) with the NTSC-U movie's one track after the 1.2x PAL stretch (tracks 1-4: 0.58-0.71 / 0.09-0.12); slot 0's Code/AgentLab text is Portuguese ('novo jogo' / 'obrigado por jogar'), slot 3's English ('new game' / 'thanks for playing') with Spanish credits, Spanish title cards and Spanish speech. No slot is English throughout: a language is (text slot, voice slot).",
-  "frozen": "2026-10-18: the spanish row added -- the disc's Spanish speech bank (and its title cards / credits / FMV track 3) with the English text, labelled 'spanish (english text)'; rows now six (fixtures/judges/language_table_pal.json holds the ten-strings-per-slot evidence). 2026-10-18: RED on bin/twinsanityevolved.0f92911 for english (text 'new game' from slot 3, but H01_A sound track 3 and Crash6\\Spanish.mb opened: the voice follows the text slot; the Options rows carried '(spanish slot)'), GREEN on the language-tuple build for english, portuguese, french, german, italian."
+  "frozen": "2026-10-18: the spanish row added -- the disc's Spanish speech bank (and its title cards / credits / FMV track 3) with the English text, labelled 'spanish (english text)'; rows now six (fixtures/judges/language_table_pal.json holds the ten-strings-per-slot evidence). 2026-10-18: RED on bin/twinsanityevolved.0f92911 for english (text 'new game' from slot 3, but H01_A sound track 3 and Crash6\\Spanish.mb opened: the voice follows the text slot; the Options rows carried '(spanish slot)'), GREEN on the language-tuple build for english, portuguese, french, german, italian. | 2026-10-27: the text language and the speech language are two settings; the judge runs pairs chosen apart (--text-language X --speech-language Y): TEXT from X's slot, FMV + SPEECH from Y's, both by name, and the two lists (text english portuguese french german italian; speech english french german spanish italian) in place of the one row of tuples. RED on 43e9989 (no --text-language), GREEN on its change.",
+  "texts": {
+    "english": {
+      "text_slot": 3
+    },
+    "portuguese": {
+      "text_slot": 0
+    },
+    "french": {
+      "text_slot": 1
+    },
+    "german": {
+      "text_slot": 2
+    },
+    "italian": {
+      "text_slot": 4
+    }
+  },
+  "speeches": {
+    "english": {
+      "voice_slot": 0,
+      "fmv_track": 0,
+      "speech_bank": "Crash6\\English.mb"
+    },
+    "french": {
+      "voice_slot": 1,
+      "fmv_track": 1,
+      "speech_bank": "Crash6\\French.mb"
+    },
+    "german": {
+      "voice_slot": 2,
+      "fmv_track": 2,
+      "speech_bank": "Crash6\\German.mb"
+    },
+    "spanish": {
+      "voice_slot": 3,
+      "fmv_track": 3,
+      "speech_bank": "Crash6\\Spanish.mb"
+    },
+    "italian": {
+      "voice_slot": 4,
+      "fmv_track": 4,
+      "speech_bank": "Crash6\\Italian.mb"
+    }
+  },
+  "pairs": [
+    [
+      "english",
+      "french"
+    ],
+    [
+      "portuguese",
+      "spanish"
+    ]
+  ],
+  "pairs_why": "two pairs whose text and speech come from different slots (english text = slot 3 with the French speech of slot 1; portuguese text = slot 0 with the Spanish speech of slot 3): the text 9 follows the text's slot, the FMV track and the speech bank the speech's -- independent; any other pair with --pair TEXT+SPEECH"
 }

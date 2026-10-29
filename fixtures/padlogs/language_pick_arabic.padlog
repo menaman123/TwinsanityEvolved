@@ -1,0 +1,23 @@
+# twinsanityevolved padlog v1 -- the Arabic pick: the title -> main menu -> options -> game options -> DOWN to the TEXT LANGUAGE row -> LEFT once (english wraps to the last text language: the language pack's arabic) -> held -> TRIANGLE back to OPTIONS -> held (16 boundaries a press, 60 after a page change; no language header: the run's settings stand)
+1 0000 128 128 128 128  # NONE
+1273 0008 128 128 128 128  # START
+1277 0000 128 128 128 128  # NONE
+1400 0040 128 128 128 128  # DOWN
+1404 0000 128 128 128 128  # NONE
+1416 0040 128 128 128 128  # DOWN
+1420 0000 128 128 128 128  # NONE
+1432 4000 128 128 128 128  # CROSS
+1436 0000 128 128 128 128  # NONE
+1492 0040 128 128 128 128  # DOWN
+1496 0000 128 128 128 128  # NONE
+1508 0040 128 128 128 128  # DOWN
+1512 0000 128 128 128 128  # NONE
+1524 4000 128 128 128 128  # CROSS
+1528 0000 128 128 128 128  # NONE
+1584 0040 128 128 128 128  # DOWN
+1588 0000 128 128 128 128  # NONE
+1600 0080 128 128 128 128  # LEFT
+1604 0000 128 128 128 128  # NONE
+1720 1000 128 128 128 128  # TRIANGLE
+1724 0000 128 128 128 128  # NONE
+# end at boundary 1840

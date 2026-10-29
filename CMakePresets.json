@@ -42,13 +42,21 @@
     },
     {
       "name": "vita-release",
-      "displayName": "PlayStation Vita (VitaSDK arm-vita-eabi, Ninja, Release) -- the spike lane",
-      "description": "The Vita lane: cmake/vita.toolchain.cmake wraps $VITASDK/share/vita.toolchain.cmake; the wasm32 half runs on the host, the eboot's C/C++ is cross-compiled (TE_VITA=ON in CMakeLists.txt: no window / GL 4.1 backend -- the ps2e draw surface is the engine's null arm; SDL2's Vita port for pads + audio; the disc image read from ux0:data/twinsanity/). Builds twinsanityevolved.vpk. Nothing here touches the macOS / Linux / Windows configurations (every Vita difference sits under if(TE_VITA)).",
+      "displayName": "PlayStation Vita (VitaSDK arm-vita-eabi, Ninja, Release)",
+      "description": "The PS Vita package: cmake/vita.toolchain.cmake wraps $VITASDK/share/vita.toolchain.cmake; the wasm32 half is compiled on the build machine, the eboot's C/C++ is cross-compiled (TE_VITA=ON in CMakeLists.txt: the renderer on vitaGL, SDL2's Vita port for pads and audio, FFmpeg cross-compiled by tools/vita/ffmpeg_vita.sh, the disc image read from ux0:data/twinsanity/). Builds twinsanityevolved.vpk with the shipped shader set (tools/vita/shader_seed). Nothing here touches the macOS / Linux / Windows configurations (every Vita difference sits under if(TE_VITA)).",
       "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" },
       "generator": "Ninja",
       "toolchainFile": "${sourceDir}/cmake/vita.toolchain.cmake",
       "binaryDir": "${sourceDir}/build-vita-release",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "TE_VITA": "ON", "TE_DIST": "OFF" }
+    },
+    {
+      "name": "vita-native-release",
+      "displayName": "PlayStation Vita, the game code native (VitaSDK arm-vita-eabi, Ninja, Release)",
+      "description": "vita-release with TE_VITA_NATIVE=ON: the game's translation units compiled for armv7 by the Vita's GCC (tools/te_cxx_arm.py, cmake/native_lane.cmake) instead of wasm32 + wasm2c; the retail address space is a 32 MB block in the eboot (runner/te_native.h). Its own build directory, so the wasm2c Vita build stays beside it.",
+      "inherits": "vita-release",
+      "binaryDir": "${sourceDir}/build-vita-native",
+      "cacheVariables": { "TE_VITA_NATIVE": "ON" }
     }
   ],
   "buildPresets": [
@@ -56,7 +64,8 @@
     { "name": "windows-clang-cl-dev",         "configurePreset": "windows-clang-cl-dev",         "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved", "te_tests", "te_fiber_test", "te_graphics_selftest", "te_pdesc"] },
     { "name": "windows-clang-cl-release-lto", "configurePreset": "windows-clang-cl-release-lto", "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved", "te_tests", "te_fiber_test", "te_graphics_selftest", "te_pdesc"] }
 ,
-    { "name": "vita-release",                "configurePreset": "vita-release",                "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved_vpk"] }
+    { "name": "vita-release",                "configurePreset": "vita-release",                "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved_vpk"] },
+    { "name": "vita-native-release",         "configurePreset": "vita-native-release",         "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved_vpk"] }
   ],
   "testPresets": [
     { "name": "windows-clang-cl-release",     "configurePreset": "windows-clang-cl-release",     "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "filter": { "include": { "label": "nativeee" } }, "output": { "outputOnFailure": true }, "execution": { "timeout": 300 } },

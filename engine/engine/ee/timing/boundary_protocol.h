@@ -90,6 +90,12 @@ public:
     // noted was LATE (frame work > period) and is counted, never burst-repaid.
     bool ParkForPacerTick();
     static constexpr uint32_t kBoundaryParkPeriods = 2;
+    // The wall-locked boundary of a LOCKED cadence (a consumer whose picture ticks run at hz / n: the Vita's 30 / 20 Hz
+    // tick lock): park until `n` pacer ticks are noted -- the tick then spans n fields, fired together by the consumer.
+    // A boundary that finds n or more already noted was late (counted as ParkForPacerTick's late) and does not park; the
+    // park is bounded by n * kBoundaryParkPeriods field periods (a stopped pacer). The frame-work census (work max, the
+    // long-tick trace, the overrun arm) is booked against the locked period, n field periods. n <= 1 is ParkForPacerTick.
+    bool ParkForPacerTicks(uint64_t n);
     // THE wall-locked boundary's field (the clock contract, rules 1 and 3 in the
     // single-field form; the one body both the sequencer's TickAdvance slot and a
     // library consumer's game-thread boundary run): with a backlog carried from

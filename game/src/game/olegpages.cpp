@@ -15,6 +15,7 @@
 #include "game/widgets.h"
 #include "platform/graphics.h"
 #include "platform/system.h"
+#include "retail/libc.h"
 
 extern "C"
 {
@@ -86,15 +87,30 @@ constexpr u32 SubPageBackItem = 0x1C;
 // its choices (mono, stereo, Dolby Pro Logic II)
 constexpr u32 VibrationText = 0x15;
 constexpr u32 VibrationItem = 0x1A;
-// TwinsanityEvolved (D49, D56): the game options' language row -- the text table's "language" (0xC, which retail never showed:
-// the console's language stood), its choices the LANGUAGES the inserted disc carries (one per text language, the platform's
-// enumeration: Platform::System::LanguageCount / LanguageLabel), an ID no retail item of the page has. The row's value shown
-// (what Entered set, what Frame last applied): a change of it is the player's step
+// TwinsanityEvolved (D49, D56): the game options' two language rows -- TEXT LANGUAGE (the text table's "language", 0xC,
+// which retail never showed: the console's language stood; titled by the platform when it has a word for it) and SPEECH
+// LANGUAGE (titled by the platform), their choices the TEXT languages and the SPEECH languages the inserted disc carries (the
+// platform's enumeration: Platform::System::TextLanguage* / SpeechLanguage*), IDs no retail item of the page has. Each row's
+// value shown (what Entered set, what Frame last applied): a change of it is the player's step
 constexpr u32 LanguageText = 0xC;
 constexpr u32 LanguageItem = 0x1F;
+constexpr u32 SpeechLanguageItem = 0x1B;
 constexpr u32 LanguageLabelSize = 32;
+constexpr u32 LanguagesMax = 16;
 constexpr const char* LanguageVoicesFolder = "Crash6\\";
+constexpr const char* SpeechLanguageTitle = "speech language";
 s32 g_LanguageRowShown = -1;
+s32 g_SpeechLanguageRowShown = -1;
+// The speech row and the rows' titles are STATIC (the module's own data: D38): the heap holds exactly what the one language
+// row held -- one choice item and every language's word once, which the speech row's choices point at
+ChoiceItem g_SpeechLanguageRow;
+const char* g_SpeechLanguageWords[LanguagesMax];
+char g_LanguageRowTitles[2][LanguageLabelSize];
+bool g_SpeechLanguageRowMade = false;
+// The words asked of the platform while the rows are built (static, not on the stack: nothing the game reads later sees them)
+char g_LanguageWords[LanguagesMax * 2][LanguageLabelSize];
+char g_LanguageWord[LanguageLabelSize];
+u32 g_SpeechLanguageWordOf[LanguagesMax];
 // TwinsanityEvolved: the graphic options' platform rows -- the platform's own display settings (aspect, scale, filter,
 // vsync, display mode on the PC), one ChoiceItem each with the platform's labels, IDs from 0x20 (none of the page's)
 constexpr u32 DisplaySettingFirstItem = 0x20;
@@ -103,13 +119,15 @@ constexpr u32 DisplaySettingsMax = 8;
 // TwinsanityEvolved: the Options menu's MODS page -- its link on the options page, one toggle row per mod (off / on) and,
 // for a mod with a page of its own, a link row shown while the mod is on; a mod WITHOUT a switch (always available) has one row
 // that opens its page at once and turns it on; a mod's page holds one action row per platform row. IDs none of the pages use
-// (12 bits)
+// (12 bits). Up to 16 mods (the toggles' and links' IDs and the actions' 4 bits of mod). The platform lists only the
+// mods that apply while the game runs -- a mod of the mods folder changes the disc and is switched before the game starts
+//
 constexpr const char* ModsPageTitle = "mods";
 constexpr u32 ModsPageItem = 0x30;
 constexpr u32 ModToggleFirstItem = 0x40;
 constexpr u32 ModLinkFirstItem = 0x50;
 constexpr u32 ModRowFirstItem = 0x100;
-constexpr u32 ModsMax = 4;
+constexpr u32 ModsMax = 16;
 constexpr u32 ModRowsMax = 32;
 constexpr u32 ModLabelSize = 48;
 // An ActionItem's action for a mod page's row: the base, the mod in bits 8..11, the row in bits 0..7
@@ -659,22 +677,72 @@ void GameOptionsPage::Destroy(u32 flags)
     MenuPage::Destroy(flags);
 }
 
+// TwinsanityEvolved: the language rows' titles asked again (a text language may bring its own words for them): the text
+// row reads the game's own "language" while the platform has no title for it
+static void RefreshLanguageRowTitles(MenuPage* page)
+{
+    MenuItem* text = page->Find(LanguageItem);
+    if (text == nullptr)
+    {
+        return;
+    }
+
+    Platform::System::LanguageRowTitle(0, g_LanguageRowTitles[0], LanguageLabelSize);
+    text->text = g_LanguageRowTitles[0][0] != '\0' ? g_LanguageRowTitles[0] : nullptr;
+    if (g_SpeechLanguageRowMade)
+    {
+        Platform::System::LanguageRowTitle(1, g_LanguageRowTitles[1], LanguageLabelSize);
+        g_SpeechLanguageRow.text = g_LanguageRowTitles[1][0] != '\0' ? g_LanguageRowTitles[1] : SpeechLanguageTitle;
+    }
+}
+
+// A row's choice in force (NoLanguage, or past the row's choices: the first is shown, applied only when stepped)
+static s32 LanguageShown(u32 selected, u32 choices)
+{
+    return selected < choices ? static_cast<s32>(selected) : 0;
+}
+
+// TwinsanityEvolved (D49, D56): a language row stepped -- the game takes the retail index (the speech's) and the text
+// slot from the platform; a text step re-reads its two text files (every text on screen, this menu's included, is looked up by
+// index each frame), a speech step (or a text step that moved the retail index: leaving a raw slot) swaps the front end's
+// speech bank; a level's own voices and the FMV sound track follow g_CurrentLanguage at their next load
+static void ApplyLanguages(bool texts)
+{
+    u32 index = static_cast<u32>(GameLanguageOf(Platform::System::Language()));
+    bool voiceMoved = index != g_CurrentLanguage;
+    u32 textLanguage = Platform::System::LanguageTextBank();
+    SetGameLanguages(index, textLanguage == Platform::System::NoLanguageBank ? index : textLanguage);
+    if (texts)
+    {
+        g_OlegGameController->LoadTexts();
+    }
+
+    if (!texts || voiceMoved)
+    {
+        String voices;
+        StringConstruct(&voices, LanguageVoicesFolder);
+        StringAppend(&voices, g_LanguageNames[g_CurrentLanguage]);
+        SetVoiceBank(voices.string);
+        StringDestroy(&voices);
+    }
+}
+
 void GameOptionsPage::Entered(u32 player, u32)
 {
     auto* pads = static_cast<GamePadController*>(G_GamePadController);
     Find(VibrationItem)->SetFlag(player, pads->flags.vibration != 0);
     if (MenuItem* language = Find(LanguageItem))
     {
-        // the language in force (a raw slot the run pinned is past the rows: the first row is shown, applied only when stepped)
-        s32 rows = static_cast<s32>(Platform::System::LanguageCount());
-        s32 shown = static_cast<s32>(Platform::System::LanguageSelected());
-        if (shown < 0 || shown >= rows)
+        // the languages in force (a raw slot the run pinned may have none of a row's: its first choice is shown)
+        g_LanguageRowShown = LanguageShown(Platform::System::TextLanguageSelected(), Platform::System::TextLanguageCount());
+        language->SetIntValue(player, g_LanguageRowShown);
+        if (g_SpeechLanguageRowMade)
         {
-            shown = 0;
+            g_SpeechLanguageRowShown = LanguageShown(Platform::System::SpeechLanguageSelected(), Platform::System::SpeechLanguageCount());
+            g_SpeechLanguageRow.SetIntValue(player, g_SpeechLanguageRowShown);
         }
 
-        g_LanguageRowShown = shown;
-        language->SetIntValue(player, shown);
+        RefreshLanguageRowTitles(this);
     }
 }
 
@@ -692,10 +760,8 @@ void GameOptionsPage::Frame(u32 player, MenuInput*, MenuSounds*)
         pads->DisableVibration();
     }
 
-    // TwinsanityEvolved (D49, D56): the language row applies as it is stepped -- the platform keeps the choice (its settings
-    // file; Language() and LanguageTextBank() answer for it from now on), the game takes the retail index and the text slot
-    // from it, re-reads its two text files (every text on screen, this menu's included, is looked up by index each frame) and
-    // swaps the front end's speech bank; a level's own voices and the FMV sound track follow g_CurrentLanguage at their next load
+    // TwinsanityEvolved (D49, D56): the language rows apply as they are stepped -- the platform keeps the choice (its
+    // settings file; Language() and LanguageTextBank() answer for it from now on)
     MenuItem* language = Find(LanguageItem);
     if (language == nullptr)
     {
@@ -704,22 +770,26 @@ void GameOptionsPage::Frame(u32 player, MenuInput*, MenuSounds*)
 
     s32 row;
     language->GetIntValue(player, &row);
-    if (row < 0 || row == g_LanguageRowShown || static_cast<u32>(row) >= Platform::System::LanguageCount())
+    if (row >= 0 && row != g_LanguageRowShown && static_cast<u32>(row) < Platform::System::TextLanguageCount())
+    {
+        g_LanguageRowShown = row;
+        Platform::System::SetTextLanguage(static_cast<u32>(row));
+        ApplyLanguages(true);
+        RefreshLanguageRowTitles(this);
+    }
+
+    if (!g_SpeechLanguageRowMade)
     {
         return;
     }
 
-    g_LanguageRowShown = row;
-    Platform::System::SetLanguage(static_cast<u32>(row));
-    s32 index = GameLanguageOf(Platform::System::Language());
-    u32 textLanguage = Platform::System::LanguageTextBank();
-    SetGameLanguages(static_cast<u32>(index), textLanguage == Platform::System::NoLanguageBank ? static_cast<u32>(index) : textLanguage);
-    g_OlegGameController->LoadTexts();
-    String voices;
-    StringConstruct(&voices, LanguageVoicesFolder);
-    StringAppend(&voices, g_LanguageNames[g_CurrentLanguage]);
-    SetVoiceBank(voices.string);
-    StringDestroy(&voices);
+    g_SpeechLanguageRow.GetIntValue(player, &row);
+    if (row >= 0 && row != g_SpeechLanguageRowShown && static_cast<u32>(row) < Platform::System::SpeechLanguageCount())
+    {
+        g_SpeechLanguageRowShown = row;
+        Platform::System::SetSpeechLanguage(static_cast<u32>(row));
+        ApplyLanguages(false);
+    }
 }
 
 void GameOptionsPage::Left(u32, u32)
@@ -1064,31 +1134,100 @@ OptionsPage* OptionsPage::Construct(OptionsPage* page, MenuPage* parent)
     ToggleItem* vibration = ToggleItem::Construct(Allocate<ToggleItem>(), VibrationText, VibrationItem, NoText, YesText, 1, 0, MenuPlayers);
     BackItem* gameBack = BackItem::Construct(Allocate<BackItem>(), BackText, SubPageBackItem, page, MenuPlayers);
     game.Add(vibration);
-    // TwinsanityEvolved: the language row, when the disc carries more than one language (the platform's rows, labelled
-    // by what each bank CONTAINS: a row per text language the disc carries, plus one per speech bank whose language has no text
-    // -- at most two rows per slot the game knows)
-    u32 rows = Platform::System::LanguageCount();
-    if (rows > g_LanguageCount * 2)
+    // TwinsanityEvolved (D49, D56): the language rows, when the disc carries more than one language (text or speech):
+    // TEXT LANGUAGE and SPEECH LANGUAGE, their choices the platform's, labelled by what each bank CONTAINS. Every language's
+    // word is made once, on the heap, as the one language row's were (text languages first, then the speech languages that
+    // have no text: the same words, the same blocks in the same order -- the heap is laid out as before); the text row's choice
+    // item is that row's (its table holds every word, its range the text languages), the speech row (static) points at the
+    // words of its languages
+    u32 texts = Platform::System::TextLanguageCount();
+    u32 speeches = Platform::System::SpeechLanguageCount();
+    if (texts > LanguagesMax)
     {
-        rows = g_LanguageCount * 2;
+        texts = LanguagesMax;
     }
 
-    if (rows > 1)
+    if (speeches > LanguagesMax)
     {
-        u32 selected = Platform::System::LanguageSelected();
-        ChoiceItem* language = ChoiceItem::Construct(Allocate<ChoiceItem>(), LanguageText, LanguageItem, rows, 1,
-                                                     static_cast<s32>(selected < rows ? selected : 0), MenuPlayers);
-        auto** labels = static_cast<const char**>(MemoryAllocate2(rows * sizeof(const char*)));
-        for (u32 row = 0; row < rows; row++)
+        speeches = LanguagesMax;
+    }
+
+    char (&words)[LanguagesMax * 2][LanguageLabelSize] = g_LanguageWords;
+    u32 (&speechWord)[LanguagesMax] = g_SpeechLanguageWordOf;
+    u32 all = 0;
+    for (u32 row = 0; row < texts; row++)
+    {
+        Platform::System::TextLanguageLabel(row, words[all], LanguageLabelSize);
+        all++;
+    }
+
+    for (u32 row = 0; row < speeches; row++)
+    {
+        char* word = g_LanguageWord;
+        Platform::System::SpeechLanguageLabel(row, word, LanguageLabelSize);
+        u32 at = 0;
+        while (at < all && RetailLibc::StringCompare(words[at], word) != 0)
+        {
+            at++;
+        }
+
+        if (at == all)
+        {
+            RetailLibc::StringCopy(words[all], word);
+            all++;
+        }
+
+        speechWord[row] = at;
+    }
+
+    if (all > g_LanguageCount * 2)
+    {
+        all = g_LanguageCount * 2;
+    }
+
+    g_SpeechLanguageRowMade = false;
+    if (all > 1 && texts > 0)
+    {
+        u32 selected = Platform::System::TextLanguageSelected();
+        ChoiceItem* language = ChoiceItem::Construct(Allocate<ChoiceItem>(), LanguageText, LanguageItem, all, 1,
+                                                     LanguageShown(selected, texts), MenuPlayers);
+        auto** labels = static_cast<const char**>(MemoryAllocate2(all * sizeof(const char*)));
+        for (u32 word = 0; word < all; word++)
         {
             auto* label = static_cast<char*>(MemoryAllocate2(LanguageLabelSize));
-            Platform::System::LanguageLabel(row, label, LanguageLabelSize);
-            labels[row] = label;
+            RetailLibc::StringCopy(label, words[word]);
+            labels[word] = label;
         }
 
         language->strings = labels;
         language->usesStrings = 1;
+        language->SetRange(0, static_cast<s32>(texts < all ? texts : all) - 1, 1, LanguageShown(selected, texts));
         game.Add(language);
+        u32 choices = 0;
+        for (u32 row = 0; row < speeches; row++)
+        {
+            if (speechWord[row] < all)
+            {
+                g_SpeechLanguageWords[choices] = labels[speechWord[row]];
+                choices++;
+            }
+        }
+
+        if (choices > 0)
+        {
+            // no choice table of its own (the words are the text row's): its choices set directly
+            ChoiceItem::Construct(&g_SpeechLanguageRow, 0, SpeechLanguageItem, 0, 1, 0, MenuPlayers);
+            g_SpeechLanguageRow.strings = g_SpeechLanguageWords;
+            g_SpeechLanguageRow.usesStrings = 1;
+            g_SpeechLanguageRow.choices = choices;
+            g_SpeechLanguageRow.SetRange(0, static_cast<s32>(choices) - 1, 1,
+                                         LanguageShown(Platform::System::SpeechLanguageSelected(), choices));
+            g_SpeechLanguageRow.text = SpeechLanguageTitle;
+            game.Add(&g_SpeechLanguageRow);
+            g_SpeechLanguageRowMade = true;
+        }
+
+        RefreshLanguageRowTitles(&game);
     }
 
     game.Add(gameBack);

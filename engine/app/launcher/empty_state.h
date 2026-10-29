@@ -3,6 +3,7 @@
 #pragma once
 #include <QWidget>
 class QLabel;
+class QVBoxLayout;
 namespace ps2r::launcher {
 class FlatButton;
 
@@ -14,6 +15,7 @@ public:
                QWidget* parent = nullptr);
     void setTexts(const QString& title, const QString& body);
     void setTone(Tone tone);
+    void setCompact(bool compact);   // the smaller margins of a sheet
     FlatButton* primaryButton() const { return primary_; }
     FlatButton* quietButton() const { return quiet_; }
 
@@ -31,6 +33,7 @@ private:
     FlatButton* primary_;
     FlatButton* quiet_;
     QWidget* glyph_;
+    QVBoxLayout* col_ = nullptr;
     Tone tone_ = Neutral;
 };
 

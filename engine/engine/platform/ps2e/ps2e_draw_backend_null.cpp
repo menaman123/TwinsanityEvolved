@@ -11,7 +11,7 @@
 namespace ps2r {
 namespace ps2e {
 
-std::unique_ptr<render::Backend> CreateDrawBackend(platform::Window&, platform::GlContext&) {
+std::unique_ptr<render::Backend> CreateDrawBackend(platform::Window&, platform::GlContext&, bool) {
     std::fprintf(stderr, "[ps2e_draw] null backend: no GL context, nothing rasterised (draws are counted only)\n");
     return std::make_unique<render::NullBackend>();
 }

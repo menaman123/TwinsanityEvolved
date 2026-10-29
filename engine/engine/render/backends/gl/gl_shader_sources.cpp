@@ -104,10 +104,34 @@ void main() {
     // macOS GL4.1 lacks clip control, hence the 128-step floor here; a
     // context with it (ZERO_TO_ONE_DEPTH) takes z/2^32 as is, every Z24
     // value exact, so coplanar surfaces keep their order as on the GS.
+    // [Z24] GS_Z24_DEPTH (GlShaderLibrary::SetGsZ24Depth: a producer whose Z
+    // stays in [0, 2^24], e.g. a screen matrix mapping the clip volume onto
+    // 0..2^24 as Crash Twinsanity's GsDepthRange does): window depth z/2^24,
+    // EVERY integer Z exact on every context -- (z - 2^23)/2^23 is a float32
+    // for any integer z in [0, 2^24], the viewport transform's halving and
+    // +0.5 are exact, and a 24-bit depth attachment has one step per Z unit.
+    // The GS's Z32 test compares those integers exactly; z/2^32 resolved
+    // only 128-unit steps without clip control (the float -1..1 detour, per
+    // vertex) and 256-unit steps in a 24-bit attachment -- far walls sit at
+    // Z ~ 24000 -- so a pass lying a few dozen units in front of its surface
+    // z-fought it wherever the vertex rounding went the other way, and the
+    // losing triangles changed as the camera moved. A Z beyond 2^24 - 1 (a
+    // vertex a few units in front of the near plane: the title's clipper
+    // leaves such slack) is held at 2^24 - 1, still in front of every scene
+    // Z, where the clip volume would cut the triangle: the GS draws it whole.
+#ifdef GS_Z24_DEPTH
+    float gs_z = min(position.z, 16777215.0);
+#ifdef ZERO_TO_ONE_DEPTH
+    float z_ndc = gs_z / 16777216.0;
+#else
+    float z_ndc = gs_z / 8388608.0 - 1.0;
+#endif
+#else
 #ifdef ZERO_TO_ONE_DEPTH
     float z_ndc = position.z / 4294967296.0;
 #else
     float z_ndc = position.z / 2147483648.0 - 1.0;
+#endif
 #endif
     gl_Position = vec4(ndc, z_ndc, 1.0);
     // [R169-GLRUN] P2.1 raw-attribute UV transform (see uniform docs above).
@@ -1303,8 +1327,348 @@ void main() {
     if (int(px.a * 255.0 + 0.5) < 255) discard;   // a receiver: PS2 alpha below 0x80
 }
 )";
+// The Vita's screen copy (GlDevice::CopyRect, the frame into the frame copy without a CPU read-back): the constant
+// program's full-screen triangle over the destination's viewport, u_src mapping that viewport to the source rectangle
+// in texture coordinates (u0, v0, du, dv); the texel drawn unchanged -- alpha included (the screen-copy pass takes it) --
+// under a nearest sampler, blending and depth off: an exact copy.
+const char* const kCopyVertSrc = R"(
+#version 410 core
+layout(location = 0) in vec2 a_position;
+uniform vec4 u_src;
+out vec2 v_texcoord;
+void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_texcoord = u_src.xy + (a_position * 0.5 + 0.5) * u_src.zw;
+}
+)";
+const char* const kCopyFragSrc = R"(
+#version 410 core
+in vec2 v_texcoord;
+uniform sampler2D u_texture;
+out vec4 frag_color;
+void main() { frag_color = texture(u_texture, v_texcoord); }
+)";
+
+// The Vita's LEAN PS2 fragment programs (GlShaderLibrary::SelectPs2): the PS2 fragment program's arithmetic for ONE draw
+// state, its arms chosen by the #defines each variant puts after the #version line instead of by uniforms, without
+// everything a Vita draw never takes -- the fast program's twelve constants (no shader blend, DATE, colour-authored Z,
+// 16-bit frame rules, indexed / depth serves, scanline mask, V flip; COLCLAMP 1) and fog (no ps2e_draw state turns it on).
+// Every value-producing expression is the PS2 program's own, in its order, so the same floats reach the output; the
+// only departures are exact: trunc -> floor of a non-negative product, clamps of values already in [0, 1] dropped, the
+// alpha test made on the PS2 alpha itself (the integer int(result.a * 255 + 0.5) recovers) by two thresholds, FBA as
+// the opaque alpha it always yields here (alpha | 0x80 is 128 or more: the x2 rescale clamps it to 1.0), AFAIL's
+// ZB_ONLY / RGB_ONLY as a factor on the result.
+//   LEAN_TEX      1 = textured (u_use_texture 1), 0 = the vertex colour
+//   LEAN_TFX      u_tfx: 0 MODULATE, 1 DECAL, 2 HIGHLIGHT, 3 HIGHLIGHT2      LEAN_TCC  u_tcc
+//   LEAN_MIP      1 = the retail per-pixel LOD over the texture's levels (u_mip_ctl.x > 0, LCM 0, no hardware LOD)
+//   LEAN_ATEST    0 = no alpha test that can fail (ATE 0, ATST ALWAYS, AFAIL FB_ONLY -- the PS2 program leaves those
+//                 fragments as they are); 1 = discarded where it fails (AFAIL KEEP); 2 = the result times u_lean_fail
+//                 where it fails (ZB_ONLY 0000, RGB_ONLY 1110)
+//   LEAN_NOCOLOR  1 = a draw that writes no colour and has no discarding test: its output is never read
+const char* const kLeanPs2FragSrc = R"GLSL(
+#version 410 core
+
+noperspective in vec3 v_texcoord;
+in vec4 v_color;
+
+uniform sampler2D u_texture;
+uniform vec2 u_tex_size;
+uniform ivec2 u_mip_ctl;
+uniform vec2 u_mip_lodp;
+uniform vec3 u_lean_at;    // the test passes where x <= A <= y (A: the PS2 alpha 0..255), the verdict inverted when z = 1
+uniform vec4 u_lean_fail;  // LEAN_ATEST 2: the result's factor where the test fails
+uniform float u_lean_fba;  // 1 = FBA: the written alpha opaque; 0 = as computed
+
+out vec4 frag_color;
+
+void main() {
+#if LEAN_NOCOLOR
+    frag_color = vec4(0.0);
+#else
+    vec4 result;
+    float A;
+#if LEAN_TEX
+    float inv_q = (v_texcoord.z != 0.0) ? (1.0 / v_texcoord.z) : 1.0;
+    vec2 uvn_rt = v_texcoord.xy * inv_q;
+    vec2 uv = uvn_rt / u_tex_size;
+    vec4 vc = floor(v_color * 255.0 + 0.5);
+    vec4 tex;
+#if LEAN_MIP
+    {
+        // the PS2 program's LCM 0 arm (SelectPs2 sends only LCM 0, no hardware LOD here)
+        float q_abs = abs(v_texcoord.z);
+        float lod = log2(1.0 / max(q_abs, 1e-30)) * u_mip_lodp.y + u_mip_lodp.x;
+        vec2 gsm_tc = v_texcoord.xy * inv_q;
+        float gsm_r2 = max(dot(dFdx(gsm_tc), dFdx(gsm_tc)), dot(dFdy(gsm_tc), dFdy(gsm_tc)));
+        float gsm_lam = 0.5 * log2(max(gsm_r2, 1e-30));
+        lod = max(min(lod, float(u_mip_ctl.x)), gsm_lam);
+        vec4 tex_norm = textureLod(u_texture, uv, lod);
+        tex = floor(tex_norm * 255.0 + 0.5);
+    }
+#else
+    {
+        vec4 tex_norm = texture(u_texture, uv);
+        tex = floor(tex_norm * 255.0 + 0.5);
+    }
+#endif
+    // the PS2 program's (tex.a >= 255.0) ? 128.0 : floor(tex.a * 0.5) in one multiply: for every integer a in 0..255,
+    // floor(a * 0.5019685) is a / 2 rounded down and 255 -> 128, each product at least 0.00197 inside its integer
+    // interval (any fp32 rounding of the product keeps it; checked over all 256 values)
+    tex.a = floor(tex.a * 0.5019685);
+#if LEAN_TFX == 0
+    result = floor((vc * tex) / 128.0);
+#if !LEAN_TCC
+    result.a = vc.a;
+#endif
+#elif LEAN_TFX == 1
+    result.rgb = tex.rgb;
+#if LEAN_TCC
+    result.a = tex.a;
+#else
+    result.a = vc.a;
+#endif
+#else
+    result.rgb = floor((vc.rgb * tex.rgb) / 128.0) + vc.a;
+#if LEAN_TCC && LEAN_TFX == 2
+    result.a = tex.a + vc.a;
+#elif LEAN_TCC
+    result.a = tex.a;
+#else
+    result.a = vc.a;
+#endif
+#endif
+    result = min(result, 255.0);
+    A = result.a;
+    result = result / 255.0;
+#else
+    result = clamp(v_color, 0.0, 1.0);
+    A = floor(result.a * 255.0 + 0.5);
+#endif
+#if LEAN_ATEST
+    // (not `pass`: a Cg keyword)
+    float at_ok = abs(step(u_lean_at.x, A) * step(A, u_lean_at.y) - u_lean_at.z);
+#if LEAN_ATEST == 1
+    if (at_ok < 0.5) discard;
+#else
+    if (at_ok < 0.5) result = result * u_lean_fail;
+#endif
+#endif
+    // the x2 rescale's clamp, its floor 1.0 under FBA (u_lean_fba 1: the opaque alpha the PS2 program's | 0x80 yields)
+    result.a = clamp(result.a * (255.0 / 128.0), u_lean_fba, 1.0);
+    frag_color = result;
+#endif
+}
+)GLSL";
+
+// The lean PS2 VERTEX programs (the Vita): kPs2VertSrc's NATIVE_MESH arithmetic, verbatim, for ONE draw path
+// (LEAN_VS_PATH; GlShaderSources::LeanPs2Vertex) -- each a path's attributes only (vitaGL sets one vertex stream per
+// declared attribute on every draw, and gathers each one's layout first: 7 in the generic program) and the uniform
+// branches of that path resolved (u_native, u_mesh_lit, u_uv_mode: the generic program's 8 branches per vertex). A path's
+// program draws only while those uniforms hold its values (GlShaderLibrary::SelectPs2), so it computes what the generic
+// program computes: the same expressions in the same order. v_fog is 0 (the lean fragment programs do not read it).
+const char* const kLeanPs2VertSrc = R"GLSL(
+#version 410 core
+
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_texcoord;
+#if LEAN_VS_PATH != 2
+layout(location = 2) in vec4 a_color;
+#endif
+#if LEAN_VS_PATH == 2
+layout(location = 4) in vec3 a_normal;
+layout(location = 5) in vec4 a_litcolor;
+#endif
+#if LEAN_VS_PATH == 4
+layout(location = 6) in float a_q;
+#endif
+
+uniform vec2 u_screen_size;
+#if LEAN_VS_PATH != 3
+uniform vec2 u_uv_scale;
+#endif
+#if LEAN_VS_PATH == 1 || LEAN_VS_PATH == 2
+uniform vec4 u_mesh[5];
+#endif
+#if LEAN_VS_PATH == 2
+uniform vec4 u_mesh_light[7];
+#endif
+
+noperspective out vec3 v_texcoord;
+out vec4 v_color;
+out float v_fog;
+
+void main() {
+    vec3 position = a_position;
+    vec3 texcoord = a_texcoord;
+#if LEAN_VS_PATH == 2
+    vec4 color;
+#else
+    vec4 color = a_color;
+#endif
+#if LEAN_VS_PATH == 1 || LEAN_VS_PATH == 2
+    vec4 c = u_mesh[3] + u_mesh[0] * a_position.x + u_mesh[1] * a_position.y + u_mesh[2] * a_position.z;
+    float rq = 1.0 / c.w;
+    position = vec3(floor(c.xy * rq) / 16.0 - u_mesh[4].xy, floor(c.z * rq));
+    texcoord = vec3((a_texcoord.xy + u_mesh[4].zw) * rq, a_texcoord.z * rq);
+    if (a_texcoord.z == 0.0) texcoord = vec3(0.0, 0.0, 1.0);
+#if LEAN_VS_PATH == 2
+    vec3 lit = u_mesh_light[6].xyz + u_mesh_light[3].xyz * max(0.0, dot(a_normal, u_mesh_light[0].xyz))
+                                   + u_mesh_light[4].xyz * max(0.0, dot(a_normal, u_mesh_light[1].xyz))
+                                   + u_mesh_light[5].xyz * max(0.0, dot(a_normal, u_mesh_light[2].xyz));
+    color = vec4(min(a_litcolor.rgb * lit, vec3(1.0)), a_litcolor.a);
+#endif
+#elif LEAN_VS_PATH == 4
+    texcoord = vec3(a_texcoord.xy, a_q == 0.0 ? 1.0 : a_q);
+#endif
+    vec2 ndc = (position.xy / u_screen_size) * 2.0 - 1.0;
+#ifdef GS_Z24_DEPTH
+    float z_ndc = min(position.z, 16777215.0) / 8388608.0 - 1.0;   // [Z24] kPs2VertSrc's exact window depth z / 2^24
+#else
+    float z_ndc = position.z / 2147483648.0 - 1.0;
+#endif
+    gl_Position = vec4(ndc, z_ndc, 1.0);
+#if LEAN_VS_PATH == 3
+    v_texcoord = texcoord;
+#else
+    v_texcoord = vec3(texcoord.xy * u_uv_scale, texcoord.z);
+#endif
+    v_color = color;
+    v_fog = 0.0;
+}
+)GLSL";
+
+// The Vita's GPU SKINNING vertex program (GlShaderLibrary::SelectSkin, linked with the lean fragment programs): what the
+// title's skinned lit strip program computes per vertex on the CPU (skin_geometry.cpp FastSkinRuns), per vertex here --
+// the bind-pose position through up to three bones of the draw's palette (u_bones: each joint's 3x4 transposed, three
+// rows; a_joints the vertex's joints in it, a_weights their weights: an unused bone has weight 0), the normal through its
+// first bone's axes, then the native mesh transform (u_mesh rows: the skin's matrix to the screen; the divide, the 12.4
+// position truncated and the GS origin taken off, Z truncated, S / T scrolled and divided, Q = 1/w) and the lighting
+// (u_mesh_light: three directions in the skin's space, their colours, the ambient): each lane = uint8(int32(min(lit x
+// the vertex colour's lane, 255))) as the program forms it (a_color: the lanes as sign-extended ints, the fourth the
+// vertex's alpha byte). The varyings are the PS2 vertex program's, so every lean fragment program reads them as it reads
+// a native mesh's. The draw's palette holds at most 64 joints. A blend skin's part (one batch of at most 64 vertices) adds
+// each vertex's displacement (u_disp: its shapes' int8 rows x factors x weights, summed on the CPU) to its bind position
+// first, as the displacement passes do before the skin.
+const char* const kPs2SkinVertSrc = R"GLSL(
+#version 410 core
+
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_texcoord;
+layout(location = 2) in vec4 a_color;
+layout(location = 4) in vec3 a_normal;
+layout(location = 7) in vec3 a_weights;
+layout(location = 8) in vec4 a_joints;
+layout(location = 9) in float a_index;
+
+uniform vec2 u_screen_size;
+uniform vec2 u_uv_scale;
+uniform int u_uv_mode;
+uniform vec4 u_mesh[5];
+uniform vec4 u_mesh_light[7];
+uniform vec4 u_bones[192];
+uniform vec4 u_disp[64];        // a blend skin's displacement of each of its vertices (a_index); a plain skin's all at 0
+
+noperspective out vec3 v_texcoord;
+out vec4 v_color;
+out float v_fog;
+
+void main() {
+    vec4 p = vec4(a_position + u_disp[int(a_index)].xyz, 1.0);
+    int b0 = int(a_joints.x) * 3;
+    int b1 = int(a_joints.y) * 3;
+    int b2 = int(a_joints.z) * 3;
+    vec4 r00 = u_bones[b0];
+    vec4 r01 = u_bones[b0 + 1];
+    vec4 r02 = u_bones[b0 + 2];
+    vec3 po = a_weights.x * vec3(dot(r00, p), dot(r01, p), dot(r02, p));
+    po += a_weights.y * vec3(dot(u_bones[b1], p), dot(u_bones[b1 + 1], p), dot(u_bones[b1 + 2], p));
+    po += a_weights.z * vec3(dot(u_bones[b2], p), dot(u_bones[b2 + 1], p), dot(u_bones[b2 + 2], p));
+    vec3 n = vec3(dot(r00.xyz, a_normal), dot(r01.xyz, a_normal), dot(r02.xyz, a_normal));
+    vec4 c = u_mesh[3] + u_mesh[0] * po.x + u_mesh[1] * po.y + u_mesh[2] * po.z;
+    float rq = 1.0 / c.w;
+    vec3 position = vec3(floor(c.xy * rq) / 16.0 - u_mesh[4].xy, floor(c.z * rq));
+    vec3 texcoord = vec3((a_texcoord.xy + u_mesh[4].zw) * rq, a_texcoord.z * rq);
+    vec3 lit = u_mesh_light[6].xyz + u_mesh_light[3].xyz * max(0.0, dot(u_mesh_light[0].xyz, n))
+                                   + u_mesh_light[4].xyz * max(0.0, dot(u_mesh_light[1].xyz, n))
+                                   + u_mesh_light[5].xyz * max(0.0, dot(u_mesh_light[2].xyz, n));
+    // the lane's byte: truncated toward zero, the low eight bits of a negative product kept
+    vec3 lane = min(lit * a_color.rgb, vec3(255.0));
+    vec3 whole = sign(lane) * floor(abs(lane));
+    vec3 low8 = whole - 256.0 * floor(whole / 256.0);
+    v_color = vec4(low8 / 255.0, a_color.a / 255.0);
+    vec2 ndc = (position.xy / u_screen_size) * 2.0 - 1.0;
+#ifdef GS_Z24_DEPTH
+    float gs_z = min(position.z, 16777215.0);     // [Z24] kPs2VertSrc's exact window depth z / 2^24
+#ifdef ZERO_TO_ONE_DEPTH
+    float z_ndc = gs_z / 16777216.0;
+#else
+    float z_ndc = gs_z / 8388608.0 - 1.0;
+#endif
+#else
+#ifdef ZERO_TO_ONE_DEPTH
+    float z_ndc = position.z / 4294967296.0;
+#else
+    float z_ndc = position.z / 2147483648.0 - 1.0;
+#endif
+#endif
+    gl_Position = vec4(ndc, z_ndc, 1.0);
+    vec3 tc = vec3(texcoord.xy * u_uv_scale, texcoord.z);
+    if (u_uv_mode == 3) tc = vec3(0.0, 0.0, 1.0);
+    v_texcoord = tc;
+    v_fog = 0.0;
+}
+)GLSL";
 
 }  // namespace
+
+// The INSTANCED native-mesh vertex program (the Vita; GlShaderSources::LeanPs2InstancedVertex): kLeanPs2VertSrc
+// as LEAN_VS_PATH 1 resolves it -- the same declarations, expressions and order -- with the matrix rows u_mesh[0..3] read
+// from the per-instance attributes a_mesh0..a_mesh3 (the raw draw's instance stream: each draw of the run its own matrix)
+// and u_mesh[4] (the shift: the GS origin, the UV scroll) the uniform u_mesh_shift, shared by the run's draws. The shift
+// stays a uniform because the compiler folds its terms with u_screen_size's in the per-draw secondary program -- as a
+// per-vertex attribute (the first form, all five rows per instance) the arithmetic was arranged otherwise (USSE classes
+// from instruction 17 on differed from the mesh path's; pictures differed by a vertex's rounding). Its GXM twin draws a run
+// of draws of one packet, one mesh range and one shift as ONE instanced draw.
+const char* const kLeanPs2InstVertSrc = R"GLSL(
+#version 410 core
+
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_texcoord;
+layout(location = 2) in vec4 a_color;
+layout(location = 10) in vec4 a_mesh0;
+layout(location = 11) in vec4 a_mesh1;
+layout(location = 12) in vec4 a_mesh2;
+layout(location = 13) in vec4 a_mesh3;
+
+uniform vec2 u_screen_size;
+uniform vec2 u_uv_scale;
+uniform vec4 u_mesh_shift;
+
+noperspective out vec3 v_texcoord;
+out vec4 v_color;
+out float v_fog;
+
+void main() {
+    vec3 position = a_position;
+    vec3 texcoord = a_texcoord;
+    vec4 color = a_color;
+    vec4 c = a_mesh3 + a_mesh0 * a_position.x + a_mesh1 * a_position.y + a_mesh2 * a_position.z;
+    float rq = 1.0 / c.w;
+    position = vec3(floor(c.xy * rq) / 16.0 - u_mesh_shift.xy, floor(c.z * rq));
+    texcoord = vec3((a_texcoord.xy + u_mesh_shift.zw) * rq, a_texcoord.z * rq);
+    if (a_texcoord.z == 0.0) texcoord = vec3(0.0, 0.0, 1.0);
+    vec2 ndc = (position.xy / u_screen_size) * 2.0 - 1.0;
+#ifdef GS_Z24_DEPTH
+    float z_ndc = min(position.z, 16777215.0) / 8388608.0 - 1.0;   // [Z24] kPs2VertSrc's exact window depth z / 2^24
+#else
+    float z_ndc = position.z / 2147483648.0 - 1.0;
+#endif
+    gl_Position = vec4(ndc, z_ndc, 1.0);
+    v_texcoord = vec3(texcoord.xy * u_uv_scale, texcoord.z);
+    v_color = color;
+    v_fog = 0.0;
+}
+)GLSL";
 
 const char* GlShaderSources::Ps2Vertex() { return kPs2VertSrc; }
 const char* GlShaderSources::Ps2Fragment() { return kPs2FragSrc; }
@@ -1317,6 +1681,12 @@ const char* GlShaderSources::StencilInvertFragment() { return kStencilInvertFrag
 const char* GlShaderSources::ConstVertex() { return kConstVertSrc; }
 const char* GlShaderSources::ConstFragment() { return kConstFragSrc; }
 const char* GlShaderSources::OpaqueMaskFragment() { return kOpaqueMaskFragSrc; }
+const char* GlShaderSources::CopyVertex() { return kCopyVertSrc; }
+const char* GlShaderSources::CopyFragment() { return kCopyFragSrc; }
+const char* GlShaderSources::LeanPs2Fragment() { return kLeanPs2FragSrc; }
+const char* GlShaderSources::LeanPs2Vertex() { return kLeanPs2VertSrc; }
+const char* GlShaderSources::Ps2SkinVertex() { return kPs2SkinVertSrc; }
+const char* GlShaderSources::LeanPs2InstancedVertex() { return kLeanPs2InstVertSrc; }
 
 }  // namespace render
 }  // namespace ps2r

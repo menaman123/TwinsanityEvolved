@@ -179,7 +179,7 @@ def free_gb(path):
 def guard(out, force):
     procs = game_processes()
     if procs and not force:
-        sys.exit("diff.py: another game process is running (one at a time, charter): " + "; ".join(procs))
+        sys.exit("diff.py: another game process is running (one at a time): " + "; ".join(procs))
     min_free = float(os.environ.get("TE_MIN_FREE_GB", "15"))
     if free_gb(out) < min_free:
         sys.exit("diff.py: %.1f GB free under %s < TE_MIN_FREE_GB=%.0f -- prune first" % (free_gb(out), out, min_free))

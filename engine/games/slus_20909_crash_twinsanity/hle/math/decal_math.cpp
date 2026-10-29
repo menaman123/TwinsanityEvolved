@@ -44,7 +44,13 @@ uint32_t FtoiSat(float f) {
     return uint32_t(int32_t(f));
 }
 
-struct Vu {
+// The register file's clamps as a compile-time switch: C = true is the VU's rule (every FMAC operand and result clamped);
+// C = false leaves them out -- DecalMath::Age takes that form only where no clamp can act (see there), the same values
+template <bool C> inline float Cl(float v) { if constexpr (C) return Clamp(v); else return v; }
+template <bool C> inline Vector Cl4(const Vector& v) { if constexpr (C) return Clamp4(v); else return v; }
+
+template <bool C>
+struct VuT {
     const Vector* data;
     Vector vf[32]{};
     Vector acc{};
@@ -53,87 +59,110 @@ struct Vu {
 };
 
 // ---- the upper forms (each re-clamps ACC first, as the FMAC prologue does) ---------------------------------------------
-Vector Src(Vu& u, int reg) { u.acc = Clamp4(u.acc); return Clamp4(u.vf[reg]); }
-float Bc(const Vu& u, int reg, int lane) { return Clamp(u.vf[reg][lane]); }
+template <bool C>
+__attribute__((noinline)) Vector SrcClamped(VuT<C>& u, int reg) { u.acc = Clamp4(u.acc); return Clamp4(u.vf[reg]); }
+// (the unclamped form a plain read, inlined at every instruction; the clamped one a call, as before)
+template <bool C>
+inline __attribute__((always_inline)) Vector Src(VuT<C>& u, int reg) {
+    if constexpr (C) return SrcClamped(u, reg);
+    else return u.vf[reg];
+}
+template <bool C>
+float Bc(const VuT<C>& u, int reg, int lane) { return Cl<C>(u.vf[reg][lane]); }
 
-uint16_t Put(Vu& u, int fd, const Vector& raw, uint8_t mask) {
+template <bool C>
+uint16_t Put(VuT<C>& u, int fd, const Vector& raw, uint8_t mask) {
     uint16_t s = 0;
     for (int k = 0; k < 4; ++k) {
         if (!(mask & (8 >> k))) continue;
         if (Bits(raw[k]) & kSign) s |= uint16_t(0x80 >> k);
-        if (fd != 0) u.vf[fd][k] = Clamp(raw[k]);
+        if (fd != 0) u.vf[fd][k] = Cl<C>(raw[k]);
     }
     return s;
 }
-void PutAcc(Vu& u, const Vector& raw, uint8_t mask) {
+template <bool C>
+void PutAcc(VuT<C>& u, const Vector& raw, uint8_t mask) {
     for (int k = 0; k < 4; ++k)
-        if (mask & (8 >> k)) u.acc[k] = Clamp(raw[k]);
+        if (mask & (8 >> k)) u.acc[k] = Cl<C>(raw[k]);
 }
 
-void AddS(Vu& u, int fd, int fs, float s, uint8_t mask) {
+template <bool C>
+void AddS(VuT<C>& u, int fd, int fs, float s, uint8_t mask) {
     const Vector a = Src(u, fs); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = a[k] + s;
     Put(u, fd, r, mask);
 }
-void SubS(Vu& u, int fd, int fs, float s, uint8_t mask) {
+template <bool C>
+void SubS(VuT<C>& u, int fd, int fs, float s, uint8_t mask) {
     const Vector a = Src(u, fs); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = a[k] - s;
     Put(u, fd, r, mask);
 }
-void MulS(Vu& u, int fd, int fs, float s, uint8_t mask) {
+template <bool C>
+void MulS(VuT<C>& u, int fd, int fs, float s, uint8_t mask) {
     const Vector a = Src(u, fs); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = a[k] * s;
     Put(u, fd, r, mask);
 }
-void SubV(Vu& u, int fd, int fs, int ft, uint8_t mask) {
-    const Vector a = Src(u, fs), b = Clamp4(u.vf[ft]); Vector r{};
+template <bool C>
+void SubV(VuT<C>& u, int fd, int fs, int ft, uint8_t mask) {
+    const Vector a = Src(u, fs), b = Cl4<C>(u.vf[ft]); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = a[k] - b[k];
     Put(u, fd, r, mask);
 }
-void MulV(Vu& u, int fd, int fs, int ft, uint8_t mask) {
-    const Vector a = Src(u, fs), b = Clamp4(u.vf[ft]); Vector r{};
+template <bool C>
+void MulV(VuT<C>& u, int fd, int fs, int ft, uint8_t mask) {
+    const Vector a = Src(u, fs), b = Cl4<C>(u.vf[ft]); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = a[k] * b[k];
     Put(u, fd, r, mask);
 }
-void MaddS(Vu& u, int fd, int fs, float s, uint8_t mask) {
+template <bool C>
+void MaddS(VuT<C>& u, int fd, int fs, float s, uint8_t mask) {
     const Vector a = Src(u, fs); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = VuFloat::Fma(a[k], s, u.acc[k]);
     Put(u, fd, r, mask);
 }
-uint16_t MsubS(Vu& u, int fd, int fs, float s, uint8_t mask) {
+template <bool C>
+uint16_t MsubS(VuT<C>& u, int fd, int fs, float s, uint8_t mask) {
     const Vector a = Src(u, fs); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = VuFloat::Fma(-a[k], s, u.acc[k]);
     return Put(u, fd, r, mask);
 }
-void AccAddS(Vu& u, int fs, float s, uint8_t mask) {
+template <bool C>
+void AccAddS(VuT<C>& u, int fs, float s, uint8_t mask) {
     const Vector a = Src(u, fs); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = a[k] + s;
     PutAcc(u, r, mask);
 }
-void AccMulS(Vu& u, int fs, float s, uint8_t mask) {
+template <bool C>
+void AccMulS(VuT<C>& u, int fs, float s, uint8_t mask) {
     const Vector a = Src(u, fs); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = a[k] * s;
     PutAcc(u, r, mask);
 }
-void AccMaddS(Vu& u, int fs, float s, uint8_t mask) {
+template <bool C>
+void AccMaddS(VuT<C>& u, int fs, float s, uint8_t mask) {
     const Vector a = Src(u, fs); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = VuFloat::Fma(a[k], s, u.acc[k]);
     PutAcc(u, r, mask);
 }
-void AccMsubS(Vu& u, int fs, float s, uint8_t mask) {
+template <bool C>
+void AccMsubS(VuT<C>& u, int fs, float s, uint8_t mask) {
     const Vector a = Src(u, fs); Vector r{};
     for (int k = 0; k < 4; ++k) r[k] = VuFloat::Fma(-a[k], s, u.acc[k]);
     PutAcc(u, r, mask);
 }
 // ITOFn / FTOIn of the raw lanes (scale 1, 4096, 32768)
-void Itof(Vu& u, int ft, int fs, float scale, uint8_t mask) {
-    u.acc = Clamp4(u.acc);
+template <bool C>
+void Itof(VuT<C>& u, int ft, int fs, float scale, uint8_t mask) {
+    if constexpr (C) u.acc = Clamp4(u.acc);
     const Vector a = u.vf[fs];
     for (int k = 0; k < 4; ++k)
         if (mask & (8 >> k)) u.vf[ft][k] = float(int32_t(Bits(a[k]))) / scale;
 }
-void Ftoi(Vu& u, int ft, int fs, float scale, uint8_t mask) {
-    u.acc = Clamp4(u.acc);
+template <bool C>
+void Ftoi(VuT<C>& u, int ft, int fs, float scale, uint8_t mask) {
+    if constexpr (C) u.acc = Clamp4(u.acc);
     const Vector a = u.vf[fs];
     for (int k = 0; k < 4; ++k)
         if (mask & (8 >> k)) u.vf[ft][k] = Float(FtoiSat(a[k] * scale));
@@ -144,14 +173,16 @@ uint32_t MaxBits(uint32_t a, uint32_t b) {
     const int32_t kb = (b & kSign) ? -int32_t(b & 0x7FFFFFFFu) - 1 : int32_t(b);
     return ka >= kb ? a : b;
 }
-void MaxV(Vu& u, int fd, int fs, int ft, uint8_t mask) {
-    u.acc = Clamp4(u.acc);
+template <bool C>
+void MaxV(VuT<C>& u, int fd, int fs, int ft, uint8_t mask) {
+    if constexpr (C) u.acc = Clamp4(u.acc);
     const Vector a = u.vf[fs], b = u.vf[ft];
     for (int k = 0; k < 4; ++k)
         if (mask & (8 >> k)) u.vf[fd][k] = Float(MaxBits(Bits(a[k]), Bits(b[k])));
 }
-void MaxBc(Vu& u, int fd, int fs, int ft, int bc, uint8_t mask) {
-    u.acc = Clamp4(u.acc);
+template <bool C>
+void MaxBc(VuT<C>& u, int fd, int fs, int ft, int bc, uint8_t mask) {
+    if constexpr (C) u.acc = Clamp4(u.acc);
     const Vector a = u.vf[fs];
     const uint32_t b = Bits(u.vf[ft][bc]);
     for (int k = 0; k < 4; ++k)
@@ -159,15 +190,19 @@ void MaxBc(Vu& u, int fd, int fs, int ft, int bc, uint8_t mask) {
 }
 
 // ---- the lower forms -------------------------------------------------------------------------------------------------
-void Lq(Vu& u, int ft, uint16_t vi, int imm, uint8_t mask) {
+template <bool C>
+void Lq(VuT<C>& u, int ft, uint16_t vi, int imm, uint8_t mask) {
     const Vector& m = u.data[(uint32_t(vi) + uint32_t(imm)) & (DecalMath::kDataQuadwords - 1)];
     for (int k = 0; k < 4; ++k)
         if (mask & (8 >> k)) u.vf[ft][k] = m[k];
 }
-uint16_t Mtir(const Vu& u, int fs, int lane) { return uint16_t(Bits(u.vf[fs][lane])); }
-void Sqrt(Vu& u, float x) { u.q = Clamp(std::sqrt(std::fabs(Clamp(x)))); }
+template <bool C>
+uint16_t Mtir(const VuT<C>& u, int fs, int lane) { return uint16_t(Bits(u.vf[fs][lane])); }
+template <bool C>
+void Sqrt(VuT<C>& u, float x) { u.q = Cl<C>(std::sqrt(std::fabs(Cl<C>(x)))); }
 
-DecalMath::Look Out(const Vu& u) {
+template <bool C>
+DecalMath::Look Out(const VuT<C>& u) {
     DecalMath::Look look;
     for (int k = 0; k < 4; ++k) {
         look.place[k] = Bits(u.vf[28][k]);
@@ -179,15 +214,16 @@ DecalMath::Look Out(const Vu& u) {
 }
 
 // 0x1C0: a decal in the camera's chunk
-DecalMath::Look SameChunk(Vu& u) {
+template <bool C>
+DecalMath::Look SameChunk(VuT<C>& u) {
     Lq(u, 28, u.vi1, 5, W);                                   // 01c0
     MulS(u, 1, 1, Bc(u, 28, 3), W); u.i = 0.5f;               // 01c8: the life spent
-    AddS(u, 29, 0, Clamp(u.i), XZ);                           // 01d0
+    AddS(u, 29, 0, Cl<C>(u.i), XZ);                           // 01d0
     SubS(u, 1, 0, Bc(u, 1, 3), W); u.i = 0.5f;                // 01d8: SUBw.w vf1, vf0, vf1w
-    AddS(u, 30, 0, Clamp(u.i), XZ);                           // 01e0
-    SubS(u, 31, 0, Clamp(u.i), X);                            // 01e8
-    AddS(u, 31, 0, Clamp(u.i), Z); u.i = 3.0f;                // 01f0
-    MulS(u, 1, 1, Clamp(u.i), W);                             // 01f8: in thirds
+    AddS(u, 30, 0, Cl<C>(u.i), XZ);                           // 01e0
+    SubS(u, 31, 0, Cl<C>(u.i), X);                            // 01e8
+    AddS(u, 31, 0, Cl<C>(u.i), Z); u.i = 3.0f;                // 01f0
+    MulS(u, 1, 1, Cl<C>(u.i), W);                             // 01f8: in thirds
     Ftoi(u, 29, 1, 1.f, W);                                   // 0200
     u.vi2 = Mtir(u, 29, 3); Itof(u, 29, 29, 1.f, W);          // 0208: the key
     u.vi1 = uint16_t(u.vi2 + u.vi1);                          // 0210
@@ -232,7 +268,8 @@ DecalMath::Look SameChunk(Vu& u) {
 }
 
 // 0x360: a decal placed in another chunk (its place through that chunk's matrix first)
-DecalMath::Look OtherChunk(Vu& u) {
+template <bool C>
+DecalMath::Look OtherChunk(VuT<C>& u) {
     Itof(u, 2, 2, 32768.f, XYZW); Lq(u, 31, 0, 8, XYZ);       // 0360
     Itof(u, 3, 3, 32768.f, XYZW); Lq(u, 29, 0, 9, XYZ);       // 0368
     Lq(u, 29, u.vi1, 5, W);                                   // 0370
@@ -242,11 +279,11 @@ DecalMath::Look OtherChunk(Vu& u) {
     AccMaddS(u, 30, Bc(u, 1, 2), XYZ);                        // 0390
     MaddS(u, 1, 29, Bc(u, 0, 3), XYZ);                        // 0398: the place in this chunk
     SubS(u, 1, 0, Bc(u, 1, 3), W); u.i = 0.5f;               // 03a0
-    AddS(u, 29, 0, Clamp(u.i), XZ); u.i = 0.5f;               // 03a8
-    AddS(u, 30, 0, Clamp(u.i), XZ);                           // 03b0
-    SubS(u, 31, 0, Clamp(u.i), X);                            // 03b8
-    AddS(u, 31, 0, Clamp(u.i), Z); u.i = 3.0f;                // 03c0
-    MulS(u, 1, 1, Clamp(u.i), W);                             // 03c8
+    AddS(u, 29, 0, Cl<C>(u.i), XZ); u.i = 0.5f;               // 03a8
+    AddS(u, 30, 0, Cl<C>(u.i), XZ);                           // 03b0
+    SubS(u, 31, 0, Cl<C>(u.i), X);                            // 03b8
+    AddS(u, 31, 0, Cl<C>(u.i), Z); u.i = 3.0f;                // 03c0
+    MulS(u, 1, 1, Cl<C>(u.i), W);                             // 03c8
     Ftoi(u, 29, 1, 1.f, W);                                   // 03d0
     u.vi2 = Mtir(u, 29, 3); Itof(u, 29, 29, 1.f, W);          // 03d8
     u.vi1 = uint16_t(u.vi2 + u.vi1);                          // 03e0
@@ -291,9 +328,55 @@ DecalMath::Look OtherChunk(Vu& u) {
 
 }  // namespace
 
-DecalMath::Look DecalMath::Age(const Vector* data, uint32_t program, const Decal& decal) {
+#if defined(__vita__)
+namespace {
+// The calling thread rounds toward zero with flush-to-zero on (FPSCR / FPCR: FZ bit 24, RMode bits 23:22 = 0b11)
+bool FlushToZeroTowardZero() {
+#if defined(__aarch64__)
+    uint64_t fpcr;
+    asm volatile("mrs %0, fpcr" : "=r"(fpcr));
+#else
+    uint32_t fpcr;
+    asm volatile("vmrs %0, fpscr" : "=r"(fpcr));
+#endif
+    return ((fpcr >> 24) & 1u) && ((fpcr >> 22) & 3u) == 3u;
+}
+}  // namespace
+#endif
+
+DecalMath::Look DecalMath::Age(const Vector* data, uint32_t program, const Decal& decal, bool dataFinite, bool* unclamped) {
     RoundingGuard rounding;
-    Vu u;
+    if (unclamped) *unclamped = false;
+#if defined(__vita__)
+    // The clamps left out where none can act: under round-toward-zero (the guard's) with flush-to-zero (the game thread's
+    // FPSCR: RZ | FZ | DN, device dump) and finite inputs -- the data image (the caller vouches: dataFinite) and the
+    // decal's place; the frame's half words only reach ITOF -- every FMAC result is finite (an overflow rounds to the
+    // largest finite number, never to an infinity; no NaN can arise), never a denormal (the hardware flushes it to a zero
+    // of its sign, which is what the clamp would make of it), and every FMAC operand is such a result or a finite input
+    // (a denormal input reads as a zero of its sign in the hardware too). So each clamp is the identity: the same
+    // operations on the same values, bit for bit (host check: decaltest, both forms over random images and decals).
+    // On the Cortex-A9 every clamp is a VFP-to-core transfer and a branch: ~13 of them per VU instruction.
+    if (dataFinite) {
+        uint32_t special = 0;
+        for (int k = 0; k < 4; ++k) special |= uint32_t((Bits(decal.place[k]) & 0x7F800000u) == 0x7F800000u);
+        if (FlushToZeroTowardZero() && !special) {
+            VuT<false> u;
+            u.data = data;
+            u.vf[0] = {0.f, 0.f, 0.f, 1.f};
+            u.vf[1] = decal.place;
+            for (int k = 0; k < 4; ++k) {
+                u.vf[2][k] = Float(uint32_t(decal.frame[k]));
+                u.vf[3][k] = Float(uint32_t(decal.more[k]));
+            }
+            u.vi1 = decal.variant;
+            if (unclamped) *unclamped = true;
+            return program == kOtherChunk ? OtherChunk(u) : SameChunk(u);
+        }
+    }
+#else
+    (void)dataFinite;
+#endif
+    VuT<true> u;
     u.data = data;
     u.vf[0] = {0.f, 0.f, 0.f, 1.f};
     u.vf[1] = decal.place;
@@ -304,5 +387,22 @@ DecalMath::Look DecalMath::Age(const Vector* data, uint32_t program, const Decal
     u.vi1 = decal.variant;
     return program == kOtherChunk ? OtherChunk(u) : SameChunk(u);
 }
+
+#if defined(DECAL_MATH_TEST_UNCLAMPED)
+// decaltest (a host check): the unclamped form itself, whatever the platform, for comparing the two forms bit for bit
+DecalMath::Look DecalMath::AgeUnclampedForTest(const Vector* data, uint32_t program, const Decal& decal) {
+    RoundingGuard rounding;
+    VuT<false> u;
+    u.data = data;
+    u.vf[0] = {0.f, 0.f, 0.f, 1.f};
+    u.vf[1] = decal.place;
+    for (int k = 0; k < 4; ++k) {
+        u.vf[2][k] = Float(uint32_t(decal.frame[k]));
+        u.vf[3][k] = Float(uint32_t(decal.more[k]));
+    }
+    u.vi1 = decal.variant;
+    return program == kOtherChunk ? OtherChunk(u) : SameChunk(u);
+}
+#endif
 
 }  // namespace title

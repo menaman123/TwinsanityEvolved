@@ -246,6 +246,25 @@ bool Audio::StepVoice(uint32_t index, float& left, float& right) {
     } else voice.player.StepPaused();
     return true;
 }
+bool Audio::StepVoices(uint32_t index, uint32_t frames, float* left, float* right) {
+    // Exactly `frames` StepVoice(index) calls of an owned voice. `held` and `repeats` change only through the control
+    // calls, never inside a mix; a stopped player stays stopped through it (only Start revives one).
+    auto& voice = state_.voices[index];
+    auto& player = voice.player;
+    if (voice.held) {
+        // StepVoice writes +0 and only the envelope runs (StepPaused: nothing at all once the player is off)
+        player.StepPausedRun(frames);
+        return false;
+    }
+    if (!player.Playing()) {
+        // Step writes +0 and changes nothing; the repeat check's Stop is idempotent on a stopped player (it only resets
+        // the fields Stop sets), so one check stands for all `frames` of them. Ends() does not move while stopped.
+        if (frames && voice.repeats && player.Ends() >= voice.repeats) player.Stop();
+        return false;
+    }
+    player.StepRun(frames, voice.repeats, left, right);   // Step + the repeat check, frame by frame
+    return true;
+}
 void Audio::BeginMixTick() { ++state_.ticks; }
 void Audio::AdvanceControls() {
     for (auto& voice : state_.voices) if (!voice.held) voice.player.AdvanceControls();

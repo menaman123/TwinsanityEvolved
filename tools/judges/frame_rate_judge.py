@@ -15,7 +15,7 @@ would hold the render thread and measure the judge, not the presenter). Every st
 
 Judged per setting (the fixture freezes the numbers), over the PLAYING span (`game state @ boundary B: Playing` .. the stop):
   * shown fps: the median of the summary windows' presents per wall second -- within +-3 % of the setting; UNCAPPED: at
-    least `uncapped_min_fps` (120 on this Mac), reported as measured. The uncapped run goes first: its shown fps is what
+    least `uncapped_min_fps` (120 on the Apple-silicon Mac it was frozen on), reported as measured. The uncapped run goes first: its shown fps is what
     this host's renderer REACHES, and a setting above it (240 on a renderer that makes 130 interpolated frames a second)
     is judged against that ceiling instead (`judged_against_host_cap` in the results) -- as with vsync on, the display's
     refresh is the cap; the game is never the ceiling;

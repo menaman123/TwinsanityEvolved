@@ -72,9 +72,14 @@ bool KickAt(QwPtr m, u32 qw, Vu1HleOutput& out) {
     else if (flg == 1) packet_size = 16 + ((size_t)nloop * nregs + 1) / 2 * 16;
     else packet_size = 16 + (size_t)nloop * 16;
     if (packet_size > kVu1HleDataSize) return false;
-    std::vector<u8> pkt(packet_size);
     const u32 off = (qw & 0x3FF) * 16;
-    for (size_t i = 0; i < packet_size; ++i) pkt[i] = m.mem[(off + i) & 0x3FFF];
+    std::vector<u8> pkt;
+    if (off + packet_size <= kVu1HleDataSize) {
+        pkt.assign(m.mem + off, m.mem + off + packet_size);   // no wrap: the same bytes in one copy
+    } else {
+        pkt.resize(packet_size);
+        for (size_t i = 0; i < packet_size; ++i) pkt[i] = m.mem[(off + i) & 0x3FFF];
+    }
     out.kicks.push_back(std::move(pkt));
     return true;
 }

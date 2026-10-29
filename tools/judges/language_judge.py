@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""language_judge.py -- does the title show the LANGUAGE ASKED FOR?
+"""language_judge.py -- does the title show the TEXT LANGUAGE ASKED FOR, whatever the speech language?
 
 The disc is the ground truth. The judge reads the disc's archive index itself (CRASH6/CRASH.BH -> Language\\Code\\<slot>.txt in
 CRASH6/CRASH.BD) and recognises each slot's CONTENT from its menu lines ("new game" / "novo jogo" / "nouvelle partie" ...), so it
-knows which slot carries the language that is requested -- on the user's SLES-52568 image the `English` slot holds Brazilian
+knows which slot carries the language that is requested -- on the development SLES-52568 image the `English` slot holds Brazilian
 Portuguese and the English text sits in the `Spanish` slot.
 
 Three deterministic headless runs of the title to the main menu (fixtures/judges/language_pal.json: START at the title, the main
 menu held; frames dumped every 100 presents):
 
-  A  the language REQUESTED by name (`--language english`; a runner without --language-bank takes the console code instead)
-  B  the slot whose content IS that language, named RAW (`--language-bank <slot>`; a runner without --language-bank: the console code the
-     game's GameLanguageOf maps to that slot -- French 2, Spanish 3, German 4, Italian 5, English 1)
-  C  another language the disc carries (`other`), by name (or its slot's code)
+  A  the TEXT language REQUESTED by name with ANOTHER speech language (`--text-language english --speech-language <the
+     fixture's speech>`: the text row is a setting of its own; a runner without --text-language is RED: its text cannot
+     be chosen apart from the speech)
+  B  the slot whose content IS that language, named RAW (`--language-bank <slot>`: text = voice = the slot, as retail)
+  C  another text language the disc carries (`other`), by name (`--text-language <other>`, the same speech as A)
 
 and GREEN iff, on the judged present, the main menu's TEXT REGION of A equals B's pixel for pixel (the requested language's
 strings are drawn: the same glyphs at the same places at the same breathing phase) and differs from C's (another language draws
@@ -22,6 +23,11 @@ is the requested language's "new game" line read off the disc.
 
 RED on bin/twinsanityevolved.32e1174 (`--language 1` = English requested -> the `English` slot -> Portuguese drawn; B via
 `--language 3` draws the English text: A != B), GREEN on the language-setting build for english and for a second language (--other).
+2026-10-27: A and C name the text row alone, with a speech language other than the text's (the fixture's "speech"):
+RED on the runner of 43e9989 (no --text-language), GREEN on its change.
+
+A fixture may name extra runner arguments for every arm ("runner_args": the language mod switched on, so the disc's languages
+are judged with a language mod's row in the table: fixtures/judges/language_arabic_pal.json).
 
 Usage: language_judge.py --bin BIN --iso ISO [--language english] [--other french] [--out DIR] [--fixture F]
 Exit 0 = GREEN, 1 = RED, 2 = the run failed / the disc has no banks.
@@ -42,6 +48,8 @@ DEFAULT_FIXTURE = os.path.join(ROOT, "fixtures", "judges", "language_pal.json")
 QUAD = re.compile(r"\[te\.gfx\.diag\] present (\d+) text (\d+) quads .* quadhash ([0-9a-f]{16})")
 TEXT9 = re.compile(r"\[twinsanityevolved\] language: .*; game text 9 = '([^']*)'")
 SELECTED = re.compile(r"requested '([^']*)' -> slot (\d+) (\w+) \((\w+)\) by ([^,]+), Language\(\) (\d+)")
+# the two rows' selection: "requested text 'x' speech 'y' -> text <t> by <how>: text slot N; speech <s> by <how>: voice slot M; Language() C"
+ROWS_SELECTED = re.compile(r"requested text '([^']*)' speech '([^']*)' -> text (\w+) by ([^:]+): text slot (\d+); speech (\w+) by ([^:]+): voice slot (\d+); Language\(\) (\d+)")
 
 # The game's GameLanguageOf (game/src/game/gamecontext.cpp), inverted: the console code that selects a slot of that NAME
 CODE_OF_SLOT = {"English": 1, "French": 2, "German": 4, "Spanish": 3, "Italian": 5}
@@ -126,7 +134,7 @@ def run(binary, iso, out, fx, lang_args, tag):
     log = os.path.join(d, "run.log")
     args = [binary, "--iso", iso, "--deterministic", "--no-sdl-input", "--no-audio", "--skip-movies", "--trace-state",
             "--play-pad", os.path.join(ROOT, fx["padlog"]), "--stop-at", str(fx["stop_at"]), "--mc-dir", mc,
-            "--run-seconds", str(fx.get("run_seconds", 600))] + lang_args
+            "--run-seconds", str(fx.get("run_seconds", 600))] + fx.get("runner_args", []) + lang_args
     env = dict(os.environ)
     env["TE_GFX_HEADLESS"] = "1"
     env["TE_GFX_DUMP_DIR"] = dump
@@ -140,9 +148,12 @@ def run(binary, iso, out, fx, lang_args, tag):
 
 
 def supports(binary, flag):
-    """Does the runner know `flag`? (a runner without --language-bank prints its usage and exits 2 on an unknown option)"""
+    """Does the runner know `flag`? Its usage (--help) names every option. Headless and without stdin: a runner started with
+    no disc image may otherwise wait for one to be chosen, and a probe that times out would judge a newer runner by the old
+    runner's console codes."""
     try:
-        r = subprocess.run([binary, flag, "0"], capture_output=True, text=True, timeout=30)
+        r = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+                           env=dict(os.environ, TE_GFX_HEADLESS="1"))
     except Exception:
         return False
     return flag in (r.stderr + r.stdout)
@@ -190,6 +201,10 @@ def parse_log(path, present):
             m = SELECTED.search(line)
             if m:
                 selected = {"requested": m.group(1), "slot": int(m.group(2)), "name": m.group(3), "content": m.group(4), "how": m.group(5), "code": int(m.group(6))}
+            m = ROWS_SELECTED.search(line)
+            if m:
+                selected = {"requested": m.group(1), "content": m.group(3), "how": m.group(4), "slot": int(m.group(5)), "speech": m.group(6),
+                            "speech_how": m.group(7), "voice_slot": int(m.group(8)), "code": int(m.group(9))}
     return quads, text9, selected
 
 
@@ -223,9 +238,16 @@ def main():
         return 2
     expected_text9 = want_bank[3]
 
+    if fx.get("text_row") and not supports(a.bin, "--text-language"):
+        print(json.dumps({"verdict": "RED", "requested": want, "why": ["the runner has no --text-language: the text cannot be chosen apart from the speech (one language for both)"]}))
+        print("language_judge: RED (the runner has no text language of its own: --text-language)")
+        return 1
     new_runner = supports(a.bin, "--language-bank")
     print("language_judge: runner %s --language-bank (%s)" % ("supports" if new_runner else "lacks", "language-setting build" if new_runner else "no --language-bank: console codes used"))
-    if new_runner:
+    if new_runner and fx.get("text_row"):
+        speech = ["--speech-language", fx["text_row"]["speech"]]
+        arms = {"A": ["--text-language", want] + speech, "B": ["--language-bank", str(want_bank[0])], "C": ["--text-language", other] + speech}
+    elif new_runner:
         arms = {"A": ["--language", want], "B": ["--language-bank", str(want_bank[0])], "C": ["--language", other]}
     else:
         # the runner without --language-bank: a console code; "requesting English" is code 1 (what the game maps to slot 0)
@@ -267,6 +289,15 @@ def main():
         fails.append("the game ended with text 9 '%s', the %s bank's is '%s'" % (A["text9"], want, expected_text9))
     if A["selected"] and A["selected"]["content"] != want:
         fails.append("the runner selected a %s bank for '%s'" % (A["selected"]["content"], want))
+    if fx.get("text_row"):
+        sel = A["selected"]
+        if not sel or "speech" not in sel:
+            fails.append("the runner reported no text / speech selection")
+        else:
+            if sel["slot"] != want_bank[0]:
+                fails.append("A's text slot is %d, the %s text's is %d" % (sel["slot"], want, want_bank[0]))
+            if sel["speech"] != fx["text_row"]["speech"] or sel["speech_how"] != "name":
+                fails.append("A's speech is %s by %s, not %s by name: the text row did not leave the speech alone" % (sel["speech"], sel["speech_how"], fx["text_row"]["speech"]))
     verdict = "GREEN" if not fails else "RED"
     print(json.dumps({"verdict": verdict, "requested": want, "requested_slot": want_bank[0], "requested_slot_name": want_bank[1],
                       "other": other, "other_slot": other_bank[0], "present": present, "why": fails}))

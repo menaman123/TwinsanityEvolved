@@ -18,6 +18,11 @@
 // is recognised by its first sector's sync pattern; every logical read is
 // then remapped per sector, so callers see one 2048-byte-per-sector volume
 // whichever layout the file has (RawSectors() tells which).
+//
+// The volume interface (Open / Close / Find / List / ReadBytes / ImageBytes) is
+// virtual: DiscOverlay (disc_overlay.h) is an IsoFs that composes mods' files
+// over the image, and every reader holding a `const IsoFs&` reads the composed
+// volume through it. A plain IsoFs (no mod on) runs exactly this file's code.
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -37,23 +42,23 @@ public:
     };
 
     IsoFs() = default;
-    ~IsoFs();
+    virtual ~IsoFs();
     IsoFs(const IsoFs&) = delete;
     IsoFs& operator=(const IsoFs&) = delete;
 
     // Opens the image and parses the PVD. False (with *error) when the file is
     // missing or is not an ISO9660 volume.
-    bool Open(const std::string& path, std::string* error = nullptr);
+    virtual bool Open(const std::string& path, std::string* error = nullptr);
     bool IsOpen() const { return fd_ >= 0; }
-    void Close();
+    virtual void Close();
 
     // Path lookup from the root, in any of the shapes a title uses:
     // "DATA/SYS/MODULE.IRX", "\SLUS_123.45;1", "cdrom0:\DATA\SYS\CDVDSTM.IRX".
     // False when any component is missing.
-    bool Find(const std::string& path, Entry& out) const;
+    virtual bool Find(const std::string& path, Entry& out) const;
     // Every record of a directory except "." and ".." (names as recorded, with
     // ";1"). False when the directory does not read whole.
-    bool List(const Entry& dir, std::vector<Entry>& out) const;
+    virtual bool List(const Entry& dir, std::vector<Entry>& out) const;
     Entry Root() const { return root_; }
 
     // Whole sectors: count sectors from lba into dst (count * 2048 bytes).
@@ -61,14 +66,15 @@ public:
     uint32_t ReadSectors(uint32_t lba, uint32_t count, uint8_t* dst) const;
     // Bytes at an absolute image byte offset (positioned read within a file
     // = ReadBytes(entry.lba * 2048 + pos, ...)). Returns bytes read.
-    size_t ReadBytes(uint64_t offset, size_t size, uint8_t* dst) const;
+    virtual size_t ReadBytes(uint64_t offset, size_t size, uint8_t* dst) const;
 
     uint32_t RootLba() const { return root_.lba; }
     uint32_t RootSize() const { return root_.size; }
     uint32_t VolumeSectors() const { return volume_sectors_; }
     // Logical image bytes (sectors * 2048): the size the volume presents, not
-    // the file's byte count when the file is raw.
-    uint64_t ImageBytes() const { return image_bytes_; }
+    // the file's byte count when the file is raw. (An overlay's grows by the
+    // virtual sectors its relocated and added files occupy.)
+    virtual uint64_t ImageBytes() const { return image_bytes_; }
     // True when the file is a raw 2352-byte-per-sector image (.bin).
     bool RawSectors() const { return sector_stride_ != kSectorSize; }
     uint32_t SectorStride() const { return sector_stride_; }

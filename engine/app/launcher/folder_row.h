@@ -12,6 +12,7 @@ public:
     FolderRow(const QString& label, QWidget* parent = nullptr);
     void setPath(const QString& path);
     QString path() const { return path_; }
+    QString labelText() const;
     FlatButton* changeButton() const { return change_; }
     FlatButton* openButton() const { return open_; }
     static QString openInFileManagerLabel();

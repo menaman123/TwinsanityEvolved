@@ -3,7 +3,7 @@
 
 The title's ice block (rigid model 0xc5f7e4 on the PAL disc) has two shaders, [0x01 textured] [0x0C env map]: retail's second pass
 (TexturedTristrip::RunEnvCall, the sphere map of the half vector eye + normal through the clip matrix, additive) is the glassy glint
-the user sees as the orb. The port drew the first shader only: a flat cyan translucent block. The judge: on the deterministic boot
+the player sees as the orb. The port drew the first shader only: a flat cyan translucent block. The judge: on the deterministic boot
 (--skip-movies) the title frame 1500's block box has a luminance standard deviation and a 4-bit colour count above the floors the
 textured pass alone never reaches (36.1 / 318 on bin/twinsanityevolved.0f92911; 59.5 / 406 with the env pass).
 

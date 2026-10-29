@@ -1,7 +1,8 @@
 // app/launcher/title_manifest.cpp -- reading title.json.
 #include "title_manifest.h"
-#include <QRegularExpression>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -12,13 +13,6 @@ QStringList stringList(const QJsonValue& v) {
     QStringList out;
     for (const QJsonValue& e : v.toArray()) out << e.toString();
     return out;
-}
-DiscFingerprint fingerprintOf(const QJsonObject& o) {
-    DiscFingerprint f;
-    f.file = o.value("file").toString();
-    f.region = o.value("region").toString();
-    f.id = o.value("id").toString();
-    return f;
 }
 }  // namespace
 
@@ -35,10 +29,10 @@ bool TitleManifest::load(const QString& path, QString* error) {
         return false;
     }
     path_ = path;
-    return loadJson(doc.object(), error);
+    return loadJson(doc.object(), error, QFileInfo(path).absolutePath());
 }
 
-bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
+bool TitleManifest::loadJson(const QJsonObject& root, QString* error, const QString& baseDir) {
     valid_ = false;
     id_ = root.value("id").toString();
     name_ = root.value("name").toString();
@@ -50,80 +44,85 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
         if (error) *error = QStringLiteral("the manifest needs an id and a name");
         return false;
     }
+
     const QJsonObject disc = root.value("disc").toObject();
-    fingerprint_ = fingerprintOf(disc.value("fingerprint").toObject());
-    if (fingerprint_.file.isEmpty()) {
-        if (error) *error = QStringLiteral("the manifest needs disc.fingerprint.file");
-        return false;
+    discManifests_.clear();
+    for (const QString& m : stringList(disc.value("manifests"))) {
+        discManifests_ << (QFileInfo(m).isAbsolute() || baseDir.isEmpty() ? m : QDir(baseDir).absoluteFilePath(m));
     }
-    alternates_.clear();
-    for (const QJsonValue& v : disc.value("alternates").toArray()) alternates_ << fingerprintOf(v.toObject());
+    plays_ = stringList(disc.value("plays"));
+    playsNote_ = disc.value("plays_note").toString();
     discExtensions_ = stringList(disc.value("extensions"));
     if (discExtensions_.isEmpty()) discExtensions_ << ".iso";
 
-    const QJsonObject source = root.value("source").toObject();
-    sourceUrl_ = source.value("url").toString();
-    releaseRepo_ = root.value("release").toObject().value("repo").toString();
-    if (releaseRepo_.isEmpty()) {   // https://github.com/<owner>/<name>(.git)
-        const QRegularExpressionMatch m = QRegularExpression("github\\.com[/:]([^/]+)/([^/.]+)").match(sourceUrl_);
-        if (m.hasMatch()) releaseRepo_ = m.captured(1) + "/" + m.captured(2);
+    const QJsonObject release = root.value("release").toObject();
+    releasesUrl_ = release.value("releases_url").toString();
+    pageUrl_ = release.value("page_url").toString();
+    zipAsset_ = release.value("zip_asset").toString("{name}-{tag}-{target}.zip").replace("{name}", binaryName_);
+    vitaAsset_ = release.value("vita_asset").toString("{name}-{tag}-vita.vpk").replace("{name}", binaryName_);
+    sumsAsset_ = release.value("sums_asset").toString("SHA256SUMS");
+    installBytes_ = qint64(release.value("install_bytes").toDouble(50.0 * 1024 * 1024));
+    launcherAssets_.clear();
+    const QJsonObject launcherAssets = release.value("launcher_assets").toObject();
+    for (auto it = launcherAssets.begin(); it != launcherAssets.end(); ++it)
+        if (!it.value().toString().isEmpty()) launcherAssets_.insert(it.key(), it.value().toString().replace("{name}", binaryName_));
+    if (releasesUrl_.isEmpty()) {
+        if (error) *error = QStringLiteral("the manifest needs release.releases_url (where the finished game is published)");
+        return false;
     }
-    const QJsonObject tc = source.value("toolchain").toObject();
-    toolchainScript_ = tc.value("script").toString("tools/fetch_toolchain.sh");
-    toolchainWindowsScript_ = tc.value("windows_script").toString("tools/fetch_toolchain.ps1");
-    toolchainPins_ = tc.value("pins").toString("tools/toolchain/PINS.sha256");
-    toolchainFolder_ = tc.value("folder").toString("tools/toolchain");
-    ffmpegRecipe_ = source.value("ffmpeg_recipe").toString();
-    needsPython_ = source.value("needs_python").toBool(true);
 
-    targets_.clear();
     const QJsonObject targets = root.value("targets").toObject();
-    for (auto it = targets.begin(); it != targets.end(); ++it) {
-        const QJsonObject o = it.value().toObject();
-        TargetSpec t;
-        t.id = it.key();
+    computers_.clear();
+    for (const QJsonValue& v : targets.value("computers").toArray()) {
+        const QJsonObject o = v.toObject();
+        ComputerTarget t;
+        t.id = o.value("id").toString();
         t.label = o.value("label").toString(t.id);
-        t.host = o.value("host").toString("any");
-        t.artifact = o.value("artifact").toString("binary");
-        t.preset = o.value("preset").toString();
-        t.configure = stringList(o.value("configure"));
-        t.buildTarget = o.value("build_target").toString();
-        t.binary = o.value("binary").toString();
-        t.artifactPath = o.value("artifact_path").toString();
-        t.needs = stringList(o.value("needs"));
-        t.installText = o.value("install_text").toString();
-        t.crossReason = o.value("cross_reason").toString();
-        t.unavailableReason = o.value("unavailable_reason").toString();
-        const QJsonObject dist = o.value("dist").toObject();
-        t.distScript = dist.value("script").toString();
-        t.distArgs = stringList(dist.value("args"));
-        t.distArtifact = dist.value("artifact").toString();
-        targets_ << t;
+        t.shortLabel = o.value("short").toString(t.label);
+        t.exe = o.value("exe").toString(binaryName_);
+        if (!t.id.isEmpty()) computers_ << t;
     }
-    // a stable order: macos, windows, vita, then anything else alphabetically
-    const QStringList order{"macos", "windows", "vita"};
-    std::sort(targets_.begin(), targets_.end(), [&](const TargetSpec& a, const TargetSpec& b) {
-        const int ia = order.indexOf(a.id), ib = order.indexOf(b.id);
-        if (ia >= 0 || ib >= 0) return (ia < 0 ? 99 : ia) < (ib < 0 ? 99 : ib);
-        return a.id < b.id;
-    });
+    const QJsonObject vita = targets.value("vita").toObject();
+    vitaLabel_ = vita.value("label").toString();
+    vitaFile_ = vita.value("file").toString();
+    vitaNote_ = stringList(vita.value("note"));
+    // the PS Vita folder: <game folder>/<folder>/ holding the package and <data_dir>/ as the console's card has it
+    const QJsonObject vitaFolder = vita.value("folder").toObject();
+    vitaFolderName_ = vitaFolder.value("name").toString("vita");
+    vitaDataDir_ = vitaFolder.value("data_dir").toString();
+    vitaReadme_ = vitaFolder.value("readme").toString("README-vita.txt");
+    vitaDefaultDisc_ = vitaFolder.value("default_disc").toString("game.iso");
+    vitaDroppedKeys_ = stringList(vitaFolder.value("settings_left_out"));
+    vitaDiscsNote_ = stringList(vita.value("discs_note"));
+    vitaModsNote_ = vita.value("mods_note").toString();
+    vitaAbout_ = stringList(vita.value("about"));
 
     const QJsonObject run = root.value("run").toObject();
     runIsoFlag_ = run.value("iso_flag").toString("--iso");
     runConfigFlag_ = run.value("config_flag").toString("--config");
-    runMemoryCardsFlag_ = run.value("memory_cards_flag").toString();
     runArgs_ = stringList(run.value("args"));
     titleStateLine_ = run.value("title_state_line").toString();
     titleStateName_ = run.value("title_state_name").toString();
 
+    const QJsonObject folder = root.value("game_folder").toObject();
+    gameFolderDefault_ = folder.value("default").toString("~/Games/" + name_);
+    settingsFileName_ = folder.value("settings").toString("ps2r.ini");
+    memcardsName_ = folder.value("memcards").toString("memcards");
+    modsName_ = folder.value("mods").toString("mods");
+    discFileName_ = folder.value("disc_file").toString();
+    protectedNames_ = stringList(folder.value("protected"));
+    for (const QString& n : {settingsFileName_, memcardsName_, modsName_, discFileName_})
+        if (!n.isEmpty() && !protectedNames_.contains(n)) protectedNames_ << n;
+    settingsHeader_ = folder.value("settings_header").toString();
+
     const QJsonObject settings = root.value("settings").toObject();
-    settingsFile_ = settings.value("file").toString();
     settingsNote_ = settings.value("note").toString();
     settingsGroups_.clear();
     for (const QJsonValue& gv : settings.value("groups").toArray()) {
         const QJsonObject g = gv.toObject();
         SettingsGroupSpec group;
         group.title = g.value("title").toString();
+        group.target = g.value("target").toString();
         for (const QJsonValue& rv : g.value("rows").toArray()) {
             const QJsonObject r = rv.toObject();
             SettingsRowSpec row;
@@ -132,32 +131,37 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
             row.kind = r.value("kind").toString("choice");
             row.defaultValue = r.value("default").toString();
             row.help = r.value("help").toString();
+            row.writeDefault = r.value("write_default").toBool(false);
+            row.choicesFrom = r.value("choices_from").toString();
             for (const QJsonValue& cv : r.value("choices").toArray()) {
                 const QJsonObject c = cv.toObject();
                 row.choices << SettingsChoice{c.value("value").toString(), c.value("label").toString(c.value("value").toString())};
             }
             if (row.kind == "switch" && row.choices.isEmpty()) row.choices << SettingsChoice{"off", "Off"} << SettingsChoice{"on", "On"};
+            // a derived row (choices_from) offers its default until the disc says more
+            if (!row.choicesFrom.isEmpty() && row.choices.isEmpty() && !row.defaultValue.isEmpty()) {
+                QString label = row.defaultValue;
+                label[0] = label[0].toUpper();
+                row.choices << SettingsChoice{row.defaultValue, label};
+            }
             if (!row.key.isEmpty()) group.rows << row;
         }
         settingsGroups_ << group;
     }
 
-    folders_.clear();
-    const QJsonObject folders = root.value("folders").toObject();
-    for (const QString& id : {QStringLiteral("games"), QStringLiteral("mods"), QStringLiteral("memory_cards"), QStringLiteral("game_output")}) {
-        if (!folders.contains(id)) continue;
-        const QJsonObject o = folders.value(id).toObject();
-        FolderSpec fs;
-        fs.id = id;
-        fs.label = o.value("label").toString(id);
-        fs.defaultPath = o.value("default").toString();
-        fs.seedFromSource = o.value("seed_from_source").toString();
-        folders_ << fs;
+    builtinMods_.clear();
+    for (const QJsonValue& v : root.value("mods").toObject().value("builtin").toArray()) {
+        const QJsonObject o = v.toObject();
+        BuiltinMod m{o.value("id").toString(), o.value("name").toString(), o.value("author").toString(), o.value("help").toString(),
+                     o.value("switch").toBool(true)};
+        if (!m.id.isEmpty()) builtinMods_ << m;
     }
+
     const QJsonObject scan = root.value("scan").toObject();
     scanFolders_ = stringList(scan.value("folders"));
     scanRemovable_ = scan.value("removable").toBool(true);
     scanMaxDepth_ = scan.value("max_depth").toInt(2);
+    scanMinBytes_ = qint64(scan.value("min_bytes").toDouble(32.0 * 1024 * 1024));
     licences_.clear();
     for (const QJsonValue& v : root.value("licences").toArray()) {
         const QJsonObject o = v.toObject();
@@ -167,16 +171,15 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
     return true;
 }
 
-QVector<DiscFingerprint> TitleManifest::allFingerprints() const {
-    QVector<DiscFingerprint> all;
-    all << fingerprint_;
-    all += alternates_;
-    return all;
+const ComputerTarget* TitleManifest::computer(const QString& id) const {
+    for (const ComputerTarget& t : computers_) if (t.id == id) return &t;
+    return nullptr;
 }
 
-const TargetSpec* TitleManifest::target(const QString& id) const {
-    for (const TargetSpec& t : targets_) if (t.id == id) return &t;
-    return nullptr;
+QString TitleManifest::targetLabel(const QString& target) const {
+    if (target == QLatin1String("vita")) return vitaLabel_;
+    const ComputerTarget* c = computer(target);
+    return c ? c->label : target;
 }
 
 QVector<SettingsRowSpec> TitleManifest::allSettingsRows() const {

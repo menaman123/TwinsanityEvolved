@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""tools/ci/asset_scan.py -- NO GAME DATA IN THE TREE (charter). Zero findings or the gate fails.
+"""tools/ci/asset_scan.py -- NO GAME DATA IN THE TREE (a release gate). Zero findings or the gate fails.
 
 Scans every file of the port tree and the game/ tree by EXTENSION and by MAGIC: disc images (ISO9660 "CD001",
 raw .bin/.cue), executables (ELF/IRX), archives (zip, 7z, rar, gzip, xz, zstd, tar), textures/images (PNG, JPEG,

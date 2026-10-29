@@ -65,6 +65,23 @@ void FieldPacer::Loop() {
     uint64_t k = 1;
     auto next = edge_at(anchor, k);
     while (!stop_.load(std::memory_order_acquire)) {
+        if (external_wait_ && use_external_.load(std::memory_order_acquire)) {
+            // The external edge (SetExternalEdge): the display's refresh is the field. The tick is noted at the instant
+            // the wait returned, and the timer train re-anchored there (a switch back continues from this edge).
+            external_wait_();
+            if (stop_.load(std::memory_order_acquire)) break;
+            const auto edge = Clock::now();
+            ticks_.NotePending(TickSync::Cause::Demand);
+            protocol_.NotifyTick();
+            const uint64_t noted = ticks_noted_.fetch_add(1, std::memory_order_release) + 1;
+            last_edge_ns_.store(to_ns(edge), std::memory_order_release);
+            last_edge_tick_.store(noted, std::memory_order_release);
+            external_ticks_.fetch_add(1, std::memory_order_relaxed);
+            anchor = edge;
+            k = 1;
+            next = edge_at(anchor, k);
+            continue;
+        }
         sleep_until(next);
         if (stop_.load(std::memory_order_acquire)) break;
         ticks_.NotePending(TickSync::Cause::Demand);

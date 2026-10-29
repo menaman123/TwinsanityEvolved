@@ -8,12 +8,19 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include "te_host.h"
 #include "te_services.h"
+
+#if defined(TE_NATIVE) && defined(__GNUC__)
+// the native lane's GuestPointer is the identity on an integer address: GCC's -Warray-bounds takes the pointers it makes
+// for objects of size 0 (every read below is behind InRange)
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 
 namespace te::probe {
 
@@ -55,23 +62,27 @@ constexpr uint32_t kObjectBox = 0x10 + 0x30;   // ReferencedObject::collision.bo
 constexpr uint32_t kInstanceId = 0x154;        // InstanceContext::id
 constexpr uint32_t kDiskManager = 0x0031B4B8;  // g_DiskManager (D_0031B4B8); handles[] at 0x58, DiskNode::memory at 4
 
-bool InRange(uint32_t address, uint32_t size) { return address != 0 && uint64_t(address) + size <= GuestMemorySize(); }
+// Guest memory through te::GuestPointer (the wasm lanes' bounds checks; the Vita's native build: the pointer itself), retail
+// addresses through RetailAddress (te_host.h)
+bool InRange(uint32_t address, uint32_t size) { return address != 0 && GuestPointer(address, size) != nullptr; }
+const uint8_t* At(uint32_t address) { return GuestPointer(address, 0); }
+uint32_t R(uint32_t retail) { return RetailAddress(retail); }
 uint32_t Rd32(uint32_t address) {
     if (!InRange(address, 4)) return 0;
     uint32_t v;
-    std::memcpy(&v, GuestMemory() + address, 4);
+    std::memcpy(&v, At(address), 4);
     return v;
 }
 float RdF32(uint32_t address) {
     if (!InRange(address, 4)) return 0.f;
     float v;
-    std::memcpy(&v, GuestMemory() + address, 4);
+    std::memcpy(&v, At(address), 4);
     return v;
 }
 std::string RdString(uint32_t string) {   // game/string.h String { char* string; s32 length; s32 capacity; }
     const uint32_t text = Rd32(string), length = Rd32(string + 4);
     if (!text || length == 0 || length > 256 || !InRange(text, length)) return "";
-    return std::string(reinterpret_cast<const char*>(GuestMemory() + text), length);
+    return std::string(reinterpret_cast<const char*>(At(text)), length);
 }
 
 unsigned g_every = 0;
@@ -90,8 +101,8 @@ void DumpCollision(uint32_t chunk, const std::string& path) {
     const uint32_t tri_count = Rd32(col + 0xC), vert_count = Rd32(col + 0x10);
     const int32_t tri_h = int32_t(Rd32(col + 0x1C)), vert_h = int32_t(Rd32(col + 0x20));
     if (tri_h < 0 || vert_h < 0 || tri_h >= 5500 || vert_h >= 5500 || tri_count == 0 || tri_count > 400000) return;
-    const uint32_t tris = Rd32(Rd32(kDiskManager + 0x58 + 4 * uint32_t(tri_h)) + 4);
-    const uint32_t verts = Rd32(Rd32(kDiskManager + 0x58 + 4 * uint32_t(vert_h)) + 4);
+    const uint32_t tris = Rd32(Rd32(R(kDiskManager) + 0x58 + 4 * uint32_t(tri_h)) + 4);
+    const uint32_t verts = Rd32(Rd32(R(kDiskManager) + 0x58 + 4 * uint32_t(vert_h)) + 4);
     if (!InRange(tris, tri_count * 8) || !InRange(verts, vert_count * 16)) return;
     std::string leaf = path;
     const size_t slash = leaf.find_last_of("\\/");
@@ -104,7 +115,7 @@ void DumpCollision(uint32_t chunk, const std::string& path) {
     for (uint32_t v = 0; v < vert_count; ++v) std::fprintf(f, "v %.4f %.4f %.4f\n", RdF32(verts + v * 16), RdF32(verts + v * 16 + 4), RdF32(verts + v * 16 + 8));
     for (uint32_t t = 0; t < tri_count; ++t) {
         uint64_t w;
-        std::memcpy(&w, GuestMemory() + tris + t * 8, 8);
+        std::memcpy(&w, At(tris + t * 8), 8);
         const uint32_t a = uint32_t(w & 0x3FFFF), b = uint32_t((w >> 18) & 0x3FFFF), c = uint32_t((w >> 36) & 0x3FFFF), surface = uint32_t((w >> 54) & 0x3FF);
         if (a >= vert_count || b >= vert_count || c >= vert_count) continue;
         std::fprintf(f, "f %u %u %u # s%u\n", a + 1, b + 1, c + 1, surface);
@@ -146,7 +157,7 @@ void DumpInstances(uint64_t boundary) {
             const uint32_t place = Rd32(inst + kObjectPlace);
             float x = 0, y = 0, z = 0;
             if (InRange(place, 0x70)) {
-                uint64_t bits; std::memcpy(&bits, GuestMemory() + place + 0x60, 8);
+                uint64_t bits; std::memcpy(&bits, At(place + 0x60), 8);
                 const uint32_t at = (bits & 0x4) ? place + kPlaceMatrix + 0x30 : place + kPlacePosition;
                 x = RdF32(at); y = RdF32(at + 4); z = RdF32(at + 8);
             }
@@ -166,7 +177,7 @@ void DumpInstances(uint64_t boundary) {
         const uint32_t place = Rd32(inst + kObjectPlace);
         float x = 0, y = 0, z = 0;
         if (InRange(place, 0x70)) {
-            uint64_t bits; std::memcpy(&bits, GuestMemory() + place + 0x60, 8);
+            uint64_t bits; std::memcpy(&bits, At(place + 0x60), 8);
             const uint32_t at = (bits & 0x4) ? place + kPlaceMatrix + 0x30 : place + kPlacePosition;
             x = RdF32(at); y = RdF32(at + 4); z = RdF32(at + 8);
         }
@@ -281,7 +292,7 @@ bool FindInstance(const std::string& name_in, Instance& out) {
         Instance i;
         const uint32_t place = Rd32(inst + kObjectPlace);
         if (InRange(place, 0x70)) {
-            uint64_t bits; std::memcpy(&bits, GuestMemory() + place + 0x60, 8);
+            uint64_t bits; std::memcpy(&bits, At(place + 0x60), 8);
             const uint32_t at = (bits & 0x4) ? place + kPlaceMatrix + 0x30 : place + kPlacePosition;
             i.x = RdF32(at); i.y = RdF32(at + 4); i.z = RdF32(at + 8);
         }
@@ -312,8 +323,8 @@ void DumpTextureTable(uint64_t boundary) {
             std::fprintf(stderr, "[probe]   %s id 0x%08X item 0x%08X refs %u kept %u\n", what, id, item, bits & 0xFFFF, (bits >> 17) & 1);
         }
     };
-    dump("texture", kTextureTable);
-    dump("material", kMaterialTable);
+    dump("texture", R(kTextureTable));
+    dump("material", R(kMaterialTable));
     // the shaders in guest memory and their textures (a linear scan of the heap region on 16-byte boundaries)
     const uint8_t* mem = GuestMemory();
     const uint32_t size = uint32_t(GuestMemorySize());
@@ -321,7 +332,7 @@ void DumpTextureTable(uint64_t boundary) {
     for (uint32_t a = 0x00400000; a + 0x40 <= size; a += 16) {
         uint32_t magic; std::memcpy(&magic, mem + a, 4);
         if (magic != 0x48534554u) continue;
-        const uint32_t texture = Rd32(a + 0x14), texture_id = Rd32(a + 0x10);
+        const uint32_t texture = Rd32(R(a) + 0x14), texture_id = Rd32(R(a) + 0x10);
         if (!texture && !texture_id) continue;
         ++shaders;
         // the material owning this shader
@@ -329,10 +340,10 @@ void DumpTextureTable(uint64_t boundary) {
         for (uint32_t m = 0x00400000; m + 0x40 <= size && !owner; m += 16) {
             uint32_t mm; std::memcpy(&mm, mem + m, 4);
             if (mm != 0x544D4554u) continue;
-            for (unsigned k = 0; k < 4; ++k) if (Rd32(m + 0x10 + 4 * k) == a) { owner = m; break; }
+            for (unsigned k = 0; k < 4; ++k) if (Rd32(R(m) + 0x10 + 4 * k) == R(a)) { owner = m; break; }
         }
-        std::fprintf(stderr, "[probe]   shader 0x%08X type %u texture id 0x%08X item 0x%08X (refs %u) owned by material 0x%08X (kind %u, bucket %u)\n", a, Rd32(a + 4),
-                     texture_id, texture, texture ? Rd32(texture) & 0xFFFF : 0, owner, owner ? Rd32(owner + 4) : 0, owner ? Rd32(owner + 8) : 0);
+        std::fprintf(stderr, "[probe]   shader 0x%08X type %u texture id 0x%08X item 0x%08X (refs %u) owned by material 0x%08X (kind %u, bucket %u)\n", a, Rd32(R(a) + 4),
+                     texture_id, texture, texture ? Rd32(texture) & 0xFFFF : 0, owner, owner ? Rd32(R(owner) + 4) : 0, owner ? Rd32(R(owner) + 8) : 0);
     }
     std::fprintf(stderr, "[probe]   %u textured shaders\n", shaders);
 }
@@ -368,12 +379,12 @@ void DumpLinks(uint32_t chunk) {
 
 bool Read(State& s) {
     s = State{};
-    const uint32_t gc = Rd32(kGameController);
-    if (InRange(gc, 16)) { uint64_t v; std::memcpy(&v, GuestMemory() + gc + 8, 8); s.game_state = unsigned((v >> 44) & 63); }
-    s.clock = Rd32(kGlobalClock + 4);
-    const uint32_t tc = Rd32(kGameClockController);
+    const uint32_t gc = Rd32(R(kGameController));
+    if (InRange(gc, 16)) { uint64_t v; std::memcpy(&v, At(gc + 8), 8); s.game_state = unsigned((v >> 44) & 63); }
+    s.clock = Rd32(R(kGlobalClock) + 4);
+    const uint32_t tc = Rd32(R(kGameClockController));
     if (InRange(tc, 8)) s.frame_time = Rd32(tc + 4);
-    const uint32_t agent = Rd32(kPlayerCharacter);
+    const uint32_t agent = Rd32(R(kPlayerCharacter));
     if (!InRange(agent, 0x110)) return false;
     const uint32_t instance = Rd32(agent + kAgentInstance);
     if (!InRange(instance, 0x160)) return false;
@@ -383,7 +394,7 @@ bool Read(State& s) {
     s.chunk_path = s.chunk ? RdString(s.chunk + kChunkPath) : "";
     if (InRange(place, 0x70)) {
         uint64_t bits;
-        std::memcpy(&bits, GuestMemory() + place + 0x60, 8);
+        std::memcpy(&bits, At(place + 0x60), 8);
         const uint32_t at = (bits & 0x4) ? place + kPlaceMatrix + 0x30 : place + kPlacePosition;   // place.h SyncPosition
         s.x = RdF32(at); s.y = RdF32(at + 4); s.z = RdF32(at + 8);
         s.face_x = RdF32(place + kPlaceMatrix + 0x20); s.face_z = RdF32(place + kPlaceMatrix + 0x28);
@@ -440,5 +451,131 @@ void Install(unsigned every, const std::string& collision_dir) {
 }
 
 void SampleNow(uint64_t boundary) { Sample(boundary, true); }
+
+// ---- the rigid bodies (--trace-bodies N): the physics world's bodies, their place, motion and what floats them ----------------
+namespace {
+// game/include/game/rigidbody.h (CHECK_OFFSETs): PhysicsWorld { bodies, capacity, freeSlots, freeCapacity, used }, the body
+// (RigidBody 0x2E0, DynamicBody 0x380, HullBody / SphereBody after it)
+constexpr uint32_t kPhysicsWorld = 0x00309AD4;   // g_PhysicsWorld (UnkStruct_0x14_HasSomeDataPTRs): PhysicsWorld*
+constexpr uint32_t kHullBodyVTable = 0x00305440, kSphereBodyVTable = 0x003054D8;
+constexpr uint32_t kNodeVTable = 0x14;           // GameNode's vtable
+constexpr uint32_t kBodyFlags = 0x18, kBodyMass = 0x1C, kBodySubsteps = 0x64, kBodyMomentum = 0x70, kBodyRotation = 0x80;
+constexpr uint32_t kBodyMatrix = 0xB0, kBodyAngularVelocity = 0x140, kBodyVelocity = 0x150, kBodyForce = 0x1C0;
+constexpr uint32_t kBodyStepForce = 0x1E0, kBodyStepTorque = 0x1F0, kBodyWaterLevel = 0x210;
+constexpr uint32_t kDynBits = 0x2E0, kDynInstance = 0x2E4, kDynDrag = 0x31C, kDynLengthDrag = 0x320, kDynBuoyancy = 0x324;
+constexpr uint32_t kDynPushes = 0x350;
+unsigned g_bodies_every = 0;
+bool g_bodies_all = false;   // TE_TRACE_BODIES_ALL=1: every body, not only the floating ones (buoyancy > 0)
+uint64_t g_bodies_last = 0;
+
+uint32_t Bits(float v) { uint32_t b; std::memcpy(&b, &v, 4); return b; }
+
+void SampleBodies(uint64_t boundary) {
+    if (g_bodies_every == 0 || (boundary - g_bodies_last < g_bodies_every && g_bodies_last != 0)) return;
+    g_bodies_last = boundary;
+    const uint32_t world = Rd32(R(kPhysicsWorld));
+    if (!InRange(world, 0x14)) { std::fprintf(stderr, "[bodies] @%llu no physics world (0x%08X)\n", (unsigned long long)boundary, world); return; }
+    const uint32_t bodies = Rd32(world);
+    const int32_t capacity = int32_t(Rd32(world + 4));
+    if (!InRange(bodies, 4 * 200) || capacity <= 0 || capacity > 200) {
+        std::fprintf(stderr, "[bodies] @%llu physics world 0x%08X: bodies 0x%08X capacity %d used %d\n", (unsigned long long)boundary, world, bodies, capacity, int32_t(Rd32(world + 16)));
+        return;
+    }
+    unsigned listed = 0;
+    for (int32_t slot = 0; slot < capacity; ++slot) {
+        const uint32_t body = Rd32(bodies + 4 * uint32_t(slot));
+        if (!InRange(body, 0x3A0)) continue;
+        ++listed;
+        const float buoyancy = RdF32(body + kDynBuoyancy);
+        if (!g_bodies_all && !(buoyancy > 0.f)) continue;
+        const uint32_t vt = Rd32(body + kNodeVTable);
+        const char* kind = vt == R(kHullBodyVTable) ? "hull" : vt == R(kSphereBodyVTable) ? "sphere" : "body";
+        const uint32_t inst = Rd32(body + kDynInstance);
+        std::string name;
+        uint32_t iflags = 0;
+        float box_min_y = 0, box_max_y = 0, place_y = 0;
+        if (InRange(inst, 0x160)) {
+            iflags = Rd32(inst + kObjectFlags);
+            const uint32_t onode = Rd32(inst + 0xD4 + 4 + 4 * 1);
+            if (InRange(onode, 0x80)) { const uint32_t object = Rd32(onode + kObjectNodeObject); if (InRange(object, 0x20)) name = RdString(object + kGameObjectName); }
+            box_min_y = RdF32(inst + kObjectBox + 4);
+            box_max_y = RdF32(inst + kObjectBox + 20);
+            const uint32_t place = Rd32(inst + kObjectPlace);
+            if (InRange(place, 0x70)) {
+                uint64_t pbits; std::memcpy(&pbits, At(place + 0x60), 8);
+                place_y = RdF32(((pbits & 0x4) ? place + kPlaceMatrix + 0x30 : place + kPlacePosition) + 4);
+            }
+        }
+        const uint32_t p = body + kBodyMatrix + 0x30, v = body + kBodyVelocity, w = body + kBodyAngularVelocity;
+        const uint32_t sf = body + kBodyStepForce, st = body + kBodyStepTorque;
+        std::fprintf(stderr, "[bodies] @%llu slot %d 0x%08X %s '%s' inst 0x%08X%s pos (%.5f %.5f %.5f) y %08X vel (%.5f %.5f %.5f) spin (%.5f %.5f %.5f) "
+                             "rot (%.5f %.5f %.5f %.5f) water %.5f buoy %.4f mass %.3f drag %.4f/%.4f sub %d step (%.4f %.4f %.4f | %.4f %.4f %.4f) force (%.3f %.3f %.3f) "
+                             "box y %.4f..%.4f place y %.5f flags 0x%X bits 0x%X push (%.5f %.5f %.5f)\n",
+                     (unsigned long long)boundary, slot, body, kind, name.c_str(), inst, (iflags & 1) ? " asleep" : "", RdF32(p), RdF32(p + 4), RdF32(p + 8), Bits(RdF32(p + 4)),
+                     RdF32(v), RdF32(v + 4), RdF32(v + 8), RdF32(w), RdF32(w + 4), RdF32(w + 8), RdF32(body + kBodyRotation), RdF32(body + kBodyRotation + 4),
+                     RdF32(body + kBodyRotation + 8), RdF32(body + kBodyRotation + 12), RdF32(body + kBodyWaterLevel), buoyancy, RdF32(body + kBodyMass),
+                     RdF32(body + kDynDrag), RdF32(body + kDynLengthDrag), int32_t(Rd32(body + kBodySubsteps)), RdF32(sf), RdF32(sf + 4), RdF32(sf + 8), RdF32(st), RdF32(st + 4),
+                     RdF32(st + 8), RdF32(body + kBodyForce), RdF32(body + kBodyForce + 4), RdF32(body + kBodyForce + 8), box_min_y, box_max_y, place_y, Rd32(body + kBodyFlags),
+                     Rd32(body + kDynBits), RdF32(body + kDynPushes), RdF32(body + kDynPushes + 4), RdF32(body + kDynPushes + 8));
+        (void)kBodyMomentum;
+    }
+    if (g_bodies_all) std::fprintf(stderr, "[bodies] @%llu world 0x%08X: %u bodies in %d slots (used %d)\n", (unsigned long long)boundary, world, listed, capacity, int32_t(Rd32(world + 16)));
+    // TE_TRACE_INSTANCES=NAME: the current chunk's awake instances whose object name contains NAME (with or without a body):
+    // where each is placed (position and rotation) and its collision box
+    static const char* watch = std::getenv("TE_TRACE_INSTANCES");
+    if (!watch || !*watch) return;
+    State s;
+    if (!Read(s) || !InRange(s.chunk, 0x1F0)) return;
+    const uint32_t insts = Rd32(s.chunk + kChunkInstances);
+    if (!InRange(insts, 0x68)) return;
+    unsigned n = 0;
+    for (uint32_t node = Rd32(insts + kInstancesNodes + 4 * 1); InRange(node, 0x18) && n < 2000; node = Rd32(node + kNodeNext), ++n) {
+        const uint32_t inst = Rd32(node + kNodeOwner);
+        const uint32_t object = Rd32(node + kObjectNodeObject);
+        if (!InRange(inst, 0x160) || !InRange(object, 0x20)) continue;
+        const std::string name = RdString(object + kGameObjectName);
+        if (name.find(watch) == std::string::npos) continue;
+        const uint32_t place = Rd32(inst + kObjectPlace);
+        if (!InRange(place, 0x70)) continue;
+        uint64_t pbits; std::memcpy(&pbits, At(place + 0x60), 8);
+        const uint32_t at = (pbits & 0x4) ? place + kPlaceMatrix + 0x30 : place + kPlacePosition;
+        // the instance's rigid body node (NodeRigidBody 5) and its physics body
+        const uint32_t rnode = Rd32(inst + 0xD4 + 4 + 4 * 5);
+        std::fprintf(stderr, "[inst] @%llu 0x%08X '%s' pos (%.5f %.5f %.5f) y %08X up (%.4f %.4f %.4f) box y %.4f..%.4f flags 0x%05X rigid 0x%08X\n",
+                     (unsigned long long)boundary, inst, name.c_str(), RdF32(at), RdF32(at + 4), RdF32(at + 8), Bits(RdF32(at + 4)),
+                     RdF32(place + kPlaceMatrix + 0x10), RdF32(place + kPlaceMatrix + 0x14), RdF32(place + kPlaceMatrix + 0x18),
+                     RdF32(inst + kObjectBox + 4), RdF32(inst + kObjectBox + 20), Rd32(inst + kObjectFlags), rnode);
+    }
+}
+}  // namespace
+
+void InstallBodies(unsigned every) {
+    g_bodies_every = every ? every : 1;
+    const char* all = std::getenv("TE_TRACE_BODIES_ALL");
+    g_bodies_all = all && all[0] == '1';
+    Services::Get().clock().AddBoundaryHook("trace-bodies", [](uint64_t boundary) {
+        SampleBodies(boundary);
+        // TE_PROBE_DUMP=0xADDR:WORDS@BOUNDARY[,...]: guest words printed once at a boundary (inspection of tables)
+        static const char* dump = std::getenv("TE_PROBE_DUMP");
+        if (!dump) return;
+        for (const char* p = dump; *p;) {
+            char* end = nullptr;
+            const uint32_t addr = uint32_t(std::strtoul(p, &end, 0));
+            if (!end || *end != ':') break;
+            const uint32_t words = uint32_t(std::strtoul(end + 1, &end, 0));
+            if (!end || *end != '@') break;
+            const uint64_t at = std::strtoull(end + 1, &end, 0);
+            if (at == boundary)
+                for (uint32_t w = 0; w < words; w += 4) {
+                    std::fprintf(stderr, "[probe.dump] @%llu 0x%08X:", (unsigned long long)boundary, addr + 4 * w);
+                    for (uint32_t k = w; k < w + 4 && k < words; ++k) std::fprintf(stderr, " %08X", Rd32(addr + 4 * k));
+                    std::fprintf(stderr, "\n");
+                }
+            p = (end && *end == ',') ? end + 1 : end ? end : p + std::strlen(p);
+            if (!*p) break;
+        }
+    });
+    std::fprintf(stderr, "[probe] tracing the physics world's %s bodies every %u boundaries\n", g_bodies_all ? "" : "floating", g_bodies_every);
+}
 
 }  // namespace te::probe

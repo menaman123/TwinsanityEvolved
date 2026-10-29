@@ -16,13 +16,17 @@ public:
     bool has(const QString& key) const;
     // Replaces or appends `key = value`, preserving every other line; writes the file (creating its folder).
     bool set(const QString& key, const QString& value, QString* error = nullptr);
+    // Drops every line setting `key` (nothing to do when absent), preserving every other line.
+    bool remove(const QString& key, QString* error = nullptr);
     QStringList keys() const;
 
     static QString setInText(const QString& text, const QString& key, const QString& value, bool* changed = nullptr);
+    static QString removeFromText(const QString& text, const QString& key, bool* changed = nullptr);
     static bool getFromText(const QString& text, const QString& key, QString* value);
 
 private:
     QString readAll() const;
+    bool write(const QString& text, QString* error) const;
     QString path_;
 };
 

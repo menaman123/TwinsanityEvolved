@@ -58,6 +58,7 @@ struct ps2e_movie final : ipu::PssDemuxListener, ipu::FmvPcmSink {
 
 ps2e_movie::ps2e_movie(const ps2e_movie_config& config) : demux(*this), capture(*this) {
     if (config.max_pictures > 0) max_pictures = config.max_pictures;
+    decoder.SetPlanarOutput(config.planar != 0);
     capture.SelectChannel(config.audio_channel < 0 ? ipu::FmvAudioCapture::kAnyChannel : config.audio_channel);
 }
 
@@ -146,7 +147,9 @@ bool ps2e_movie::TakePicture(ps2e_movie_picture& out) {
     ++counts.pictures_taken;
     out.width = taken.width;
     out.height = taken.height;
-    out.rgba8 = taken.rgba.data();
+    out.planar = taken.planar;
+    out.rgba8 = taken.planar ? nullptr : taken.rgba.data();
+    out.planes = taken.planar ? taken.planes.data() : nullptr;
     // Room again: the video held back decodes on, and a drained end flushes
     Feed(nullptr, 0);
     return true;

@@ -50,17 +50,7 @@ void VolumeRamp::Control(float& gain) {
     }
     state_.step = sign * (current < target ? Rate(distance) : -Rate(distance));
 }
-void VolumeRamp::Step(float& gain) const {
-    if (state_.step == 0) return;
-    gain += state_.step;
-    if (state_.crossing_zero) {
-        gain = state_.step < 0 ? std::max(gain, 0.0f) : std::min(gain, 0.0f);
-    } else if (Sign(state_.target) < 0) {
-        gain = std::clamp(gain, -0.5f, 0.0f);
-    } else {
-        gain = std::clamp(gain, 0.0f, 0.5f);
-    }
-}
+// VolumeRamp::Step is inline in volume_ramp.h (the voices' per-sample loop).
 void VolumeRamp::Reset() { state_ = {}; }
 const VolumeRamp::State& VolumeRamp::Capture() const { return state_; }
 bool VolumeRamp::Valid(const State& state) {

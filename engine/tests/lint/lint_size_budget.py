@@ -41,7 +41,7 @@ offender that GROWS fails again. Entries that no longer silence anything are rep
 stale (WARN) so the table is never looser than the tree. The thresholds themselves are never
 read from the allowlist.
 
-Exit 0 = no unallowlisted FAIL (WARNs are the orchestrator's refactor queue), 1 = FAIL, 2 = usage.
+Exit 0 = no unallowlisted FAIL (WARNs are the refactor queue), 1 = FAIL, 2 = usage.
 """
 import argparse
 import os

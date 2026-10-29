@@ -29,28 +29,44 @@ enum ConsoleLanguage : s32
 
 ConsoleLanguage Language();
 
-// TwinsanityEvolved (D49, D56): the languages the inserted disc carries, enumerated by the platform at run time. The game has ONE
-// language index (g_CurrentLanguage, the slot of g_LanguageNames) and retail drove everything from it: the two text files
-// Language\\Code|AgentLab\\<slot>.txt, the speech bank Crash6\\<slot>.mb, the FMV's sound track, a level's voice table, the
-// title-card pictures, the credits. A disc whose TEXT banks were moved between slots (a translation patch) has no single slot
-// where text and speech agree, so a LANGUAGE is a pair of slots: Language() names the slot of everything that is NOT the two text
-// files (the retail index, through GameLanguageOf), LanguageTextBank() the slot whose text files are in that language (the same
-// slot on a retail disc). The Options row: how many languages, the one in force, a row's label -- the language of the text,
-// lower case like the game's own menu texts, " (<x> voice)" appended when its speech is another language's -- copied into `out`
-// (`size` bytes, NUL-terminated). A platform that cannot enumerate (the PS2) answers the game's own slots and persists nothing.
-u32 LanguageCount();
-u32 LanguageSelected();
-void LanguageLabel(u32 language, char* out, u32 size);
+// TwinsanityEvolved (D49, D56): the languages the inserted disc carries, enumerated by the platform at run time. The game
+// has ONE language index (g_CurrentLanguage, the slot of g_LanguageNames) and retail drove everything from it: the two text
+// files Language\\Code|AgentLab\\<slot>.txt, the speech bank Crash6\\<slot>.mb, the FMV's sound track, a level's voice table,
+// the title-card pictures, the credits. A disc whose TEXT banks were moved between slots (a translation patch) has no single
+// slot where text and speech agree, so the TEXT and the SPEECH are two choices: Language() names the slot of everything that
+// is NOT the two text files (the retail index, through GameLanguageOf), LanguageTextBank() the slot whose text files are read
+// (the same slot on a retail disc). The Options menu's two rows: TEXT LANGUAGE (the text languages, by what the banks
+// CONTAIN, then the translations the platform carries) and SPEECH LANGUAGE (the speech banks) -- each row's number of
+// choices, the one in force (NoLanguage: none of the row's), a choice's word (the language, lower case like the game's own
+// menu texts) copied into `out` (`size` bytes, NUL-terminated), and the player's choice: the platform persists it (its
+// settings file) and Language() / LanguageTextBank() answer for it from now on; the game re-reads its texts and swaps its
+// speech bank itself. A platform that cannot enumerate (the PS2) answers the game's own slots as the text row, no speech
+// row (one language drives both, as retail) and persists nothing.
+constexpr u32 NoLanguage = 0xFFFFFFFF;
+u32 TextLanguageCount();
+u32 TextLanguageSelected();
+void TextLanguageLabel(u32 language, char* out, u32 size);
+void SetTextLanguage(u32 language);
+u32 SpeechLanguageCount();
+u32 SpeechLanguageSelected();
+void SpeechLanguageLabel(u32 language, char* out, u32 size);
+void SetSpeechLanguage(u32 language);
+// A language row's title in the text language in force (`row` 0 the text row, 1 the speech row) copied into `out`; empty =
+// the game's own text (the text table's "language" for the text row)
+void LanguageRowTitle(u32 row, char* out, u32 size);
 // The slot the two text files are read from; NoLanguageBank = the slot Language() names (retail)
 constexpr u32 NoLanguageBank = 0xFFFFFFFF;
 u32 LanguageTextBank();
-// The language the player picked in the Options menu: the platform persists it (its settings file); Language() and
-// LanguageTextBank() answer for it from now on. The game re-reads its texts and swaps its speech bank itself
-void SetLanguage(u32 language);
+// TwinsanityEvolved: a text file of the text language in force that the DISC does not carry -- a language pack's
+// translation. `file` is the game's TextFile (0 the code's texts, 1 AgentLab's). LanguageTextSize is its size in bytes, 0 when
+// the language is the disc's (the game then reads the slot's file as before); LanguageText copies it into `out` (`size` bytes)
+u32 LanguageTextSize(u32 file);
+void LanguageText(u32 file, void* out, u32 size);
 
 // TwinsanityEvolved: the platform's built-in MODS, shown on the Options menu's MODS page -- how many (the PS2: none), a mod's
 // name (lower case like the game's menu texts) copied into `out` (`size` bytes, NUL-terminated), whether the player has it on
-// (all off by default; the platform persists the switch), and the player's new choice
+// (all off by default; the platform persists the switch), and the player's new choice. Only mods that apply while the game
+// runs are listed: a mod that changes the disc's files is switched before the game starts, outside it
 u32 ModCount();
 void ModLabel(u32 mod, char* out, u32 size);
 u32 ModEnabled(u32 mod);

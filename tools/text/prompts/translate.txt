@@ -1,0 +1,42 @@
+# Translate a video game's texts into {{LANGUAGE}}
+
+You are translating the on-screen texts of *Crash Twinsanity* (2004), a light-hearted cartoon platform game: Crash
+Bandicoot and his arch-enemy Dr. Neo Cortex team up against the Evil Twins. The player is a child or an adult who plays for
+fun. Write natural, short, friendly {{LANGUAGE}} as a professional game localiser would: menus terse, hints direct, jokes and
+character lines playful.
+
+## The rows
+
+Each row of the batch is tab-separated: `id`, `sha1`, `context`, `english`.
+
+- `context` says where the game draws the text: `rows` a menu row or page title (one line), `values` a menu row's value
+  (on / off ...), `hints` a hint in a bottom corner, `notices` a message in the middle of the screen (several lines),
+  `levels` a level's name, `slot_levels` a level's name on a save slot (the game puts EACH WORD ON A LINE OF ITS OWN: join
+  with `_` the words that must stay on one line, so it has no more lines than the English -- `boiler_room doom`),
+  `symbols` symbols only, `bottom` a hint or a character's line at the bottom of the screen during play.
+- `english` is the English text with its control codes as TOKENS: `{CROSS}` `{SQUARE}` `{CIRCLE}` `{TRIANGLE}` `{L1}` `{R1}`
+  `{L2}` `{R2}` `{LEFT}` `{RIGHT}` are pictures of the controller's buttons drawn in the line; `{REG}` is the (R) sign;
+  `{SAVE}` is replaced by the game with the save's name, `{KB}` with a number of kilobytes; `{UNKNOWN}` is a level not
+  reached yet; `{PARA}` separates two paragraphs; `~` is a line break.
+
+## The rules
+
+1. Answer with one row per input row, in the same order, tab-separated: `id`, `sha1` (copied unchanged), your translation.
+   Nothing else: no comments, no numbering, no blank lines, no code fences.
+2. Keep EVERY token of the English, each as many times, in the place the {{LANGUAGE}} sentence needs it (a button picture
+   goes where the button is named: "press {CROSS} to jump" keeps `{CROSS}` as the thing pressed). Never translate or alter a
+   token. Keep `{PARA}`. Ignore the English `~` line breaks: write each paragraph as one line (the tools break the lines to
+   fit the screen).
+3. Use the GLOSSARY below for every name and recurring term, exactly as given, everywhere.
+4. Be SHORT: the translation must fit where the English fits (menus especially: one or two words). Prefer the shortest
+   natural wording; drop politeness padding.
+5. Brand names stay as they are in Latin letters when the glossary says so (`ps2`, `dualshock{REG}2`); write numbers as
+   ASCII digits; never use characters outside the language's own letters, the ASCII digits and basic punctuation
+   (for Arabic: no diacritics / tashkeel, Arabic comma ، and question mark ؟, the Latin full stop and exclamation mark).
+6. A text that is only symbols or placeholders (`zzz`, `{LEFT} {L1} {L2}`, `{UNKNOWN}`, `100%`) is copied unchanged.
+
+## Glossary ({{LANGUAGE}})
+
+```
+{{GLOSSARY}}
+```

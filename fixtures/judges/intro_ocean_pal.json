@@ -7,9 +7,9 @@
   "frame": [512, 512],
   "frames": [
     {"present": 1340, "t_s": 1.3, "oracle_frame": "f1290.ppm",
-     "note": "the first camera: the ocean towards the islands, the ice block at the right edge (the user's first screenshot: the darker triangle at the bottom right)"},
+     "note": "the first camera: the ocean towards the islands, the ice block at the right edge (the first reported screenshot: the darker triangle at the bottom right)"},
     {"present": 1620, "t_s": 6.0, "oracle_frame": "f1570.ppm",
-     "note": "the second camera: the ice block centred, the islands behind (the user's second screenshot: the darker lower band ending on a straight edge)"}
+     "note": "the second camera: the ice block centred, the islands behind (the second reported screenshot: the darker lower band ending on a straight edge)"}
   ],
   "water": {"hue": [0.55, 0.72], "min_s": 0.45, "min_v": 0.25, "blue_over_red": 30,
             "note": "the ocean's HSV range taken from the oracle frames' water (deep to light blue; the ice block, its white wake, the sky and the islands fall outside)"},

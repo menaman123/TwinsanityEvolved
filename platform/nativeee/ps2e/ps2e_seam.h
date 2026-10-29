@@ -380,16 +380,30 @@ void ps2e_system_start_services(void);
 void ps2e_system_exit(ps2e_s32 status);
 // Platform::System::ConsoleLanguage Language();
 ps2e_s32 ps2e_system_language(void);
-// Platform::System::u32 LanguageCount();
-ps2e_s32 ps2e_system_language_count(void);
-// Platform::System::u32 LanguageSelected();
-ps2e_s32 ps2e_system_language_selected(void);
-// Platform::System::void LanguageLabel(u32 language, char* out, u32 size);
-void ps2e_system_language_label(ps2e_s32 language, ps2e_u32 out, ps2e_s32 size);
+// Platform::System::u32 TextLanguageCount();
+ps2e_s32 ps2e_system_text_language_count(void);
+// Platform::System::u32 TextLanguageSelected();
+ps2e_s32 ps2e_system_text_language_selected(void);
+// Platform::System::void TextLanguageLabel(u32 language, char* out, u32 size);
+void ps2e_system_text_language_label(ps2e_s32 language, ps2e_u32 out, ps2e_s32 size);
+// Platform::System::void SetTextLanguage(u32 language);
+void ps2e_system_set_text_language(ps2e_s32 language);
+// Platform::System::u32 SpeechLanguageCount();
+ps2e_s32 ps2e_system_speech_language_count(void);
+// Platform::System::u32 SpeechLanguageSelected();
+ps2e_s32 ps2e_system_speech_language_selected(void);
+// Platform::System::void SpeechLanguageLabel(u32 language, char* out, u32 size);
+void ps2e_system_speech_language_label(ps2e_s32 language, ps2e_u32 out, ps2e_s32 size);
+// Platform::System::void SetSpeechLanguage(u32 language);
+void ps2e_system_set_speech_language(ps2e_s32 language);
+// Platform::System::void LanguageRowTitle(u32 row, char* out, u32 size);
+void ps2e_system_language_row_title(ps2e_s32 row, ps2e_u32 out, ps2e_s32 size);
 // Platform::System::u32 LanguageTextBank();
 ps2e_s32 ps2e_system_language_text_bank(void);
-// Platform::System::void SetLanguage(u32 language);
-void ps2e_system_set_language(ps2e_s32 language);
+// Platform::System::u32 LanguageTextSize(u32 file);
+ps2e_s32 ps2e_system_language_text_size(ps2e_s32 file);
+// Platform::System::void LanguageText(u32 file, void* out, u32 size);
+void ps2e_system_language_text(ps2e_s32 file, ps2e_u32 out, ps2e_s32 size);
 // Platform::System::u32 ModCount();
 ps2e_s32 ps2e_system_mod_count(void);
 // Platform::System::void ModLabel(u32 mod, char* out, u32 size);
@@ -493,6 +507,16 @@ void ps2e_gfx2_skin_released(ps2e_u32 skin);
 void ps2e_gfx2_blend_skin_released(ps2e_u32 skin);
 // graphics: Platform::Graphics::QueuePlatformTexts -- the host fills up to max te_platform_text records (the fps counter, a mod's timer) into out; returns how many
 ps2e_s32 ps2e_gfx2_platform_texts(ps2e_u32 out, ps2e_s32 max);
+// text: Font::Begin -- 1 while the language in force reads right to left (a language mod's direction rtl): Font::Draw shapes the texts that hold its letters (te_text_shape.h)
+ps2e_s32 ps2e_text_direction(void);
+// text: the size of the language in force's own font file (a language mod's), 0 when it has none
+ps2e_s32 ps2e_text_font_size(void);
+// text: the language's own font file copied into out (size bytes); returns the bytes copied
+ps2e_s32 ps2e_text_font_read(ps2e_u32 out, ps2e_s32 size);
+// text: 1 when the shaped texts are logged (TE_GFX_DIAG_TEXT)
+ps2e_s32 ps2e_text_diag(void);
+// text: Font::Draw -- one shaped text's census (te::text::Diag in guest memory): the host prints its lines' boxes and glyphs
+void ps2e_text_shaped(ps2e_u32 record);
 #ifdef __cplusplus
 }
 #endif

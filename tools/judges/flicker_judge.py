@@ -141,7 +141,7 @@ def main():
     if not (a.bin and a.iso):
         ap.error("--bin and --iso (run) or --dir and --log (judge an existing dump)")
     if subprocess.call("pgrep -f '(^|/)(twinsanityevolved|ps2recomp_release[.0-9a-f]*)( |$)' > /dev/null", shell=True) == 0:
-        print("flicker_judge: a game process is running (one at a time, charter)")
+        print("flicker_judge: a game process is running (one at a time)")
         return 2
     out = a.out or os.path.join(ROOT, "build", "flicker_judge")
     dump, log, rc = run(a.bin, a.iso, out, fx)

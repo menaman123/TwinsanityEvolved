@@ -12,6 +12,11 @@ struct DecodedPicture {
     int width = 0;
     int height = 0;
     std::vector<uint8_t> rgba;
+    // FfmpegVideoDecoder::SetPlanarOutput (the Vita's movie textures): the picture's 4:2:0 planes as decoded, no RGBA
+    // conversion -- `planes` holds Y (width x height), then U, then V (each (width + 1) / 2 x (height + 1) / 2), packed
+    // one after the other with no row padding, and `rgba` stays empty. planar = 0: RGBA in `rgba` (the default).
+    int planar = 0;
+    std::vector<uint8_t> planes;
 };
 
 }  // namespace ps2r::ipu

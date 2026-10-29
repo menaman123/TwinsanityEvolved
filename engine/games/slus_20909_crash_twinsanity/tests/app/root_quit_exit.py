@@ -17,7 +17,7 @@ the confirm (--close 2560) and pins:
     gs_consumer, recorder_flush) and no `guest_join_abandoned`, no watchdog line.
 Arm `exit` (RootExitClean) replays the beach session with the close at --close (live gameplay) and
 pins the same close contract (shutdown_ms < 1000; every step named; no abandonment; no watchdog).
-Red-before: the user's s10 session ended in `Session shutdown exceeded 10 seconds; terminating`
+Red-before: the tester's s10 session ended in `Session shutdown exceeded 10 seconds; terminating`
 (finalized=0, no shutdown_ms) -- a run.meta without `shutdown_ms` fails both arms.
 SKIP 77 without the title files or a display (video=stub). Selftest pins the judge (no game process).
 """

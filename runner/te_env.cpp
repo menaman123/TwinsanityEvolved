@@ -8,13 +8,48 @@
 
 #include "engine/cdvd/iso_fs.h"
 #include "engine/ee/mem/main_memory.h"
+#if defined(TE_NATIVE)
+#include "te_host.h"     // GuestRanges: the valid ranges of a game pointer (defined here, set in BindGuestBlock)
+#include "te_native.h"
+#endif
 
+#if !defined(TE_NATIVE)
 extern "C" wasm_rt_memory_t* w2c_env_memory(struct w2c_env* env) { return &env->memory; }
 extern "C" struct w2c_game* te_env_instance(struct w2c_env* env) { return env->instance; }
 extern "C" wasm_rt_memory_t* te_env_memory(struct w2c_env* env) { return &env->memory; }
+#endif
 
 namespace te {
 
+#if defined(__vita__)
+// te_host.h's GuestMemory() / GuestMemorySize() on the Vita (inline reads of these)
+uint8_t* g_guest_memory_base = nullptr;
+std::size_t g_guest_memory_size = 0;
+#endif
+
+#if defined(TE_NATIVE)
+// te_host.h's valid ranges of a game pointer: the eboot's data and code segments (the linker's bounds: C++ data and the
+// guest block in .bss; code, read-only data) and the game thread's stack (set on that thread, runner/te_game.cpp)
+GuestRanges g_guest_ranges;
+}  // namespace te
+// the default linker script's bounds (CMakeLists.txt's vita_link.ld): the code segment from its start to the end of the
+// exception index (.text, .rodata, .ARM.exidx), the data segment from its first section to the end of .bss
+extern "C" char __executable_start[], __exidx_end[], __preinit_array_start[], _end[];
+namespace te {
+// The native lane (te_native.h): the guest block is the game's retail address space; te_host.h's GuestMemory() names it
+// (the diagnostics that hash or dump the 32 MB read it there) while a guest address is the native pointer itself.
+void BindGuestBlock(w2c_env& env) {
+    te::native::BindGuestBlock(env);
+    g_guest_memory_base = env.memory.data;
+    g_guest_memory_size = size_t(env.memory.size);
+    const uint32_t text = uint32_t(reinterpret_cast<uintptr_t>(__executable_start));
+    const uint32_t data = uint32_t(reinterpret_cast<uintptr_t>(__preinit_array_start));
+    g_guest_ranges.text_base = text;
+    g_guest_ranges.text_span = uint32_t(reinterpret_cast<uintptr_t>(__exidx_end)) - text;
+    g_guest_ranges.data_base = data;
+    g_guest_ranges.data_span = uint32_t(reinterpret_cast<uintptr_t>(_end)) - data;
+}
+#else
 void BindMainMemory(w2c_env& env, MainMemory& ram) {
     static_assert(MainMemory::kSize == 32u * 1024u * 1024u, "the game module is linked for a 32 MB linear memory");
     env.main_memory = &ram;
@@ -24,7 +59,12 @@ void BindMainMemory(w2c_env& env, MainMemory& ram) {
     env.memory.pages = MainMemory::kSize / 65536;      // 512
     env.memory.max_pages = env.memory.pages;           // fixed: memory.grow fails, the module never calls it
     env.memory.size = MainMemory::kSize;
+#if defined(__vita__)
+    g_guest_memory_base = env.memory.data;
+    g_guest_memory_size = env.memory.size;
+#endif
 }
+#endif
 
 uint32_t rd32(const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; }
 namespace {
@@ -77,6 +117,39 @@ bool ReadElfFromIso(const std::string& iso_path, const std::string& path_in_iso,
     return true;
 }
 
+bool ReadElfFromDisc(const IsoFs& disc, const std::string& path_in_iso, std::vector<uint8_t>& out, std::string* error) {
+    IsoFs::Entry e;
+    if (!disc.IsOpen() || !disc.Find(path_in_iso, e) || e.directory) { if (error) *error = path_in_iso + " not found on the disc"; return false; }
+    out.resize(e.size);
+    const size_t got = disc.ReadBytes(uint64_t(e.lba) * IsoFs::kSectorSize, e.size, out.data());
+    if (got != e.size) { if (error) *error = "short read of " + path_in_iso; return false; }
+    return true;
+}
+
+bool ReadRetailWords(const std::vector<uint8_t>& elf, uint32_t vaddr, uint32_t count, std::vector<uint32_t>& out) {
+    out.clear();
+    if (elf.size() < 52 || std::memcmp(elf.data(), "\x7f" "ELF", 4) != 0) return false;
+    const uint32_t phoff = rd32(&elf[28]);
+    const uint16_t phentsize = rd16(&elf[42]), phnum = rd16(&elf[44]);
+    if (phoff + size_t(phentsize) * phnum > elf.size()) return false;
+    for (uint16_t i = 0; i < phnum; ++i) {
+        const uint8_t* ph = &elf[phoff + size_t(i) * phentsize];
+        if (rd32(ph) != 1) continue;   // PT_LOAD
+        const uint32_t p_offset = rd32(ph + 4), p_vaddr = rd32(ph + 8), p_filesz = rd32(ph + 16);
+        if (vaddr < p_vaddr || uint64_t(vaddr) + uint64_t(count) * 4 > uint64_t(p_vaddr) + p_filesz) continue;
+        const size_t at = size_t(p_offset) + (vaddr - p_vaddr);
+        if (at + size_t(count) * 4 > elf.size()) return false;
+        for (uint32_t k = 0; k < count; ++k) out.push_back(rd32(&elf[at + size_t(k) * 4]));
+        return true;
+    }
+    return false;
+}
+
+#if defined(TE_NATIVE)
+PatchReport PatchRetailCodePointers(w2c_env& env, const std::vector<uint32_t>& known_function_starts) {
+    return te::native::PatchRetailCodePointers(env, known_function_starts);
+}
+#else
 PatchReport PatchRetailCodePointers(w2c_env& env, const std::vector<uint32_t>& known_function_starts) {
     PatchReport r;
     w2c_game* inst = env.instance;
@@ -113,7 +186,11 @@ PatchReport PatchRetailCodePointers(w2c_env& env, const std::vector<uint32_t>& k
     }
     return r;
 }
+#endif
 
+#if defined(TE_NATIVE)
+}  // namespace te
+#else
 // ---- vtable slot thunks -------------------------------------------------------------------------------------------
 // The host table generated after the link (tools/gen_vtable_thunks.py --host-out)
 struct te_vt_slot_row { uint32_t vtable; uint16_t slot; uint16_t sig; const char* const* types[4]; uint32_t ntypes; };
@@ -301,3 +378,4 @@ extern "C" int te_call_void_callback(uint32_t index) {
     reinterpret_cast<void (*)(void*)>(ref.func)(ref.module_instance);
     return 1;
 }
+#endif   // !TE_NATIVE (the module's tables, thunks, adapters and callbacks: te_native.cpp on the native lane)

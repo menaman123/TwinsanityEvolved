@@ -11,7 +11,7 @@ the DMAC->VIF->GIF parse and the GS register model's aliasing lanes) is what the
 player saw before; this pin judges the owned pass on what the player sees: the
 presenter's OUTPUT image.
 
-The leg is the RootShadowLevelEntry route (the user's s3 recording: title -> New Game
+The leg is the RootShadowLevelEntry route (the tester's s3 recording: title -> New Game
 -> the first level -> Crash idle on the beach at frame 7000) with the player's
 composition it was measured on (video.scale=2 stated explicitly -- the compiled play
 default is 1 -- and the deterministic fields stated one by one) and judges:
@@ -36,7 +36,7 @@ Red before (the same binary with `--set hle.graphics_screen=off`, the model arm)
 far band's luminance stays below FAR_LUM_MIN and the census reads model_calls>0 --
 both fail (FAIL (8): selection, model_calls, replaced, scene passes, four frame
 stats). TRANSITIONAL: the margin is ~1 luminance unit; a route frame with sky in view
-(a colour-direction judgement with a 30 % pull) is the follow-up named in the HANDOFF.
+(a colour-direction judgement with a 30 % pull) is the follow-up.
 `--selftest` judges fake runs.
 """
 import argparse
@@ -73,7 +73,7 @@ PALETTE_FIRST = {0: (0x34, 0x00, 0xf7), 1: (0x00, 0x00, 0x00), 2: (0xa5, 0xeb, 0
 # arm 58.63 / 58.39 (the model's aliasing lanes draw this fog too, ~1 % weaker, with a bright
 # line at the horizon). The pin sits between the arms. It is TRANSITIONAL: the discriminating
 # margin is about one luminance unit because no sky (index 0: a 30 % pull) is in view on this
-# route's pin frames; a frame with sky in view is the follow-up (see the HANDOFF).
+# route's pin frames; a frame with sky in view is the follow-up.
 FAR_LUM_MIN = 59.1
 # The model arm's measured far-band luminance (p7000), quoted in the result line as the baseline.
 MODEL_ARM_LUM = 58.63

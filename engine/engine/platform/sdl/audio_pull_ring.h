@@ -3,7 +3,10 @@
 //
 // Cross-thread contract (the determinism boundary):
 //   * Push() is called by ONE producer (the EE boundary thread) with the 800
-//     stereo frames the mixer produced for one vsync (48000 Hz / 60).
+//     stereo frames the mixer produced for one vsync (48000 Hz / 60). A play
+//     host may hand the producer role between threads (its game thread and
+//     the device thread's refill, SdlAudioSink::SetRefill) provided every
+//     Push/Prime runs under that host's own lock: one producer at a time.
 //   * Pull() is called by ONE consumer (the SDL device callback) for whatever
 //     chunk the device asks for (512 frames per callback at the sink's spec).
 //   * Neither side ever blocks or waits on the other. A full ring drops its

@@ -1,0 +1,166 @@
+{
+  "judge": "launcher_settings_judge",
+  "description": "Every Settings row of the launcher round-trips through the game folder's ps2r.ini (written through the launcher's model, read from the file, read back through the model; a value the game's menu writes is what the row shows after a reload), under the key the game itself writes or reads. menu = 'written': the key is written by the game's Options menu (a SettingsFile::Set / Persist call in the listed sources); 'readme': a documented key the game reads (the README's key list); 'folder': a game folder key (relative to the folder when inside it). The two language rows are DERIVED: the text languages of the disc the game starts with by content plus the language packs in the game folder's mods folder that fit it, and its speech banks; their values are the PAL disc's (with the repo's mods/arabic): 14 rows in the manifest (13 judged here and the disc row).",
+  "settings_file": "Games/Crash Twinsanity/ps2r.ini",
+  "rows": [
+    {
+      "key": "game.text_language",
+      "label": "Text language",
+      "kind": "choice",
+      "values": [
+        "english",
+        "portuguese",
+        "french",
+        "german",
+        "italian",
+        "arabic"
+      ],
+      "choices_from": "text_languages",
+      "menu": "written"
+    },
+    {
+      "key": "game.speech_language",
+      "label": "Speech language",
+      "kind": "choice",
+      "values": [
+        "english",
+        "french",
+        "german",
+        "spanish",
+        "italian"
+      ],
+      "choices_from": "speech_languages",
+      "menu": "written"
+    },
+    {
+      "key": "game.hz",
+      "label": "Game rate",
+      "kind": "choice",
+      "values": [
+        "60",
+        "50"
+      ],
+      "menu": "written"
+    },
+    {
+      "key": "video.aspect",
+      "label": "Aspect ratio",
+      "kind": "choice",
+      "values": [
+        "auto",
+        "4:3",
+        "16:9",
+        "16:10",
+        "21:9"
+      ],
+      "menu": "written"
+    },
+    {
+      "key": "video.scale",
+      "label": "Internal scale",
+      "kind": "choice",
+      "values": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "menu": "written"
+    },
+    {
+      "key": "video.texture_filter",
+      "label": "Texture filter",
+      "kind": "choice",
+      "values": [
+        "title",
+        "point",
+        "bilinear"
+      ],
+      "menu": "written"
+    },
+    {
+      "key": "video.fullscreen",
+      "label": "Window",
+      "kind": "choice",
+      "values": [
+        "windowed",
+        "fullscreen",
+        "borderless"
+      ],
+      "menu": "written"
+    },
+    {
+      "key": "video.vsync",
+      "label": "Vertical sync",
+      "kind": "switch",
+      "values": [
+        "off",
+        "on"
+      ],
+      "menu": "written"
+    },
+    {
+      "key": "video.frame_rate",
+      "label": "Frame rate",
+      "kind": "choice",
+      "values": [
+        "30",
+        "60",
+        "120",
+        "144",
+        "240",
+        "uncapped"
+      ],
+      "menu": "written"
+    },
+    {
+      "key": "display.fps_counter",
+      "label": "FPS counter",
+      "kind": "switch",
+      "values": [
+        "off",
+        "on"
+      ],
+      "menu": "written"
+    },
+    {
+      "key": "display.tick_lock",
+      "label": "Frame rate on PS Vita",
+      "kind": "choice",
+      "values": [
+        "auto",
+        "60",
+        "30"
+      ],
+      "menu": "readme"
+    },
+    {
+      "key": "paths.memcards",
+      "label": "Memory cards",
+      "kind": "folder",
+      "default": "memcards",
+      "menu": "folder"
+    },
+    {
+      "key": "paths.mods",
+      "label": "Mods",
+      "kind": "folder",
+      "default": "mods",
+      "menu": "folder"
+    }
+  ],
+  "menu_sources": [
+    "platform/nativeee/host/display.cpp",
+    "platform/nativeee/host/language.cpp",
+    "platform/nativeee/host/mods.cpp"
+  ],
+  "readme": "README.md",
+  "language_packs": "mods",
+  "legacy": {
+    "value": "arabic+french",
+    "read_text": "arabic",
+    "read_speech": "french",
+    "written_speech": "german"
+  },
+  "frozen": "2026-10-27: game.language's row is replaced by game.text_language and game.speech_language, derived from the disc and the packs, round-tripped through their own choices (text arabic and speech french among them); the legacy 'arabic+french' reads as the two rows and a change writes both keys and drops it. RED on 43e9989 (one static Language row: no game.text_language / game.speech_language rows), GREEN on its change."
+}

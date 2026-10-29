@@ -23,6 +23,15 @@
 
 extern "C" unsigned char __heap_base[];
 
+#if defined(TE_NATIVE)
+// The Vita's native build (runner/te_native.h): the game's retail address space is te_guest_block (retail address X at
+// te_guest_block + X), so the fixed addresses below are the block's -- the same offsets, in native memory
+extern "C" unsigned char te_guest_block[];
+#define TE_RETAIL_ADDRESS(x) (reinterpret_cast<u32>(te_guest_block) + (x))
+#else
+#define TE_RETAIL_ADDRESS(x) (x)
+#endif
+
 namespace
 {
 constexpr u32 MemorySize = 0x2000000;
@@ -34,23 +43,33 @@ constexpr u32 HeapReserve = 0x2800;
 // so every pad log and judge recorded on it replays bit for bit. Since the heap layout was frozen the C++'s data sits BELOW the retail image
 // (tools/link_wasm.py) and __heap_base is the image's end 0x3DB200 for good; the bytes 0x3DB200..0x3F6490 are the C library's
 // (dlmalloc over Sbrk: nothing is allocated there before the pools), then the pools.
-constexpr u32 FixedPoolStart = 0x3F6480;
+constexpr u32 FixedPoolStartRetail = 0x3F6480;
+
+inline u32 MemoryEnd()
+{
+    return TE_RETAIL_ADDRESS(MemorySize);
+}
+
+inline u32 FixedPoolStart()
+{
+    return TE_RETAIL_ADDRESS(FixedPoolStartRetail);
+}
 
 u32 PoolStart()
 {
     u32 now = reinterpret_cast<u32>(RetailLibc::Sbrk(0));
-    return now < FixedPoolStart ? FixedPoolStart : now;
+    return now < FixedPoolStart() ? FixedPoolStart() : now;
 }
 }
 
 extern "C" void* EndOfHeap(void)
 {
-    return reinterpret_cast<void*>(MemorySize);
+    return reinterpret_cast<void*>(MemoryEnd());
 }
 
 u32 Platform::Memory::PoolSpace()
 {
-    return MemorySize - (PoolStart() + HeapReserve);
+    return MemoryEnd() - (PoolStart() + HeapReserve);
 }
 
 void* Platform::Memory::AllocatePool(u32 size)
@@ -60,9 +79,9 @@ void* Platform::Memory::AllocatePool(u32 size)
     {
         moved = true;
         u32 now = reinterpret_cast<u32>(RetailLibc::Sbrk(0));
-        if (now < FixedPoolStart)
+        if (now < FixedPoolStart())
         {
-            RetailLibc::Sbrk(static_cast<s32>(FixedPoolStart - now));
+            RetailLibc::Sbrk(static_cast<s32>(FixedPoolStart() - now));
         }
     }
 

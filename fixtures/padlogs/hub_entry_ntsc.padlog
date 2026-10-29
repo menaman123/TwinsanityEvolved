@@ -1,0 +1,21 @@
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# the North American disc (SLUS-20909): the inputs of hub_entry.padlog, each 18 boundaries later -- this disc reaches its
+# title 18 boundaries after the European one (Title at 1280 vs 1262 with --skip-movies: its loads read other sectors), so the
+# European log's START (1273) would land on the loading screen; every state of the route follows 18 boundaries later
+# language-bank=0  -- recorded against the disc's slot-0 text bank (the replay pins it)
+1 0000 128 128 128 128  # NONE
+1291 0008 128 128 128 128  # START
+1296 0000 128 128 128 128  # NONE
+1424 4000 128 128 128 128  # CROSS
+1429 0000 128 128 128 128  # NONE
+1724 0010 128 128 128 128  # UP
+1727 0000 128 128 128 128  # NONE
+1824 4000 128 128 128 128  # CROSS
+1827 0000 128 128 128 128  # NONE
+2074 0040 128 128 128 128  # DOWN
+2077 0000 128 128 128 128  # NONE
+2144 4000 128 128 128 128  # CROSS
+2147 0000 128 128 128 128  # NONE
+2627 4000 128 128 128 128  # CROSS
+2630 0000 128 128 128 128  # NONE
+# end at boundary 4928

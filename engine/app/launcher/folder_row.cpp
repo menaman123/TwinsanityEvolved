@@ -2,6 +2,7 @@
 #include "folder_row.h"
 #include <QDesktopServices>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -36,6 +37,8 @@ FolderRow::FolderRow(const QString& label, QWidget* parent) : QWidget(parent) {
     relayout();
 }
 
+QString FolderRow::labelText() const { return label_->text(); }
+
 QString FolderRow::openInFileManagerLabel() {
 #ifdef Q_OS_MACOS
     return QStringLiteral("Open in Finder");
@@ -48,7 +51,9 @@ QString FolderRow::openInFileManagerLabel() {
 
 void FolderRow::revealInFileManager(const QString& path) {
     if (path.isEmpty()) return;
-    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    // a file is shown in its folder, never opened (a disc image would be mounted)
+    const QFileInfo fi(path);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(fi.isDir() || !fi.exists() ? path : fi.absolutePath()));
 }
 
 void FolderRow::setPath(const QString& path) {

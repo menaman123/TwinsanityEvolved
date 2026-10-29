@@ -20,6 +20,7 @@
 #include "engine/vu/hle/vu1_hle_contract.h"
 #include "games/slus_20909_crash_twinsanity/vu1_library/zero_kick.h"
 #include "graphics_internal.h"
+#include "te_prof.h"
 #include "ps2e_seam.h"
 #include "te_gfx_layout.h"
 #include "te_host.h"
@@ -97,13 +98,23 @@ uint64_t GifDescriptors(std::initializer_list<uint32_t> regs) {
 namespace {
 struct Vertex { float x, y, z, u, v; uint8_t r, g, b, a; bool kick; };
 
+// The last three vertices of a strip, oldest first (a fixed queue: no allocation per packet)
+struct Queue {
+    Vertex v[3];
+    unsigned size = 0;
+    void Push(const Vertex& x) {
+        if (size < 3) { v[size++] = x; return; }
+        v[0] = v[1];
+        v[1] = v[2];
+        v[2] = x;
+    }
+};
 // The GS strip assembly (VertexKick::AssembleStrip): a vertex without ADC draws the triangle of the last three
-void Assemble(std::vector<Vertex>& queue, unsigned& parity, const Vertex& v, std::vector<ps2e_draw_vertex>& out, float tw, float th, bool textured) {
-    queue.push_back(v);
-    while (queue.size() > 3) queue.erase(queue.begin());
+void Assemble(Queue& queue, unsigned& parity, const Vertex& v, std::vector<ps2e_draw_vertex>& out, float tw, float th, bool textured) {
+    queue.Push(v);
     if (!v.kick) { parity = 0; return; }
-    if (queue.size() != 3) return;
-    const Vertex* q[3] = {&queue[0], &queue[1], &queue[2]};
+    if (queue.size != 3) return;
+    const Vertex* q[3] = {&queue.v[0], &queue.v[1], &queue.v[2]};
     if (parity % 2) std::swap(q[0], q[1]);
     const bool degenerate = (q[0]->x == q[1]->x && q[0]->y == q[1]->y) || (q[1]->x == q[2]->x && q[1]->y == q[2]->y) ||
                             (q[0]->x == q[2]->x && q[0]->y == q[2]->y);
@@ -133,7 +144,7 @@ bool te::gfx::LowerPackedPacket(const std::vector<uint8_t>& packet, float offX, 
     if (flg != 0) return false;
     const uint64_t regs = uint64_t(word(0, 2)) | uint64_t(word(0, 3)) << 32;
     if (packet.size() < 16 + size_t(nloop) * nregs * 16) return false;
-    std::vector<Vertex> queue;
+    Queue queue;
     unsigned parity = 0;
     Vertex v{};
     size_t qw = 1;
@@ -178,8 +189,25 @@ struct Image {
     void SetQw(uint32_t qw, const void* bytes16) { std::memcpy(&memory[qw * 16], bytes16, 16); }
 };
 
+// TE_AB=particlefull (graphics.cpp AbToggle): the previous path for an in-run A/B -- the whole image zeroed per block
+// and the full RunCCont (its working copy and MAC / STATUS chain); the same kicks
+std::atomic<bool> g_particleFull{false};
 bool RunBlock(const uint8_t* block, const GuestTable& table, const float (*matrix)[4], float time, std::vector<std::vector<uint8_t>>& kicks) {
-    Image img;
+    static const unsigned short profPrep = te::prof::Register("particle: block image"), profStub = te::prof::Register("particle: VU stub (RunC)"),
+                                profEmit = te::prof::Register("particle: VU emitter (RunCCont)");
+    te::prof::Scope scope(profPrep);
+    // One image per thread, all zero when made. A block's run writes only the stub's QW9 and the four output packets (the
+    // emitter's stores are its packets' quadwords: the node list below fixes them); everything else written here is
+    // rewritten whole, at the same places, for every block. Zeroing those two again leaves the image a fresh one would be
+    // (the 16 KB fill per block was the larger part of the set-up).
+    thread_local Image img;
+    const bool full = g_particleFull.load(std::memory_order_relaxed);
+    if (full) {
+        std::fill(img.memory.begin(), img.memory.end(), uint8_t(0));
+    } else {
+        std::memset(&img.memory[9 * 16], 0, 16);
+        std::memset(&img.memory[size_t(kPacketBase) * 16], 0, size_t(4 * kPacketStride) * 16);
+    }
     for (uint32_t r = 0; r < 4; ++r) img.SetQw(kVuMatrixAddress + r, matrix[r]);
     const float head[4] = {kParticleNearClip, table.gravity, table.unused18, time};
     img.SetQw(kVuHeadAddress, head);
@@ -207,18 +235,30 @@ bool RunBlock(const uint8_t* block, const GuestTable& table, const float (*matri
     in.itop = in.itops = 0;
     in.regs = &regs;
     Vu1HleOutput stub;
-    if (!ZeroKick::RunC(in, stub) || !stub.has_regs || stub.regs.TPC != kClassCTpc) return false;
+    {
+        te::prof::Scope stubScope(profStub);
+        if (!ZeroKick::RunC(in, stub) || !stub.has_regs || stub.regs.TPC != kClassCTpc) return false;
+    }
     for (const auto& w : stub.data_writes)
         if (w.addr + w.bytes.size() <= img.memory.size()) std::memcpy(&img.memory[w.addr], w.bytes.data(), w.bytes.size());
     VUregs entry = stub.regs;
     in.regs = &entry;
     in.start_pc = kClassCTpc;
+    in.data_writes = false;   // only the kicks are read (the image is rebuilt for the next block)
     Vu1HleOutput run;
-    if (!ZeroKick::RunCCont(in, run)) return false;
+    {
+        te::prof::Scope emitScope(profEmit);
+        // the kicks alone, the program over this image in place (RunCCont's packets without its working copy and flags)
+        if (!(full ? ZeroKick::RunCCont(in, run) : ZeroKick::RunCContKicks(in, img.memory.data(), run))) return false;
+    }
     kicks = std::move(run.kicks);
     return true;
 }
 }  // namespace
+
+namespace te::gfx {
+void SetParticleFull(bool on) { g_particleFull.store(on, std::memory_order_relaxed); }
+}
 
 extern "C" {
 
@@ -357,6 +397,7 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
             for (int c = 0; c < 4; ++c) m16[size_t(r * 4 + c)] = matrix[r][c];
         te::gfx::DeferredBuild& build = te::gfx::ReserveDeferred(bucket, state);
         te::gfx::PostBuild(build, [&build, blocks = std::move(blocks), table = *t, m16, time, offX, offY, tw, th, textured] {
+            TE_PROF_SCOPE("particle build");
             thread_local std::vector<std::vector<uint8_t>> kicks;
             thread_local std::vector<ps2e_draw_vertex> verts;
             const auto* mat = reinterpret_cast<const float(*)[4]>(m16.data());
@@ -367,7 +408,10 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
                     break;
                 }
                 verts.clear();
-                for (const auto& packet : kicks) te::gfx::LowerPackedPacket(packet, offX, offY, tw, th, textured, verts);
+                {
+                    TE_PROF_SCOPE("particle: lower packets");
+                    for (const auto& packet : kicks) te::gfx::LowerPackedPacket(packet, offX, offY, tw, th, textured, verts);
+                }
                 const size_t n = verts.size() / 3 * 3;
                 if (!n) continue;
                 build.verts.insert(build.verts.end(), verts.begin(), verts.begin() + std::ptrdiff_t(n));

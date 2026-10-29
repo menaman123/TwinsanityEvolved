@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tools/ci/release_dist.sh -- the ONE command behind the release workflow's macOS and Linux jobs, and the local
-# reproduction of either (charter: CI workflows are authored AND run locally through their scripts).
+# reproduction of either (CI workflows are authored AND run locally through their scripts).
 #
 #   tools/ci/release_dist.sh [--build-dir DIR] [--dist-dir DIR] [--jobs N] [--system-deps] [--lto] [--no-fetch]
 #                            [--skip-build] [--no-zip] [--iso IMAGE]
@@ -14,7 +14,8 @@
 #      the artifact then carries NO lib/ folder. --system-deps = the development shape (Homebrew / apt packages,
 #      bundled into lib/ with their rpaths rewritten; REFUSED to ship when the bundled libavcodec is a GPL build);
 #   3. configure + build the runner (cmake -G Ninja, Release; TE_LTO under --lto);
-#   4. stage dist/<platform>/: twinsanityevolved, BUILD-ID, README.md (the user half), LICENSE (MIT),
+#   4. stage dist/<platform>/: twinsanityevolved, twinsanityevolved-modtool, BUILD-ID, README.md (the player half),
+#      RELEASE-NOTES.txt (what the README's What's new links), LICENSE (MIT),
 #      THIRD_PARTY_NOTICES.md + licenses/ (the engine's committed texts + the FFmpeg
 #      build-configuration proof read from WHAT WAS LINKED), fixtures/padlogs/ (inputs only: no game data);
 #   5. the asset scan over the staged folder (tools/ci/asset_scan.py ROOT=dist: zero findings);
@@ -64,7 +65,7 @@ step "host: $PLATFORM ($(nproc 2>/dev/null || sysctl -n hw.ncpu) cpus); build $B
 free_gb=$(df -g "$ROOT" 2>/dev/null | awk 'NR==2{print $4}' || df -BG "$ROOT" | awk 'NR==2{gsub("G","",$4); print $4}')
 min_free_gb="${TE_MIN_FREE_GB:-15}"
 echo "free: ${free_gb} GB (floor ${min_free_gb} GB)"
-if [ "$free_gb" -lt "$min_free_gb" ]; then echo "release_dist: < ${min_free_gb} GB free -- prune first (charter)"; exit 3; fi
+if [ "$free_gb" -lt "$min_free_gb" ]; then echo "release_dist: < ${min_free_gb} GB free -- prune first"; exit 3; fi
 
 if [ "$SKIP_BUILD" = 0 ]; then
   if [ "$FETCH" = 1 ]; then
@@ -84,7 +85,7 @@ if [ "$SKIP_BUILD" = 0 ]; then
   mkdir -p "$BUILD"; mv "$BUILD.configure.log" "$BUILD/configure.log"
   grep -E "SDL2|FFmpeg|LTO|TwinsanityEvolved:" "$BUILD/configure.log" | head -12 || true
   step "build (game wasm, wasm2c, engine libs, runner)"
-  if ! cmake --build "$BUILD" ${JOBS:+-j "$JOBS"} --target twinsanityevolved > "$BUILD/build.log" 2>&1; then
+  if ! cmake --build "$BUILD" ${JOBS:+-j "$JOBS"} --target twinsanityevolved twinsanityevolved-modtool > "$BUILD/build.log" 2>&1; then
     grep -n -A 30 "FAILED:" "$BUILD/build.log" | head -120; exit 1   # the failed step's own output (a linker's undefined references)
   fi
   echo "build OK -- warning: $(grep -c 'warning:' "$BUILD/build.log" || true)"
@@ -96,6 +97,10 @@ BIN="$BUILD/twinsanityevolved"
 step "stage ($DIST)"
 rm -rf "$DIST"; mkdir -p "$DIST/lib" "$DIST/licenses" "$DIST/fixtures"
 cp "$BIN" "$DIST/twinsanityevolved"
+# the mod importer on the command line (the launcher's Mods page uses the same library): system libraries only
+MODTOOL="$BUILD/twinsanityevolved-modtool"
+[ -x "$MODTOOL" ] || { echo "release_dist: no mod tool at $MODTOOL (build first)" >&2; exit 1; }
+cp "$MODTOOL" "$DIST/twinsanityevolved-modtool"
 # BUILD-ID: the runner's build id (the save-state format key) + the three trees' commits.
 {
   echo "twinsanityevolved $(git -C "$ROOT" rev-parse --short=12 HEAD) ($PLATFORM)"
@@ -105,11 +110,21 @@ cp "$BIN" "$DIST/twinsanityevolved"
   echo "built   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$DIST/BUILD-ID"
 cat "$DIST/BUILD-ID"
-# The user half of README.md: from the top to the first "## Build" heading.
+# The player half of README.md: from the top to the first "## Build" heading.
 awk '/^## Build/ {exit} {print}' "$ROOT/README.md" > "$DIST/README.md"
+cp "$ROOT/RELEASE-NOTES.txt" "$DIST/RELEASE-NOTES.txt"   # the README's What's new links it
 cp "$ROOT/LICENSE" "$DIST/LICENSE"
 # Pad logs are recorded inputs (no game data) -- the fixtures a user replays the recorded routes with.
 cp -R "$ROOT/fixtures/padlogs" "$DIST/fixtures/padlogs"
+# The repository's own mods (mods/<id>/mod.json: today the Arabic text-only language -- our translation and our glyphs, no disc
+# data; the asset scan below covers them). The launcher places them into the game folder's mods/ when they are not there yet;
+# a player without the launcher copies mods/<id> beside the game (the Vita: ux0:data/twinsanity/mods/<id>).
+for m in "$ROOT"/mods/*/; do
+  id=$(basename "$m")
+  [ -f "$m/mod.json" ] || continue
+  grep -Eq '"kind": *"builtin"|"api": *"c"' "$m/mod.json" && continue   # the C mods (level_select, speedrun) are compiled in
+  mkdir -p "$DIST/mods/$id" && cp -R "$m"/. "$DIST/mods/$id/"
+done
 
 # --- bundled runtime libraries: the non-system dynamic closure of the binary (empty under TE_DIST) ---
 is_system_lib() {
@@ -141,7 +156,7 @@ bundle_macos() {
     [ -n "$rp" ] && install_name_tool -delete_rpath "$rp" "$DIST/twinsanityevolved" 2>/dev/null || true
   done < <(otool -l "$DIST/twinsanityevolved" | awk '/LC_RPATH/ {getline; getline; print $2}')
   install_name_tool -add_rpath "@executable_path/lib" "$DIST/twinsanityevolved"
-  for f in "$DIST"/lib/* "$DIST/twinsanityevolved"; do [ -e "$f" ] && codesign --force --sign - "$f" >/dev/null 2>&1 || true; done
+  for f in "$DIST"/lib/* "$DIST/twinsanityevolved" "$DIST/twinsanityevolved-modtool"; do [ -e "$f" ] && codesign --force --sign - "$f" >/dev/null 2>&1 || true; done
 }
 bundle_linux() {
   local queue=("$DIST/twinsanityevolved")

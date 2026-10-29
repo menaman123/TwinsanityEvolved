@@ -1,8 +1,10 @@
 // app/launcher/app_data.cpp -- the app-data folder and launcher.json.
 #include "app_data.h"
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QProcessEnvironment>
 #include <QSaveFile>
@@ -11,18 +13,28 @@ namespace ps2r::launcher {
 QString AppData::homePath() {
     const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
 #ifdef Q_OS_WIN
-    const QString p = env.value("USERPROFILE");
+    const QString p = env.value("USERPROFILE");   // lint: not-ui
 #else
-    const QString p = env.value("HOME");
+    const QString p = env.value("HOME");   // lint: not-ui
 #endif
     return p.isEmpty() ? QDir::homePath() : QDir::cleanPath(p);
+}
+
+QString AppData::launcherDir() {
+    // the folder the user keeps the launcher in: beside the .app on macOS, beside the executable elsewhere
+    QString dir = QCoreApplication::applicationDirPath();
+#ifdef Q_OS_MACOS
+    const int app = dir.lastIndexOf(QStringLiteral(".app/Contents/MacOS"));
+    if (app >= 0) dir = QFileInfo(dir.left(app + 4)).absolutePath();
+#endif
+    return QDir::cleanPath(dir);
 }
 
 AppData::AppData(const QString& productFolder) {
 #ifdef Q_OS_MACOS
     root_ = homePath() + "/Library/Application Support/" + productFolder;
 #elif defined(Q_OS_WIN)
-    QString local = QProcessEnvironment::systemEnvironment().value("LOCALAPPDATA");
+    QString local = QProcessEnvironment::systemEnvironment().value("LOCALAPPDATA");   // lint: not-ui
     if (local.isEmpty()) local = homePath() + "/AppData/Local";
     root_ = QDir::cleanPath(local) + "/" + productFolder;
 #else
@@ -31,25 +43,18 @@ AppData::AppData(const QString& productFolder) {
     loadState();
 }
 
-QString AppData::toolchainDir() const { return root_ + "/Toolchain"; }
-QString AppData::sourcesDir() const { return root_ + "/Sources"; }
-QString AppData::buildsDir() const { return root_ + "/Builds"; }
 QString AppData::logsDir() const { return root_ + "/Logs"; }
 QString AppData::downloadsDir() const { return root_ + "/Downloads"; }
-QString AppData::defaultGamesDir() const { return root_ + "/Games"; }
-QString AppData::defaultModsDir() const { return root_ + "/Mods"; }
-QString AppData::sourceDir(const QString& titleId) const { return sourcesDir() + "/" + titleId; }
-QString AppData::buildDir(const QString& titleId, const QString& targetId) const { return buildsDir() + "/" + titleId + "/" + targetId; }
 QString AppData::statePath() const { return root_ + "/launcher.json"; }
 
 QString AppData::logPath(const QString& step) const {
     return logsDir() + "/" + step + "-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".log";
 }
 
-QString AppData::expand(const QString& path, const QString& gamesDir) const {
+QString AppData::expand(const QString& path) const {
     QString p = path;
     p.replace("${app_data}", root_);
-    p.replace("${games}", gamesDir.isEmpty() ? defaultGamesDir() : gamesDir);
+    p.replace("${launcher}", launcherDir());
     if (p == "~") p = homePath();
     else if (p.startsWith("~/")) p = homePath() + p.mid(1);
     return QDir::cleanPath(p);
@@ -59,11 +64,11 @@ QString AppData::shortPath(const QString& path) {
     const QString home = homePath();
     if (path == home) return "~";
     if (path.startsWith(home + "/")) return "~" + path.mid(home.size());
-    return path;
+    return QDir::toNativeSeparators(path);
 }
 
 bool AppData::ensureFolders(QString* error) const {
-    for (const QString& d : {root_, toolchainDir(), sourcesDir(), buildsDir(), logsDir(), downloadsDir(), defaultGamesDir(), defaultModsDir()}) {
+    for (const QString& d : {root_, logsDir(), downloadsDir()}) {
         if (!QDir().mkpath(d)) {
             if (error) *error = QStringLiteral("cannot create %1").arg(d);
             return false;
@@ -84,6 +89,7 @@ QJsonValue AppData::value(const QString& key, const QJsonValue& fallback) const 
 }
 
 void AppData::setValue(const QString& key, const QJsonValue& value) { state_.insert(key, value); }
+void AppData::remove(const QString& key) { state_.remove(key); }
 
 bool AppData::save(QString* error) const {
     if (!QDir().mkpath(root_)) {

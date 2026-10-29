@@ -12,6 +12,9 @@ ps2e_draw* te_graphics_device(void);
 // Every ps2e_draw call on that device other than from the frame itself goes through here: fn(user) runs on the
 // graphics side's render thread when there is one (the GL context lives there) and waits for it, else inline.
 void te_graphics_on_render(void (*fn)(void* user), void* user);
+// The same, posted and NOT waited for: fn(user) runs on the render thread after the work posted before it and before
+// the next frame handed to it (inline when there is no render thread); fn owns user (frees it).
+void te_graphics_post_render(void (*fn)(void* user), void* user);
 // A textured quad over the frame pixels [x0,x1) x [y0,y1) (u/v fractions of the texture) into the movies bucket, drawn
 // at the next Present as the picture is: the texture's colours as they are, no blending, in front of everything.
 void te_graphics_record_movie_quad(uint32_t texture, float x0, float y0, float x1, float y1, float u0, float v0, float u1,

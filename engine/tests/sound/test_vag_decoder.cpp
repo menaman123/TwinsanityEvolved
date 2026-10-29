@@ -184,6 +184,39 @@ static void TestNibbleOrder() {
     CHECK(out[1] == 2 << 12);
 }
 
+// DecodeBlock (the nibble's scaling as the exact multiply) against DecodeBlockReference (the division form it replaced):
+// every header byte (all shifts and filters, the malformed ones included) x 256 byte patterns x 9 histories, then chained
+// pseudo-random blocks -- the samples, the flags and the history after each block identical.
+static const unsigned kEquivalenceBlocks = 256u * 256u * 9u + 200000u;
+static void TestMultiplyFormMatchesReference() {
+    static const int32_t histories[9] = {0, 1, -1, 32767, -32768, 12345, -23456, 32767, -32768};
+    int mismatches = 0;
+    for (int header = 0; header < 256; ++header)
+        for (int byte = 0; byte < 256; ++byte)
+            for (int h = 0; h < 9; ++h) {
+                uint8_t block[16];
+                block[0] = static_cast<uint8_t>(header);
+                block[1] = static_cast<uint8_t>(byte * 7);
+                for (int i = 2; i < 16; ++i) block[i] = static_cast<uint8_t>(byte ^ (i * 37));
+                History a{histories[h], histories[(h + 3) % 9]}, b = a;
+                int16_t out_a[28], out_b[28];
+                const uint8_t flags_a = VagDecoder::DecodeBlockReference(block, a, out_a);
+                const uint8_t flags_b = VagDecoder::DecodeBlock(block, b, out_b);
+                if (flags_a != flags_b || std::memcmp(out_a, out_b, sizeof out_a) != 0 || a.h1 != b.h1 || a.h2 != b.h2) ++mismatches;
+            }
+    uint32_t seed = 0x12345678u;
+    History a, b;
+    for (int k = 0; k < 200000; ++k) {
+        uint8_t block[16];
+        for (int i = 0; i < 16; ++i) { seed = seed * 1664525u + 1013904223u; block[i] = static_cast<uint8_t>(seed >> 24); }
+        int16_t out_a[28], out_b[28];
+        const uint8_t flags_a = VagDecoder::DecodeBlockReference(block, a, out_a);
+        const uint8_t flags_b = VagDecoder::DecodeBlock(block, b, out_b);
+        if (flags_a != flags_b || std::memcmp(out_a, out_b, sizeof out_a) != 0 || a.h1 != b.h1 || a.h2 != b.h2) ++mismatches;
+    }
+    CHECK(mismatches == 0);
+}
+
 static void TestAllSignedNibblesAndShifts() {
     // Exhaust all 4-bit signed codes, including -8/-1/+7, at every legal
     // shift and both positions. These are integer mathematical expectations,
@@ -219,10 +252,12 @@ int main() {
     TestFlagPassthrough();
     TestNibbleOrder();
     TestAllSignedNibblesAndShifts();
+    TestMultiplyFormMatchesReference();
     if (g_failures) {
         std::printf("test_vag_decoder: %d FAILURES\n", g_failures);
         return 1;
     }
-    std::printf("test_vag_decoder: all vectors passed (11 cases; 208 signed-nibble/shift pairs)\n");
+    std::printf("test_vag_decoder: all vectors passed (12 cases; 208 signed-nibble/shift pairs; DecodeBlock == DecodeBlockReference on %u blocks)\n",
+                kEquivalenceBlocks);
     return 0;
 }

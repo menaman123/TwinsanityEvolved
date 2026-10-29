@@ -117,7 +117,14 @@ private:
     // A present slot's walk of its directory (Inspect) is redone once a second of boundaries while idle, and after anything
     // this storage changed: the menus poll the slot every frame, and the walk is file-system work on the game thread. An
     // absent slot is asked again at every poll (that answer costs no walk).
+#if defined(__vita__)
+    // The Vita: nothing but this process changes its card while it runs (one application at a time), so the walk is redone
+    // only after this storage's own changes -- in the emulator the walk's file-system calls took the game thread ~30 ms,
+    // one hitch a second (TE_TICK_LOG_MS: a ~45 ms tick every 60 boundaries, all of it "game")
+    static constexpr uint64_t kInspectBoundaries = UINT64_MAX;
+#else
     static constexpr uint64_t kInspectBoundaries = 60;
+#endif
     std::array<uint64_t, 4> inspected_at_{};
     std::array<bool, 4> inspected_{};
     int32_t last_submit_error_ = 0;

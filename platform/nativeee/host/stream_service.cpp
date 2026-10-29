@@ -13,6 +13,7 @@
 #include "engine/services/read_timing.h"
 #include "savestate.h"
 #include "te_host.h"
+#include "te_prof.h"
 #include "te_services.h"
 
 namespace te::stream {
@@ -211,7 +212,11 @@ bool StreamService::ReadRange(int32_t file, uint32_t offset, uint32_t size, std:
     const uint32_t clamped = offset <= file_size ? std::min<uint32_t>(size, file_size - offset) : 0;
     out.resize(clamped);
     const IsoFs* iso = Disc();
-    const std::size_t got = clamped && iso ? iso->ReadBytes(image_offset + offset, clamped, out.data()) : 0;
+    std::size_t got = 0;
+    if (clamped && iso) {
+        TE_PROF_SCOPE("disc read (stream)");
+        got = iso->ReadBytes(image_offset + offset, clamped, out.data());
+    }
     out.resize(got);
     if (got != size) ++count_.short_reads;
     return true;
@@ -221,8 +226,47 @@ bool StreamService::ReadFileBytes(int32_t file, uint32_t offset, uint32_t size, 
     return ReadRange(file, offset, size, out);
 }
 
+bool StreamService::FileRange(int32_t file, uint32_t offset, uint32_t size, uint64_t& image_byte, size_t& bytes) const {
+    uint64_t image_offset = 0;
+    uint32_t file_size = 0;
+    bytes = 0;
+    if (!FileExtent(file, image_offset, file_size)) return false;
+    bytes = ExpectedBytes(image_offset, file_size, offset, size);
+    image_byte = image_offset + offset;
+    return true;
+}
+
+size_t StreamService::ExpectedBytes(uint64_t image_offset, uint32_t file_size, uint32_t offset, uint32_t size) const {
+    // ReadRange's clamp to the file, then IsoFs::ReadBytes's to the image
+    const uint32_t clamped = offset <= file_size ? std::min<uint32_t>(size, file_size - offset) : 0;
+    const IsoFs* iso = Disc();
+    if (!clamped || !iso) return 0;
+    const uint64_t at = image_offset + offset;
+    if (at >= iso->ImageBytes()) return 0;
+    return static_cast<size_t>(std::min<uint64_t>(clamped, iso->ImageBytes() - at));
+}
+
+const std::vector<uint8_t>& StreamService::PendingBytes(const Pending& p) {
+    if (!p.read) return p.bytes;
+    te::io::Wait(p.read.get(), "a save state");
+    return p.read->bytes;
+}
+
 uint64_t StreamService::Boundary() const { return te::Services::Get().clock().BoundaryCount(); }
-double StreamService::FrameEndMs() const { return static_cast<double>(Boundary() + 1) * kFrameMs; }
+// The drive model's frame clock: the boundaries (one field each under the deterministic profile -- unchanged), except in
+// play mode on the Vita, where a boundary may span several fields (a late frame; the tick lock's 30 / 20 Hz picture ticks:
+// te_tick_lock.h) and the drive is timed by the fields the wall produced -- a load takes the same wall time at 30 as at 60.
+uint64_t StreamService::DriveFrame() const {
+#if defined(__vita__)
+    if (!te::GetSettings().deterministic) return te::Services::Get().clock().Fields();
+#endif
+    return Boundary();
+}
+// A frame of the drive's clock is one field of the game rate: 16.667 ms at 60 (as ever), 20 ms at the PAL disc's own
+// 50 Hz (game.hz = 50 / --hz 50) -- at 50 Hz every frame was credited the 60 Hz field's 16.667 ms of drive time, so a load
+// took 1.2 times its drive time in wall time (and in frames, 1.2 times the frames the PAL console took)
+double StreamService::FrameMs() { return te::GetSettings().field_hz == 50 ? 20.0 : kFrameMs; }
+double StreamService::FrameEndMs() const { return static_cast<double>(DriveFrame() + 1) * FrameMs(); }
 
 double StreamService::PendingEndMs(int32_t channel) const {
     const auto it = pending_.find(channel);
@@ -232,6 +276,15 @@ double StreamService::PendingEndMs(int32_t channel) const {
 // The bytes land: guest memory (a Read) or the audio owner's sample registry (a bank read).
 void StreamService::Land(int32_t channel, Pending& p) {
     (void)channel;
+    if (p.read) {
+        // The reader thread's bytes (it has had the frames since the issue; a wait is counted and logged by te::io)
+        te::io::Wait(p.read.get(), p.bank ? "a sound bank's landing" : "a stream read's landing");
+        if (p.read->got != p.read->size)
+            std::fprintf(stderr, "[twinsanityevolved] stream: the card gave %u of the %u bytes of #%d +0x%X\n", unsigned(p.read->got), unsigned(p.read->size),
+                         p.file, p.offset);
+        p.bytes = std::move(p.read->bytes);
+        p.read.reset();
+    }
     ++count_.delivered;
     count_.delivered_bytes += p.bytes.size();
     if (p.bank) {
@@ -255,7 +308,8 @@ void StreamService::LandPending(int32_t channel, const char* site) {
     pending_.erase(it);
     if (Trace())
         std::fprintf(stderr, "[stream] ch%d landed at %s: #%d +0x%X %zu bytes (issued @%llu, drive end %.1f ms, frame %llu)\n", channel,
-                     site, p.file, p.offset, p.bytes.size(), (unsigned long long)p.issue_boundary, p.end_ms, (unsigned long long)Boundary());
+                     site, p.file, p.offset, p.read ? p.read->size : p.bytes.size(), (unsigned long long)p.issue_boundary, p.end_ms,
+                     (unsigned long long)Boundary());
     Land(channel, p);
 }
 
@@ -279,8 +333,24 @@ void StreamService::Issue(int32_t channel, int32_t file, uint32_t offset, uint32
     uint64_t image_offset = 0;
     uint32_t file_size = 0;
     const bool known = FileExtent(file, image_offset, file_size);
-    ReadRange(file, offset, size, p.bytes);
-    if (instant_ || !known || p.bytes.empty()) {
+    size_t bytes = 0;
+    if (!instant_ && known && te::io::Async()) {
+        // Off the game thread: the reader thread reads the range now, the landing waits for it. The drive model needs only
+        // the count, which the extents give (ReadRange's clamps).
+        bytes = ExpectedBytes(image_offset, file_size, offset, size);
+        if (bytes) {
+            p.read.reset(new te::io::Job);
+            p.read->offset = image_offset + offset;
+            p.read->size = bytes;
+            p.read->site = bank ? "sound bank" : "stream";
+            te::io::Submit(p.read.get(), Disc());
+        }
+        if (bytes != size) ++count_.short_reads;
+    } else {
+        ReadRange(file, offset, size, p.bytes);
+        bytes = p.bytes.size();
+    }
+    if (instant_ || !known || bytes == 0) {
         // The instant model, or nothing to transfer (an unknown/closed file, a read past the end): complete now.
         Land(channel, p);
         return;
@@ -288,11 +358,11 @@ void StreamService::Issue(int32_t channel, int32_t file, uint32_t offset, uint32
     // The drive: issued at this frame's start, after whatever the drive is still doing; the seek from where its head
     // was, then the sectors the range covers.
     const uint64_t first = (image_offset + offset) / IsoFs::kSectorSize;
-    const uint64_t last = (image_offset + offset + p.bytes.size() - 1) / IsoFs::kSectorSize;
+    const uint64_t last = (image_offset + offset + bytes - 1) / IsoFs::kSectorSize;
     const uint32_t lba = static_cast<uint32_t>(first);
     const uint32_t sectors = static_cast<uint32_t>(last - first + 1);
-    const uint64_t tick = p.issue_boundary;
-    timing_->DueAtMs(tick, static_cast<double>(tick) * kFrameMs, lba, sectors);
+    const uint64_t tick = DriveFrame();   // (= p.issue_boundary under the deterministic profile)
+    timing_->DueAtMs(tick, static_cast<double>(tick) * FrameMs(), lba, sectors);
     p.end_ms = timing_->Capture().last_end_ms;
     if (Trace())
         std::fprintf(stderr, "[stream] ch%d issued #%d +0x%X %u bytes lba %u x%u @%llu -> drive end %.1f ms (frame edge %.1f)\n", channel, file,
@@ -355,7 +425,12 @@ int32_t StreamService::Wait(int32_t channel) {
 
 void StreamService::OnBoundary(uint64_t boundary) {
     // The frame that ended spans to boundary x frame: what the drive finished in it is in place for the next frame
-    const double ended = static_cast<double>(boundary) * kFrameMs;
+    // (the drive's frame clock: DriveFrame -- the boundary itself except in Vita play mode, where it is the fields)
+#if defined(__vita__)
+    const double ended = static_cast<double>(te::GetSettings().deterministic ? boundary : DriveFrame()) * FrameMs();
+#else
+    const double ended = static_cast<double>(boundary) * FrameMs();
+#endif
     std::vector<int32_t> due;
     for (const auto& [channel, p] : pending_) if (p.end_ms <= ended) due.push_back(channel);
     for (int32_t channel : due) {
@@ -392,8 +467,9 @@ void StreamService::Serialize(std::vector<uint8_t>& out) const {
         savestate::Put(out, p.file); savestate::Put(out, p.offset); savestate::Put(out, p.size); savestate::Put(out, p.destination);
         savestate::Put(out, uint8_t(p.bank ? 1 : 0)); savestate::Put(out, p.bank_id);
         savestate::Put(out, p.issue_boundary); savestate::Put(out, DoubleBits(p.end_ms));
-        savestate::Put(out, uint32_t(p.bytes.size()));
-        if (!p.bytes.empty()) savestate::PutBytes(out, p.bytes.data(), p.bytes.size());
+        const std::vector<uint8_t>& bytes = PendingBytes(p);
+        savestate::Put(out, uint32_t(bytes.size()));
+        if (!bytes.empty()) savestate::PutBytes(out, bytes.data(), bytes.size());
     }
     ReadTiming::Position position;
     if (timing_) position = timing_->Capture();

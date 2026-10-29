@@ -1,0 +1,309 @@
+# arabic translation of the game's texts: id (the game's text number), sha1 of the English it translates, the translation (tokens: tools/text/bank.py; '~' a line break). Made by tools/text/translate.py.
+# id	sha1(english)	arabic
+code:000	da7a68734367828e30b94927f4c2b43ed2c0f652	إيقاف
+code:001	db3d405b10675998c030223177d42e71b4e7a312	تشغيل
+code:002	fd1286353570c5703799ba76999323b7c7447b06	لا
+code:003	fb360f9c09ac8c5edb2f18be5de4e80ea4c430d0	نعم
+code:004	61bb8d29b5be7db307cb29005bff087ebe300454	رجوع
+code:005	eee0bbba4ff92adbeb038a77df0466d660f15716	متابعة
+code:006	68caafb2fa51d2dd399a91d50650944a49f95976	أحادي
+code:007	a8cf079c641dc556ac20ac1d7c6b9cd140a59598	ستيريو
+code:008	70ec28d29679b96bad2252daf41709dc96d2a947	dolby pro logic ii
+code:009	fcd025c088e591c3e2ff674f987a36657479bc2c	لعبة جديدة
+code:010	1d302b37dc4f8bea3ced8dbdded1cf5947b9dff9	تحميل لعبة
+code:011	513f8de9259fe7658fe14d1352c54ccf070e911f	الخيارات
+code:012	e11523c5ff23fc1600aca2d8ee5adb542c5ce4b3	اللغة
+code:013	87deab04e47d3715cdbb89535f7849773a46fc8c	خيارات الرسوم
+code:014	671d5776cf1cb52b49a1594b1f4dd4ec6c0ea58e	خيارات الصوت
+code:015	e4ca546464090767a792c9f4ab9daa8373ef145f	خيارات اللعبة
+code:016	b53b7dda6727c2c11111bbacb93a2016d16c9fd9	شاشة عريضة
+code:017	36ce6f0f0e89331d091bfeab80759521f9eb2fb1	توسيط الشاشة
+code:018	d61bfe813195cd9de7c9c3b04defca3759b3cd59	صوت المؤثرات
+code:019	196bad7df9b14e24d4253ca897e17afb60faa189	صوت الموسيقى
+code:020	953a6e3f0b80bf6fec6c74fe1c71cdcca7f89a57	نوع الإخراج
+code:021	636ffe8351c14fbc270f57ceeaf7e9d95c18b8f8	الاهتزاز
+code:022	675593a7b220d34ebc59ab9af6e539aa942d2b59	إيقاف الحفظ التلقائي
+code:023	3fc771b985ccfccf05e157dbfb1c8a7c6cc7458a	الإضافات
+code:024	e1b4e5e2ff3a47cf9df76db84a553b7fdcd9a67b	اللعبة متوقفة
+code:025	98f8c4b26e1c53f75e36adca7700cea5f9a7ab09	حفظ اللعبة
+code:026	f5e2c2cea07d84401717fd572f0a61993fc51559	إنهاء اللعبة
+code:027	a2b41bbaa70d5e60853e1011e31a6488e8eac1ac	استئناف
+code:028	728c5e8f8be870b921bf735bb0f4404a23dd72b7	اختيار {CROSS}
+code:029	f77f4a8713afa8c00bcb087564c783b161abfc5a	{TRIANGLE} رجوع
+code:030	fb5e0bf8778897eebe9adf73d7112a1e1f9eec77	{LEFT} {L1} {L2}
+code:031	ee450396a38f00a8bb67a077c6edc0966fee10a2	{R1} {R2} {RIGHT}
+code:032	0bba1fe32a0a3f8d2bd1989c809187601913d468	يرجى إدخال يد تحكم تناظرية~(dualshock{REG}2) في منفذ يد~التحكم 1.
+code:033	a691c01e1ecec80ab367b6d1fc07c238238ed76f	خطأ في القرص
+code:034	e06ecf19c9dd2f9ddba44aca2426061a8fc90a17	يرجى إعادة قرص كراش~توينسانيتي لمتابعة اللعب.
+code:035	eac9301e8fa3a465952793e887ab8283740bfcae	الحفظ التلقائي مفعل
+code:036	6897b2c2d75ea9e1de9499aa6cb7368ab24a4e5b	الحفظ التلقائي معطل
+code:037	0f035a41037836ea9aada1ffb3447deb8ebe3eb2	لتفعيل الحفظ التلقائي، عد إلى قائمة~الإيقاف واحفظ اللعبة من جديد.
+code:038	d9ec17738a6607be3b3e94f6fb175790eb2076cd	استخدم أزرار الاتجاه أو العصا~التناظرية اليسرى على يد التحكم~التناظرية (dualshock{REG}2) في منفذ~يد التحكم 1 لضبط موضع الشاشة.
+code:039	56348d503d5c5168fcd54707a27b82adde5b3546	جار فحص بطاقة الذاكرة (ps2) في~فتحة بطاقة الذاكرة 1.{PARA}لا تنزع بطاقة الذاكرة (ps2) أو يد~التحكم، ولا تعد ضبط الجهاز أو~تطفئه.
+code:040	f07269c2311189e8c6e436ac5be69af2ad6f8025	جار تهيئة بطاقة الذاكرة (ps2) في~فتحة بطاقة الذاكرة 1.{PARA}لا تنزع بطاقة الذاكرة (ps2) أو يد~التحكم، ولا تعد ضبط الجهاز أو~تطفئه.
+code:041	56348d503d5c5168fcd54707a27b82adde5b3546	جار فحص بطاقة الذاكرة (ps2) في~فتحة بطاقة الذاكرة 1.{PARA}لا تنزع بطاقة الذاكرة (ps2) أو يد~التحكم، ولا تعد ضبط الجهاز أو~تطفئه.
+code:042	5444ca3546a6dc7160965dcb6b7a34a783ec1dfb	جار حفظ البيانات.{PARA}لا تنزع بطاقة الذاكرة (ps2) أو يد~التحكم، ولا تعد ضبط الجهاز أو~تطفئه.
+code:043	5444ca3546a6dc7160965dcb6b7a34a783ec1dfb	جار حفظ البيانات.{PARA}لا تنزع بطاقة الذاكرة (ps2) أو يد~التحكم، ولا تعد ضبط الجهاز أو~تطفئه.
+code:044	06759a6bd883b66e7727c7a16e3650de802daef9	جار تحميل البيانات.{PARA}لا تنزع بطاقة الذاكرة (ps2) أو يد~التحكم، ولا تعد ضبط الجهاز أو~تطفئه.
+code:045	56348d503d5c5168fcd54707a27b82adde5b3546	جار فحص بطاقة الذاكرة (ps2) في~فتحة بطاقة الذاكرة 1.{PARA}لا تنزع بطاقة الذاكرة (ps2) أو يد~التحكم، ولا تعد ضبط الجهاز أو~تطفئه.
+code:046	5444ca3546a6dc7160965dcb6b7a34a783ec1dfb	جار حفظ البيانات.{PARA}لا تنزع بطاقة الذاكرة (ps2) أو يد~التحكم، ولا تعد ضبط الجهاز أو~تطفئه.
+code:047	06759a6bd883b66e7727c7a16e3650de802daef9	جار تحميل البيانات.{PARA}لا تنزع بطاقة الذاكرة (ps2) أو يد~التحكم، ولا تعد ضبط الجهاز أو~تطفئه.
+code:048	d08780a4c9e18849fb28acaa5c110f81ad46c15e	لا يوجد ملف حفظ على بطاقة~الذاكرة (ps2) في فتحة بطاقة~الذاكرة 1.{PARA}هل تريد إنشاء ملف حفظ {SAVE}؟
+code:049	c0ffebdf36ebe95250bae0313e3aa65b55418a10	لا توجد بطاقة ذاكرة (ps2) في~فتحة بطاقة الذاكرة 1.
+code:050	26a56c6b7f686cf1aa5a73bd1702ce148a9295df	بطاقة الذاكرة (ps2) في فتحة~بطاقة الذاكرة 1 غير مهيأة.{PARA}هل تريد تهيئة بطاقة الذاكرة~(ps2)؟
+code:051	787a48a98b3cd713edbd5d1f9ff3e7b28fb67513	لا توجد بيانات حفظ {SAVE} على~بطاقة الذاكرة (ps2) في فتحة~بطاقة الذاكرة 1.
+code:052	047c4a54bb874f1fc7a8ae13474cefc7e8ecee95	لا توجد مساحة كافية على بطاقة~الذاكرة (ps2) في فتحة بطاقة~الذاكرة 1.{PARA}يحتاج {SAVE} إلى {KB} كيلوبايت من~المساحة الحرة لحفظ البيانات.
+code:053	25edfaab581d4193b43b0e209a52822d4bd51202	هل أنت متأكد من استبدال ملف~الحفظ هذا؟
+code:054	06ba9253366e1cf443802336ef61cc1d89074aed	اختر ملفا للحفظ
+code:055	10677b061278d63cbd69de913a62d94bb4adb33a	اختر ملفا للتحميل
+code:056	ac31b6e48db21dc4a76e4dfdb1e3872d36ac4d94	فشلت التهيئة!{PARA}تحقق من بطاقة الذاكرة (ps2) في~فتحة بطاقة الذاكرة 1، ثم حاول~مرة أخرى.
+code:057	62b090a66ba6b020be6802d72ea8305736f2281f	فشل الحفظ!{PARA}تحقق من بطاقة الذاكرة (ps2) في~فتحة بطاقة الذاكرة 1، ثم حاول~مرة أخرى.
+code:058	d05b36c5d70b2c01b5cf9539b13f59f5720a329b	فشل التحميل!{PARA}تحقق من بطاقة الذاكرة (ps2) في~فتحة بطاقة الذاكرة 1، ثم حاول~مرة أخرى.
+code:059	3bccb3ad081a89cf6919d1aa988a3d0a23e118c7	ملف الحفظ
+code:060	ad87109bfff0765f4dd8cf4943b04d16a4070fea	فارغ
+code:061	4fd0653c4f2aef3b19a3c145bbdc5f4740715a09	إلغاء
+code:062	785987648f85190cfde9eadc69fc7c46fe8a7433	تهيئة
+code:063	fa85b8cd6faaccd1958922da9cce746c2ea17212	المتابعة دون حفظ
+code:064	507487c1ccab697087b896deaba59b731ea9c6d2	استبدال
+code:065	708269ae0043898dacb34d811f4db9a4661226b7	إعادة المحاولة
+code:066	d4de17d358b3db6ba9d86ea2cbf46e8e3d2bc453	لا تنزع بطاقة الذاكرة (ps2) من~فتحة بطاقة الذاكرة 1 أو يد التحكم،~ولا تعد ضبط الجهاز أو تطفئه أثناء~ظهور مؤشر الحفظ التلقائي (في~الأسفل).
+code:067	299b637779009e77df7650842ca6fbfcd6694f83	جار الحفظ التلقائي.{PARA}لا تنزع بطاقة الذاكرة (ps2) من~فتحة بطاقة الذاكرة 1 أو يد التحكم،~ولا تعد ضبط الجهاز أو تطفئه.
+code:068	61efa1803a2df723eafd6327d07f9a61c5358469	انتهت اللعبة
+code:069	d094d7e6d4b379aaac3b112b911431c99b84c52f	إنهاء اللعبة؟
+code:070	bc9c7171bc601960e0cf7b0f1f2bfab7e2de5ab8	اضغط زر start
+code:071	d920b8fc73f8dd9da2948308d4cefc6b21c296de	جزيرة إنسانيتي
+code:072	2c9438303a650d5c389e2daa711f5a221db0091a	فوضى الأدغال
+code:073	b080edf42cdaf7a355f88c8a05bca1ea4e2ef8c0	كارثة الكهف
+code:074	e195f8def060da843098f54e8db9dc86ea748054	خدعة الطوطم
+code:075	e559f3dbfed72836861a054d88283b20a8e8a53d	مختبر الجليد
+code:076	99487d98928d222ff4dd52effdb1fd39be25777f	تسلق الجليد
+code:077	0252d6a24861cf8b6ea130f366aedcb69ec88a9a	مغامرات الجليد
+code:078	dc7dcd6b9ff97ce112e908dc89692a8df834de2e	مقالب البحار
+code:079	fdea087fcf7765c5c34bbd889077a1f64e70f5e8	أكاديمية الشر
+code:080	a1e39eae783e675e8f93661c0a6d29a1604078bd	هلاك غرفة المرجل
+code:081	0258729345fe036bec51c9459c6ecfe6f5010d13	فوضى الفصل
+code:082	abc0810df181cddafea10b31311a3ea5bcb3a85e	هيجان السطوح
+code:083	8d84f19b7ca454fff1b974d55c75f128ef9a6cc7	جزيرة توينسانيتي
+code:084	b05fb3196962f52bb0662f4cbdbaff9c307e61e6	انهيار الصخور
+code:085	eb419be87e6748eb6fc317d78f52058119e4835f	مطاردة البانديكوت
+code:086	da1fb69b1b7c092c65fe34993f5775bddf480e8a	عذاب النمل
+code:087	14b85fa8e87f846f757eaccda09761641b397f01	جار التحميل
+code:088	da544ef8312268b6fee19c54f7703fd2f910c172	{UNKNOWN}
+code:089	24cb0f609ee0f9f64e055dbd42e63172b72486b1	إضافات الجوهرة الزرقاء
+code:090	6d160b2bd4f499922531e7d8aa876b32bbddf56a	إضافات الجوهرة الشفافة
+code:091	a378bf01f6c5e17af2f2f4ef88d6daa907eb7024	إضافات الجوهرة الخضراء
+code:092	782216c41d20fc5f481ba53b7531c8f482ee1b1c	إضافات الجوهرة البنفسجية
+code:093	f10ddacf7eabd473efa34281de9c2d74cbe83241	إضافات الجوهرة الحمراء
+code:094	078fca1eda182d3ac7f4003a81a89ba42b220809	إضافات الجوهرة الصفراء
+code:095	0859db4e7f90ffb548cbffccc096a83d436d5155	هل تريد حقا تهيئة بطاقة الذاكرة~(ps2) في فتحة بطاقة الذاكرة 1؟
+code:096	675593a7b220d34ebc59ab9af6e539aa942d2b59	إيقاف الحفظ التلقائي
+code:097	fae31ecec0fc6f77b09e2dad840d052ca7f87f0d	100%
+code:098	f4bdd4cb169e654357d085acb55735196763b9a7	معرض الزعماء 1
+code:099	3d6263646baa490a4026aaafd48f0491e3692191	معرض الزعماء 2
+code:100	8781949cdb4425a2dab335e87dfd4d4f68276737	معرض الزعماء 3
+code:101	4118a04f7e7f28fb55d0fa0210405c68078e22cf	معرض الزعماء 4
+code:102	d5a406d76e4590e57a568dda3fcde20d600f86a9	معرض الزعماء 5
+code:103	9cfd1d333b4cadf047100dd3097397d9a81d1d0e	معرض الزعماء 6
+code:104	c9a1986e39f14f6bce74461dcf1b5c9fd066823a	معرض الزعماء 7
+code:105	382b286be629d4ab588f5f226168fc3ebaaf62de	معرض الزعماء 8
+code:106	79f60b3465d4b064c868b756b3db3f6693999fee	معرض الزعماء 9
+code:107	faf1444ed3a0029fab5c05c1523b91e3b9302736	معرض الزعماء 10
+code:108	2ed1ed851c7a5702693a4bc48d39c96310d10ebe	معرض الزعماء 11
+code:109	dec64096ee90b20e0b425014016e6419c9ecb989	معرض الزعماء 12
+code:110	7381b1e8c574a8a4485cf00eba6d39c3e9272a3b	معرض الزعماء 13
+code:111	093d3443e8d831e8ba6cb4f53e64dae007845abc	معرض الزعماء 14
+code:112	1ac4cfa1aaf6a172d713dde2d28dff6e22851cbb	معرض الزعماء 15
+code:113	48e51ec959d93dbaaa8aa7c2d52c67935d520ba4	معرض الزعماء 16
+code:114	4a0f9f464a5c61c3911a747e4c6d543d791a76cb	معرض التصاميم 1
+code:115	cfb4733af7a6e13199e7b7147d96f93edda0dce7	معرض التصاميم 2
+code:116	1d201f1048298d7357e316e5777527149ecb0b2d	معرض التصاميم 3
+code:117	9a4308defd2caed263635ad1a6dca535bda1ebe4	معرض التصاميم 4
+code:118	52e8e09648f89e59c222b801e23d298194baef17	معرض التصاميم 5
+code:119	eacc36d2d5be86c1d7c262c3980726b0eb8694ba	معرض التصاميم 6
+code:120	fe4e530086dbd779b7b201ce8b795855fff30909	معرض التصاميم 7
+code:121	4d1a066dcd71d4ad7be6e3b991cb499424f10be7	معرض التصاميم 8
+code:122	0c1de26e25e4b9116bdf034b5f18397f2ffbaadb	معرض التصاميم 9
+code:123	19d58cb4c845f0329a0521a7613bd6e777d2e508	معرض التصاميم 10
+code:124	685e73399c22e67fcaad815c1e1640bbe73e3c0c	معرض التصاميم 11
+code:125	9a2a1f5bd75bf6f87f69c940711aa86344afdd99	معرض التصاميم 12
+code:126	1ffabd3fda4a75ca3fd248f572dff971d0704866	معرض التصاميم 13
+code:127	67efde1a38e9dd27fbc8937cddfb4166aaf2630d	معرض التصاميم 14
+code:128	bb0fe9e2c0923e4560e450c96665b936f7ff767a	معرض التصاميم 15
+code:129	813a775b7f8b08852a91f8b2564f505ed7cdae16	معرض التصاميم 16
+code:130	a109b53f6943995581fef1b83871f21ddc95ee5a	معرض الأعداء 1
+code:131	948586156e798086bbb7cd12163bb0cc651ecf9e	معرض الأعداء 2
+code:132	7c9fe58626d788a9d5a355ad59c34187bccc84a8	معرض الأعداء 3
+code:133	7395a98daba91340e58f5eeb4ee509c931e73d98	معرض الأعداء 4
+code:134	373e425985b821f4d0dbde8d3a1147d09ed553d2	معرض الأعداء 5
+code:135	04b62051762450bf19a3752354f9d6ec9619f115	معرض الأعداء 6
+code:136	661e9b40409e405a82756edc66b8771b4f8d5567	معرض الأعداء 7
+code:137	d510127102ffab953700988cb05f6818505b3fac	معرض الأعداء 8
+code:138	6d1f72fc50db34dfb0ab936df86c88578ff0ac31	معرض الأعداء 9
+code:139	19a38f44379db974dc45081813a616a9943a7d98	معرض الأعداء 10
+code:140	7e6cdafff4007c8c17685e6d0ba2926d5747c020	معرض الأعداء 11
+code:141	36b129ac10ac523108eda24b351a2774d8d39967	معرض الأعداء 12
+code:142	0c15b950ea2a4debfff421206138383c8e8ae55d	معرض الأعداء 13
+code:143	a9f21de9db7c2e41cc28105c3c465a701b0c34e4	معرض الأعداء 14
+code:144	9bc81372c5bccc05cc1b900d457b831ecf021cc6	معرض الأعداء 15
+code:145	8e6930ddbbd251160ddb58e1b9dea8a4352da5bb	معرض الأعداء 16
+code:146	94bee7f7116eed9822ee14a9c3493904d9850451	فيلم 1
+code:147	0bb3670f342b7f3872ca9800b024c4418e043646	فيلم 2
+code:148	f9c6964e0fe0f91dfc93f969eb5df782d88038a2	فيلم 3
+code:149	04fd37ac4307d15ea3cccd0043e89431b3c5404d	فيلم 4
+code:150	577a2f9b4817663e2efcd3a782f12be807760de4	فيلم 5
+code:151	302774b4512cf5f06d986e7378bdc2fc17ff9d59	فيلم 6
+code:152	bb14f8d624e96e75ea357832621481fd38c9fecc	فيلم 7
+code:153	e29fcad2843571ca75038bf63634aad659a7912d	فيلم 8
+code:154	c46f415a19a63a4064a970bf3cd31e9b191e05a6	فيلم 9
+code:155	def6239840eedcc577454083301c4c3325714331	فيلم 10
+code:156	e7fe59bd3186fb2578dc9f7464dc998494c525f0	فيلم 11
+code:157	5032f6ce3ba9297eab4bec1ded2b4f64ec221520	فيلم 12
+code:158	ff64de33aacd0de454ffb4a0a6c582d991252a82	فيلم 13
+code:159	b7c1cbc8ac45791533caa0e4af80d5284d68aa3b	فيلم 14
+code:160	7ecd699ea169f6e42290dca17c24714e4c94f93b	فيلم 15
+code:161	6f62e413e224eefe02da8018b821cf5804bf0bca	فيلم 16
+code:162	6f78bc5de7b069c85febf6533e184a27ed0c2345	المعرض الخفي 1
+code:163	2acf91da43a1025dfe2f5dca02797804fb088a74	المعرض الخفي 2
+code:164	4c46bf9da607866f85403cca5eb3e52bcbdf5874	المعرض الخفي 3
+code:165	01d9abfc5bbc383e0db9665a6cc8118b7bff4bbc	المعرض الخفي 4
+code:166	8a64f8bfc5026d14b5c6985168aedfcaa8f000b7	المعرض الخفي 5
+code:167	0931cac046ead2e65b8add098727393544cdba89	المعرض الخفي 6
+code:168	26b0c986b8fbb8e096ed4c3026162b4f92cc39ca	المعرض الخفي 7
+code:169	0f3e171bcc0503d3330726a56c998efbd6c15f31	المعرض الخفي 8
+code:170	62db60cb761665f1bc59f2884bf6c06def02e1d2	المعرض الخفي 9
+code:171	f20178ea6d41c56666927679b58a2a3f3d2185cc	المعرض الخفي 10
+code:172	4de2253fdefc1b4ed6420ac186b48091043dcae4	المعرض الخفي 11
+code:173	084cad24a89e164f04b89d543ec8782d744f95e7	المعرض الخفي 12
+code:174	0506b28621bf7b250214e8ea3cf6f77fb210b6e1	المعرض الخفي 13
+code:175	e38582959a9baf983de20a067a2eca98a25e15ca	المعرض الخفي 14
+code:176	47e510beed1d7d12867d1b67d686d7444e5bec1e	المعرض الخفي 15
+code:177	20ac74009a6f3606eba2683742821a6bb0a39e91	المعرض الخفي 16
+code:178	8ab88168aba55c9ef74ac180949744e159d41555	التالي {CROSS}
+code:179	dc879ad1e25efd3790bb3fd081bc8f24e66b2bab	فشل الحفظ التلقائي{PARA}لتفعيل الحفظ التلقائي، عد إلى قائمة~الإيقاف واحفظ اللعبة من جديد.
+code:180	2704dace777af7aa0d8eb03208262067bbb70983	تمت التهيئة بنجاح
+code:181	45e1f6a626f42a41d24d5c17b833a321dbc8d76c	تم الحفظ بنجاح
+code:182	a12745903e8aa6fba81815d46f3c14c89fe36598	تم التحميل بنجاح
+code:183	80de956f370983c8df017ed160d8334fcfba658a	لا توجد بطاقة ذاكرة (ps2) في~فتحة بطاقة الذاكرة 1.{PARA}يحتاج {SAVE} إلى {KB} كيلوبايت من~المساحة الحرة لحفظ البيانات.
+code:184	55d1a795d16485c1a7bf81c04c152da900c6c776	إلغاء الحفظ؟
+code:185	2350a94b932af96cac733a0ffe08ee324273042f	تم إلغاء الحفظ
+code:186	078c69b68a7ad5ae481c2916ca4cb647f23fad6e	قبول التغييرات
+code:187	72167a6fdaac16c5e5a7f5c1849bb4bde2e212f5	{TRIANGLE} إلغاء
+code:188	d920b8fc73f8dd9da2948308d4cefc6b21c296de	جزيرة إنسانيتي
+code:189	2c9438303a650d5c389e2daa711f5a221db0091a	فوضى الأدغال
+code:190	b080edf42cdaf7a355f88c8a05bca1ea4e2ef8c0	كارثة الكهف
+code:191	e195f8def060da843098f54e8db9dc86ea748054	خدعة الطوطم
+code:192	e559f3dbfed72836861a054d88283b20a8e8a53d	مختبر الجليد
+code:193	99487d98928d222ff4dd52effdb1fd39be25777f	تسلق الجليد
+code:194	daed0389bba7fac46e39dd04e39758744dbd463a	مغامرات الجليد
+code:195	e635c70fa58340fbb5bb7b4f7d995491d76a6b5d	مقالب البحار
+code:196	1d490a59b7a4fc19efe5c40944b4f8d393ec7fa8	أكاديمية الشر
+code:197	617dd97dd23093baa529ab5ec7cfbf46910aa021	هلاك غرفة_المرجل
+code:198	0258729345fe036bec51c9459c6ecfe6f5010d13	فوضى الفصل
+code:199	abc0810df181cddafea10b31311a3ea5bcb3a85e	هيجان السطوح
+code:200	8d84f19b7ca454fff1b974d55c75f128ef9a6cc7	جزيرة توينسانيتي
+code:201	b05fb3196962f52bb0662f4cbdbaff9c307e61e6	انهيار الصخور
+code:202	eb419be87e6748eb6fc317d78f52058119e4835f	مطاردة البانديكوت
+code:203	da1fb69b1b7c092c65fe34993f5775bddf480e8a	عذاب النمل
+code:204	1ab7ea2cf3ab2857df22936193d28525d6ff9d66	إنشاء ملف حفظ
+agentlab:000	40fa37ec00c761c7dbb6ebdee6d4a260b922f5f4	zzz
+agentlab:001	40fa37ec00c761c7dbb6ebdee6d4a260b922f5f4	zzz
+agentlab:002	40fa37ec00c761c7dbb6ebdee6d4a260b922f5f4	zzz
+agentlab:003	40fa37ec00c761c7dbb6ebdee6d4a260b922f5f4	zzz
+agentlab:004	475188d3beaa5f1c4d70320be3aeb1b7977aed1e	شكرا على اللعب
+agentlab:005	99de9505c229a212feec170bbe1b571efda41875	المزرعة المضحكة
+agentlab:006	5595692bda076d1841e22e111eb843db93ea26ad	اضرب الخلد
+agentlab:007	740e4fe3ffdacbe639a50e4b2563d9b8f1410321	...شهيق...شهيق-شهيق....
+agentlab:008	42583d50d76976a7de39e145b0921e0ac7bc33c2	عليك أن تساعدني يا كراش!!
+agentlab:009	c3dc5e8afc0bdeb6a917b678f5844a8a4ce2a4ce	يريدون أن يلبسوني ثياب البنات!
+agentlab:010	277c9cdf229de9634ae374f9b735c59164911f25	بضفيرتين! ضفيرتين يا للمصيبة!
+agentlab:011	e774037380eeacc799b71522319d0c42f0189e10	ماذا فعلت لأستحق هذا؟
+agentlab:012	a764025c8eb3cc51651cf76cfce68cab44741ef0	كم أحسد أهل القبيلة على حياتهم البسيطة...
+agentlab:013	1ed5222458a34562796c9db61fe387d65b854d6f	هوغ-غا-با-دو-دا!! ( ...تصفيق...تصفيق...تصفيق... )
+agentlab:014	649c7ba07e3fcf013ece5f369e2a812a730158c3	يعيشون في وئام مع الطبيعة الأم...
+agentlab:015	02d3f3d4132e95ca1e00cf581f14978b99e05dde	الخنزير البري النبيل،
+agentlab:016	0bea5bc65f0688dd6f0ac26975a03f6f263b885f	والنحلة المتواضعة...
+agentlab:017	66e9971fd2b90a0594acd68d6f7fe592433d2c36	آآآآآه!!!!!
+agentlab:018	7d8fd8b14898b36ad4fb92a7e00dc86b9cf96bf4	آآآه!!! اللسع....الألم!!!!!
+agentlab:019	0e7b73163f3f56745ee57470a54f015256fc64fd	هذا...ليس جيدا...
+agentlab:020	59ae9e28222986e43cb79c87ad2e7badf8e16ccf	مرحبا بك في مخبئي السري...
+agentlab:021	21dcc2c055a19efd1a1ae4eaa52633397f59c61f	كراش بانديكوت!!!!
+agentlab:022	6f7faea7d5c5c797d3b2461a7d5dbce3ea164e26	هذه المرة لن تفلت مني!!!
+agentlab:023	fdbdeee639726815254ca7b9e0da47b56b2aaa95	موهاهاهاها..تي-هيهيهي...(شخير)
+agentlab:024	40fa37ec00c761c7dbb6ebdee6d4a260b922f5f4	zzz
+agentlab:025	40fa37ec00c761c7dbb6ebdee6d4a260b922f5f4	zzz
+agentlab:026	201296d27c79e2fe270b3fa1b664788fa7490b35	اضغط {SQUARE} للدوران
+agentlab:027	0c68d8f8c144d6e290913e77adcc9fb1c76bcd01	اضغط {CROSS} مرتين للقفزة المزدوجة
+agentlab:028	88adaeebca0841fbd5b65ad27388d75c1ed16610	اضغط {CIRCLE} أثناء الركض للانزلاق
+agentlab:029	89e93809800d31e8273c4c8cfec0dc4e9643abb0	اضغط {CIRCLE} أثناء القفز للضربة الأرضية
+agentlab:030	fdac22a2512f8949552b0ef113cce4d6515b011f	اضغط {CIRCLE} للانحناء والزحف تحت المخاطر
+agentlab:031	54a793ce039a705c2c5da1c25561a71db875d6e0	اقفز على الزر الأحمر لإطلاق قذيفة المدفع
+agentlab:032	284e47a277e52a017ff1ea91b98caaf1251e8e88	اسقط ببطنك على الزر الأحمر لإطلاق قذيفة المدفع
+agentlab:033	8136786774faf6e334372ba26be6e1ac8f67ffc1	اضرب كورتكس بالدوران لتنضما معا
+agentlab:034	7c6e4e656030de90c3fa63ff8cdbd1ac5767f667	يستطيع كراش دفع الأشياء، جرب ذلك!
+agentlab:035	615d450ccd0c6a704d2c1a62499b314d2b0e95f9	حل الألغاز لتكسب الجواهر. كراش يحب الجواهر.
+agentlab:036	072b792e0902203082965758c5f41457afc412fe	إلى أي ارتفاع تستطيع الوصول؟
+agentlab:037	483c95ec39055b7d8bf14867b59bd3334ed06149	افتح الطريق لكورتكس!
+agentlab:038	ca39ab1b5733dd1529676ad128a7dbab06336bd6	فعل الفخ بالقفز على الزر الأحمر!
+agentlab:039	da1b8370f447cf4ca670d9cb5adc8388fc5dd749	اجمع أقنعة أكو أكو للحماية الإضافية!
+agentlab:040	a79d8c88352ce51194c81429036ff7d7e0deea79	اقفز على صندوق التفجير لإحداث الانفجارات!!!
+agentlab:041	7ddbea27916ef10cd2c46904a76c9ebadbf83ad0	اضغط {CROSS} ثم {CIRCLE} لرمي كورتكس على المفتاح
+agentlab:042	24f5d5b8ebdb71299feef135714e477cc78a2b59	اضغط {CROSS} ثم {CIRCLE} لرمي كورتكس في فم الوحش
+agentlab:043	c32731554ffcf4d5bf4bc0e9c21e85db04a64374	استخدم شعاع الجذب لوضع 10 كرات طاقة في القمع
+agentlab:044	23562f2d1977057733ac37da432d0ac5408c1508	استخدم العصا التناظرية اليسرى لقيادة الصحن الطائر
+agentlab:045	b6145c00032810611580b4de9bf11b2f7f59f61e	اضغط {CIRCLE} فوق كرة الطاقة لاستخدام شعاع الجذب~لالتقاطها أو إفلاتها
+agentlab:046	8f0adfeadbf94b23e56aad6aad4bb855320f7a43	استخدم العصا التناظرية اليسرى لتوجيه لوح التحليق~اضغط مطولا على زر {R1} للتحليق أعلى وأبطأ
+agentlab:047	adbceda340c3f0f6fc41e12e85a3e527a221fdcd	انقر {SQUARE} لإطلاق الليزر~اضغط مطولا على {SQUARE} لطلقة مشحونة
+agentlab:048	0595cb1b2206650ffd20085278b0e1b543cb0e83	طارد كل الصحون الطائرة وأسقطها قبل أن ينفتح باب~الحماية!
+agentlab:049	38b8122aa4f011ec8d5ab343977fd6d265e09729	الطلقات العادية ترتد عن تلك المصاصات!~استخدم الطلقة المشحونة لتعطيل الدباديب
+agentlab:050	a2691d5cef308834c3a963e2c1ed344dc69939f6	قبل ثلاث سنوات...
+agentlab:051	1f57998c85c21b837bd76d6756cb65cdc8360827	بسرعة! اختبئ خلف القصب قبل أن يراك رجل القبيلة.
+agentlab:052	99c2fe861fffa569cd097961fee532d6632f73b1	صارع القرود ذات القبعات لتربح مكافأة.
+agentlab:053	7f571dcc1aa413763d508f4e6c3c9c2c5a0db9e3	اقفز على صناديق TNT لتشغيل المؤقت.
+agentlab:054	d0d80b92f6011475fe3d7b80e12c099ca880a79b	رد طلقة البلازما إلى د. كورتكس بالدوران.
+agentlab:055	4e1a4632444058e615ac0971afc5e42022dfa120	اضرب الأزرار لإغلاق الأبواب
+agentlab:056	0c1a94559c8cae6e149ca567c9caf82474c2ddfb	استخدم كورتكس لتدوير المقابض الحمراء.
+agentlab:057	ef4e093a71b4b9d1b0f5ba7d60c2790885e1cc04	اضرب كورتكس بالدوران لتسرق الكريستالة.
+agentlab:058	dbcae51d4817e79a7935e96b72f7e95abd7c2bd9	اضرب الكريستالات بالترتيب لإسقاط الصخور.
+agentlab:059	3e05aa4f7876604b10a8522342590157c5a6daeb	اضرب الصخور بالدوران لتقفز فوق الماء.
+agentlab:060	dba05d62ff9bdd624541176d19b7a2eed2af3c3c	انحن في القارب لتختبئ.
+agentlab:061	037ab74a0ca0de1ebf4b5c3ba7e8a558d5388ffb	اضرب الدودة وطاردها لتنقذ كورتكس.
+agentlab:062	9d8c83063c736fac0b142d4e3e7146568061b80a	استخدم {CROSS} و {CIRCLE} لضرب الديدان الجشعة.
+agentlab:063	53d50cd486c10843ad0dc9bbda6b6ab5be82975c	أعطه شيئا يمضغه.
+agentlab:064	03f86c5bd5590dc8a643b3b4c8f5d7d83e2ab3d1	في هذه الأثناء..
+agentlab:065	4cc2afaff3631eff8db16e5ff37e180e1a18488e	تحكم بالدراجة الطائرة بالعصا التناظرية اليسرى.
+agentlab:066	1dfd1170417e4038d83aefb3e8f4297c3dc91356	استخدم كورتكس لفتح الطريق لكراش.
+agentlab:067	792ab6af603cdeeb59fefa104feb5a9120bf8b17	ارم كورتكس لتشغيل المفاتيح وفتح الطريق.
+agentlab:068	1d1b6401cfdd6b68c87a4e817391fd81f9697278	استخدم كورتكس لتحطيم ما يعترض طريقك.
+agentlab:069	91de813c6aad52afaecdd34d861cfb726c386340	استخدم كورتكس لتعطيل لوحات الأمن.
+agentlab:070	5c4cde48a860a22c9ffb2f4f2a5fdecead0215ea	اضرب الزر لفتح فتحات اللهب.
+agentlab:071	2b084e2bbfbd9b3470afa77554f525618883e8c6	أسرع إلى سفينة إن جين الحربية قبل أن تبحر.
+agentlab:072	eed596ce4d7eed7678fa264618f28b3b0dd1a6a7	استخدم {CIRCLE} للانحناء وزيادة السرعة.
+agentlab:073	4a8ea6701406ce0cc8a9aeef98681d3c218df931	استخدم {CROSS} للقفز.
+agentlab:074	e856f6c4b9fc27e7f4820724115ce370d331a913	استدرج إن جين ليدمر برج المراقبة الخاص به.
+agentlab:075	8dba6e4344edc444a95208918b66a40bbad86207	انقر {SQUARE} للإطلاق السريع.
+agentlab:076	7b633579dd4d3eb461009fba19fe6d13e27b93a5	اضغط مطولا على {SQUARE} لإطلاق الطلقة المشحونة.
+agentlab:077	9d5fc64aff1e29bd60c85c108c9917669b4ab1f7	اضغط {CROSS} و {CIRCLE} لأداء قفزة الانفجار الدائري.
+agentlab:078	117716323d678395b5ddbef512759a5fb822db0f	استخدم ({L1} {L2}) و ({R1} {R2}) للتحرك جانبيا
+agentlab:079	8926e0db5999a04852441bd88cdc476b46455985	اضغط {CIRCLE} أثناء الركض لتستخدم رأسك.
+agentlab:080	d194551d1769640fe6d1c287908e5334c12255cf	أعد التعبئة بتحطيم صناديق الذخيرة.
+agentlab:081	ca3b44c17ff7a67640c4b00071fff17aecb8645d	تسلل إلى المدرسة وابحث عن نينا.
+agentlab:082	49bac930e39310db5c1850106df4f4e0498c7018	استخدم الأنابيب لدفع كورتكس عبر المجاري.
+agentlab:083	3998292ab3dd9c91781a63450b39a476a06b1eca	اضغط الزر الأحمر لتشغيل التدفق.
+agentlab:084	ae4ef32a73dfa84f21027a0f04c637f59ca7038d	أدر كل الصمامات الزرقاء لإكمال شبكة الأنابيب.
+agentlab:085	11d6a6825f0765814b8c41d531b21258a5a4891e	أطلق على مدام أمبرلي من الخلف، كالجبناء.
+agentlab:086	af0299e6e0df0ddef39fa55fc06548916a0f290f	أسرع لإنقاذ نينا من قبضة كراش الشرير.
+agentlab:087	f6f98b3ff75646936faa47c9ad89bbe5e7df59e4	استخدم كرات الإنرجون لتشغيل الآلات.
+agentlab:088	447fd43b3e5cc3306a143caa2ebd1847343f1fcc	انقر {SQUARE} لإطلاق الصواريخ.
+agentlab:089	7b633579dd4d3eb461009fba19fe6d13e27b93a5	اضغط مطولا على {SQUARE} لإطلاق الطلقة المشحونة.
+agentlab:090	117716323d678395b5ddbef512759a5fb822db0f	استخدم ({L1} {L2}) و ({R1} {R2}) للتحرك جانبيا
+agentlab:091	552d694116a971a39269b2cd912c029d6bfa58ed	اضغط {CIRCLE} لتشغيل المنشار الآلي.
+agentlab:092	0495f52c8f0e54a71fa6cf0fb97c5da6b76332fe	الحق بمنطاد كورتكس الهارب.
+agentlab:093	b253ead7933d55ecc2f0fff51d280f32a837f07d	أدر دوارة الرياح لإيقاظ التماثيل الحجرية.
+agentlab:094	193ce97a1ced16e03def83808b94d12ffa0bc19d	استخدم {CIRCLE} للكم.
+agentlab:095	ec7ddd4ed2d07483f299eb14999e386bd10e78ea	استخدم {CROSS} و {CIRCLE} للقفز والإمساك والسحب.
+agentlab:096	9cfe8f416772f52a88c8ab392d13c0799cb369b0	اضغط {CROSS} للقفز بعيدا عن الجدار.
+agentlab:097	ce56672b42e555bd09acdea58125dc63feb825ae	اصعد إلى قاربي أيها الرجل الفروي، يمكنني أخذك~إلى المكان الآخر.
+agentlab:098	69894b2aca8ea42b17365540c53098239d76d8c3	استخدم الدوران و {CIRCLE} للكمة الخارقة.
+agentlab:099	1f57998c85c21b837bd76d6756cb65cdc8360827	بسرعة! اختبئ خلف القصب قبل أن يراك رجل القبيلة.
+port:000	c24c7b91c57b8972a0741dd1b37ea76cfb7dc3d4	لغة النص
+port:001	bde2dda28ae2240bcf3c58e35175b4add07d0006	لغة الكلام

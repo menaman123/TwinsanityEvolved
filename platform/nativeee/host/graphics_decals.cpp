@@ -23,6 +23,7 @@
 // VIF codes and the UV packet's GIF tag are written as the PS2 wrote them (the game never reads them, the VU1 image does).
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -37,7 +38,12 @@
 #include "ps2e_seam.h"
 #include "te_gfx_layout.h"
 #include "te_host.h"
+#include "te_prof.h"
+#if defined(__vita__)
+#include <psp2/kernel/processmgr.h>
+#endif
 
+extern "C" uint64_t te_graphics_presents();
 namespace {
 using te::gfx::Draw;
 using te::gfx::MaterialView;
@@ -82,10 +88,82 @@ struct DecalVu0 {
     std::array<title::DecalMath::Vector, title::DecalMath::kDataQuadwords> data{};
     uint32_t program = kSameChunkProgram;
     bool viewLoaded = false;
+    uint32_t nonFinite = 0;   // the image's words that are an infinity or a NaN (DecalMath::Age's dataFinite)
+    static uint32_t NonFinite(const uint8_t* bytes, size_t size) {
+        uint32_t n = 0;
+        for (size_t at = 0; at + 4 <= size; at += 4) {
+            uint32_t bits;
+            std::memcpy(&bits, bytes + at, 4);
+            n += uint32_t((bits & 0x7F800000u) == 0x7F800000u);
+        }
+        return n;
+    }
     void Write(uint32_t byteAddress, const void* bytes, size_t size) {
-        if (byteAddress + size <= sizeof(data)) std::memcpy(reinterpret_cast<uint8_t*>(data.data()) + byteAddress, bytes, size);
+        if (byteAddress + size <= sizeof(data)) {
+            uint8_t* at = reinterpret_cast<uint8_t*>(data.data()) + byteAddress;
+            const uint32_t before = NonFinite(at, size);
+            std::memcpy(at, bytes, size);
+            nonFinite = nonFinite - before + NonFinite(at, size);
+        }
     }
 } g_vu0;
+// the ageings DecalMath::Age answered unclamped (te::gfx::DecalsUnclamped: the scene seams' census line)
+uint64_t g_decalsUnclamped = 0;
+// TE_GAMECPU2_BENCH=P (diagnosis): present P's ageings captured (with the image as it was) and timed at the next present's
+// first ageing through both forms of DecalMath::Age on the same inputs ("[te.gfx.bench] ... decal ageings")
+void DecalBench(const title::DecalMath::Decal& decal) {
+    static long at = -2;
+    static bool done = false;
+    static std::vector<std::pair<title::DecalMath::Decal, uint32_t>> cases;
+    static std::array<title::DecalMath::Vector, title::DecalMath::kDataQuadwords> image{};
+    static bool imageFinite = false;
+    if (at == -2) {
+        const char* v = std::getenv("TE_GAMECPU2_BENCH_DECALS");   // (else TE_GAMECPU2_BENCH's present)
+        if (!v) v = std::getenv("TE_GAMECPU2_BENCH");
+        at = v ? std::max(0L, std::atol(v)) : -1;
+    }
+    if (at < 0 || done) return;
+    const uint64_t picture = te_graphics_presents() + 1;
+    if (picture == uint64_t(at)) {
+        if (cases.empty()) {
+            image = g_vu0.data;
+            imageFinite = g_vu0.nonFinite == 0;
+        }
+        cases.emplace_back(decal, g_vu0.program);
+        return;
+    }
+    if (picture < uint64_t(at)) return;
+    done = true;
+    if (cases.empty()) return;
+    auto now = [] {
+#if defined(__vita__)
+        return int64_t(sceKernelGetProcessTimeWide());
+#else
+        return int64_t(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+#endif
+    };
+    constexpr int kReps = 50;
+    volatile uint32_t sink = 0;
+    bool unclamped = false;
+    title::DecalMath::Age(image.data(), cases[0].second, cases[0].first, imageFinite, &unclamped);
+    for (const auto& c : cases) {   // a warm-up of both forms (an emulator compiles each path at its first run)
+        sink += title::DecalMath::Age(image.data(), c.second, c.first, false).place[0];
+        sink += title::DecalMath::Age(image.data(), c.second, c.first, imageFinite).place[0];
+    }
+    const int64_t t0 = now();
+    for (int rep = 0; rep < kReps; ++rep)
+        for (const auto& c : cases) sink += title::DecalMath::Age(image.data(), c.second, c.first, false).place[0];
+    const int64_t t1 = now();
+    for (int rep = 0; rep < kReps; ++rep)
+        for (const auto& c : cases) sink += title::DecalMath::Age(image.data(), c.second, c.first, imageFinite).place[0];
+    const int64_t t2 = now();
+    const double n = double(kReps) * double(cases.size());
+    std::fprintf(stderr, "[te.gfx.bench] present %ld: %u decal ageings, %d repetitions: the clamped form %.2f us an ageing, the "
+                 "unclamped form %.2f us (taken: %s) (%u)\n", at, unsigned(cases.size()), kReps, double(t1 - t0) / n, double(t2 - t1) / n,
+                 unclamped ? "yes" : "no -- the image or the FP mode does not allow it", unsigned(sink & 1));
+    cases.clear();
+    cases.shrink_to_fit();
+}
 
 // The diagnosis switches, read once (AgeDecal runs for every decal of every frame)
 const bool kDecalDiag = std::getenv("TE_DECAL_DIAG") != nullptr;
@@ -106,8 +184,13 @@ void Transpose(float q[4][4]) {
 
 // ---- the VU1 side: one block through the class-A program -----------------------------------------------------------------------
 struct Image {
-    std::vector<uint8_t> memory;
-    Image() : memory(kQwCount * 16) {}
+    // one zeroed image per thread, reused block after block (a fresh 16 KB allocation per block before)
+    std::vector<uint8_t>& memory;
+    Image() : memory(Buffer()) { std::fill(memory.begin(), memory.end(), uint8_t(0)); }
+    static std::vector<uint8_t>& Buffer() {
+        thread_local std::vector<uint8_t> buffer(kQwCount * 16);
+        return buffer;
+    }
     void Set(uint32_t qw, unsigned lane, uint32_t value) { std::memcpy(&memory[qw * 16 + lane * 4], &value, 4); }
     void SetQw(uint32_t qw, const void* bytes16) { std::memcpy(&memory[qw * 16], bytes16, 16); }
 };
@@ -154,12 +237,18 @@ bool RunBlock(const uint8_t* block, const uint8_t* uvPacket, uint32_t uvQuadword
     VUregs entry = stub.regs;
     in.regs = &entry;
     in.start_pc = kClassATpc;
+    in.data_writes = false;   // only the kicks are read (the image is rebuilt for the next block)
     Vu1HleOutput run;
-    if (!ZeroKick::RunACont(in, run)) return false;
+    // the kicks alone, the program over this image in place (RunACont's packets without its working copy and flags)
+    if (!ZeroKick::RunAContKicks(in, img.memory.data(), run)) return false;
     kicks = std::move(run.kicks);
     return true;
 }
 }  // namespace
+
+namespace te::gfx {
+uint64_t DecalsUnclamped() { return g_decalsUnclamped; }
+}  // namespace te::gfx
 
 extern "C" {
 
@@ -191,8 +280,8 @@ void ps2e_graphics_init_decal_uv_packet(ps2e_u32 packetAddress) {
 // each decal (0x1C0 same chunk / 0x360 other chunk)
 void ps2e_graphics_load_decal_view(ps2e_u32 chunkMatrices, ps2e_u32 fromChunk) {
     const auto* chunk = reinterpret_cast<const float(*)[4]>(te::GuestPointer(chunkMatrices, 64));
-    const float* far = reinterpret_cast<const float*>(te::GuestPointer(kFarViewPlanes, 6 * 16));
-    const float* view = reinterpret_cast<const float*>(te::GuestPointer(kViewPlanes, 6 * 16));
+    const float* far = reinterpret_cast<const float*>(te::GuestPointer(te::RetailAddress(kFarViewPlanes), 6 * 16));
+    const float* view = reinterpret_cast<const float*>(te::GuestPointer(te::RetailAddress(kViewPlanes), 6 * 16));
     if (!chunk || !far || !view) return;
     float rows[4][4], copies[4][4];
     for (int plane = kFirstSidePlane; plane < kFarPlane; ++plane) TransformPlane(far + plane * 4, chunk, rows[plane - kFirstSidePlane]);
@@ -260,7 +349,11 @@ void ps2e_graphics_age_decal(ps2e_u32 placeAddress, ps2e_u32 frameAddress, ps2e_
         decal.more[k] = frame[4 + k];
     }
     decal.variant = uint16_t(uint32_t(std::max(variant, 0)) * kVariantQuadwords + kVu0VariantsAddress);
-    const title::DecalMath::Look aged = title::DecalMath::Age(g_vu0.data.data(), g_vu0.program, decal);
+    DecalBench(decal);
+    bool unclamped = false;
+    const title::DecalMath::Look aged =
+        title::DecalMath::Age(g_vu0.data.data(), g_vu0.program, decal, g_vu0.nonFinite == 0 && te::gfx::GameCpuFast(), &unclamped);
+    if (unclamped) g_decalsUnclamped++;
     // DecalLook: f32 place[4]; u8 colour[4]; s16 sizes[4]; s16 moreSizes[4]
     for (int k = 0; k < 4; ++k) {
         std::memcpy(look + k * 4, &aged.place[k], 4);
@@ -294,7 +387,7 @@ void ps2e_graphics_draw_decals(ps2e_u32 decalsAddress) {
         std::memset(decals + kDataChunk, 0, 4);
         return;
     }
-    const uint32_t viewAddress = ReadU32(kRenderViewPointer);
+    const uint32_t viewAddress = ReadU32(te::RetailAddress(kRenderViewPointer));
     const auto* toScreen = viewAddress ? reinterpret_cast<const float(*)[4]>(te::GuestPointer(viewAddress + kViewToScreen, 64)) : nullptr;
     if (!toScreen) return;
     static const bool noDraw = std::getenv("TE_GFX_NO_DRAW") != nullptr || std::getenv("TE_GFX_NO_DECALS") != nullptr;
@@ -326,12 +419,18 @@ void ps2e_graphics_draw_decals(ps2e_u32 decalsAddress) {
             const uint8_t* bytes = te::GuestPointer(block, kBlockBytes);
             if (!bytes) break;
             kicks.clear();
-            if (!RunBlock(bytes, uvPacket, uvQuadwords, toScreen, kicks)) {
+            bool ran;
+            {
+                TE_PROF_SCOPE("decal RunBlock (VU1 class-A program)");
+                ran = RunBlock(bytes, uvPacket, uvQuadwords, toScreen, kicks);
+            }
+            if (!ran) {
                 scene.decal_refused++;
                 static int said = 0;
                 if (said++ < 4) std::fprintf(stderr, "[te.gfx] decal block %#x: the program declined\n", block);
             } else {
                 verts.clear();
+                TE_PROF_SCOPE("decal lower + record");
                 for (const auto& packet : kicks) te::gfx::LowerPackedPacket(packet, offX, offY, tw, th, textured, verts);
                 if (!verts.empty()) {
                     // the interpolator: decals are the NEWEST picture's as they are -- they lie on static ground and the game

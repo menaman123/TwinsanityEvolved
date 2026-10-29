@@ -1,0 +1,81 @@
+{
+  "disc": "PAL SLES-52568 (the development image, a modified PAL image; on it the English text is the `Spanish` Code bank). Every mod and patch is made at run time from the disc and deleted afterwards; every game run deterministic headless (--deterministic --no-sdl-input --no-audio --skip-movies --trace-state --config none, an empty --mc-dir)",
+  "generator": "tools/mods/make_fixture_overlay.py",
+  "patcher": "tools/mods/apply_overlay_to_iso.py",
+  "run_seconds": 900,
+  "iso": {
+    "max_mod_bytes": 1048576,
+    "why": "the text-bank fixture changes 15 bytes of CRASH6/CRASH.BD; composed into a copy of the disc and imported back (as the image, then as xdelta3 -S none, PPF 3.0 and BPS patches of the image pair), the mod must touch exactly the fixture's files, compose them to the same sha256 (the tool's verify through the game's overlay, and the judge's own recomposition), and stay under 1 MB (a recipe, not a copy of the 930 MB archive)"
+  },
+  "crate": {
+    "padlog": "fixtures/padlogs/options_graphic.padlog",
+    "stop_at": 1700,
+    "string": "graphic options",
+    "min_draws": 100,
+    "overrides": 3,
+    "added_entry_bytes": 65536,
+    "system_cnf": {"from": "VER = 1.01", "to": "VER = 1.02"},
+    "why": "a Mod Crate folder: layer0/SYSTEM.CNF (one byte), layer1/<the fixture's bank> (the changed line), layer1/Mods/ImportJudge/added.bin (64 KB: the archive grows past its 1,975 spare bytes, so CRASH6/CRASH.BD moves to the virtual region). Imported: the index gains one entry, every entry recomposes to the crate's or the disc's bytes, SYSTEM.CNF is the crate's; on the OPTIONS route the game draws 'graphic optionz' (>= min_draws) and never 'graphic options', the census row counts 1 layer and 3 files (SYSTEM.CNF, CRASH.BH, CRASH.BD) with reads served, and the boot log shows the archive moved to the virtual region"
+  },
+  "exe": {
+    "function": "FUN_001ac8d0 Font::ConstructBase",
+    "code_address": "0x001AC8D4",
+    "code_bytes": 8,
+    "rodata_string": "internal alignment error",
+    "rodata_bytes": 4,
+    "padlog": "fixtures/padlogs/title_intro_idle.padlog",
+    "stop_at": 1400,
+    "title_state": "Title",
+    "why": "a folder holding the disc's SLES_525.68 with 8 bytes XORed inside FUN_001ac8d0 (Font::ConstructBase, from 0x001AC8D0) and the first 4 letters of the .rodata string 'internal alignment error' (the retail MPEG decoder's message; the port decodes the movies itself) upper-cased: code_changes exactly [that function], data_changes {.data 0, .rodata 4, .sdata 0, vu 0}, code_changes_unsupported; on, the overlay serves the program whole and the game reaches the Title (boundary ~1262 on this route)"
+  },
+  "base": {
+    "padlog": "fixtures/padlogs/options_graphic.padlog",
+    "stop_at": 1700,
+    "variants": ["sample", "whole", "bytes"],
+    "identical_files": ["frames.fhash", "audio.ahash", "state.trace"],
+    "why": "the (iv) mod copied with its CRASH6/CRASH.BD row's base record edited: base_sample_sha256 zeroed (the start-up check), base_sha256 wrong with no sample (the whole-file check), base_bytes + 1 (the size check). Each must be refused at start-up with the line 'mods: the disc overlay left out <id>: disc/CRASH6/CRASH.BD.ranges: made for another CRASH6/CRASH.BD ...', the census row 0 layers, the original line drawn as often as in the vanilla run and the changed one never, and the pictures, sound and states byte-identical to the vanilla run"
+  },
+  "frozen": "2026-10-25: RED on the base (edb23b8: no twinsanityevolved-modtool beside the game -- every check RED); with the import build's tool lent to the base game, iso / xdelta / ppf_bps / crate / exe GREEN and base RED (the base game composes the three edited recipes: 'graphic optionz' x266, mods=1:3:298, no refusal). GREEN on the importer: the image, xdelta3 -S none (8,935 bytes), PPF (1,094) and BPS (39) imports all compose CRASH6/CRASH.BD to d2596e2c... in folders of ~1.4 KB, the -S djw patch refused; the crate 698 entries all right, 'graphic optionz' x266 / 'graphic options' x0, mods=1:3:298, the archive moved to lba 1259392 (virtual); the executable FUN_001ac8d0 Font::ConstructBase, .rodata 4 (0x00307398), Title at 1262; the three edited bases refused with the line, 'graphic options' x266, mods=0:0:0, pictures / sound / states identical to the vanilla run || 2026-10-26: (vii) loose and (viii) usa_crate added -- RED on 59a161b (its tool refuses a bare .rm2: 'a file that is not a mod for this game'; its crate import keeps no notes, no settings warning), GREEN on its change; (i)-(vi) unchanged",
+  "loose": {
+    "entry": "Startup\\Default.rm2",
+    "file": "Default.rm2",
+    "cut_bytes": 4,
+    "id": "default",
+    "files_changed": [
+      "CRASH6/CRASH.BD",
+      "CRASH6/CRASH.BH"
+    ],
+    "ambiguous": {
+      "entry": "Language\\Code\\English.txt",
+      "file": "English.txt",
+      "refusal_starts": "The file English.txt could match "
+    },
+    "other_release": {
+      "refusal_starts": "The file Default.rm2 matches the European disc's entry Startup\\Default.rm2 (",
+      "refusal_ends": "it was made for the European disc."
+    },
+    "why": ": the disc's own Startup\\Default.rm2 (the startup chunk), extracted at run time with 4 bytes cut from its end -- the sample loose Default.rm2 is a PAL chunk 4 bytes shorter than this disc's entry; never the original file -- dropped as ONE bare file: matched by its last name to the one entry of that name, the archive rebuilt as a crate's layer1 (the index rewritten, every later entry 4 bytes earlier, the archive a recipe), verify and this judge's recomposition (that entry the cut bytes, every other the disc's); a bare English.txt (several entries of that name on this disc) refused with them listed; over the North American disc (--ntsc-iso) the same file refused as the European disc's entry"
+  },
+  "usa_crate": {
+    "info": "Name=Import Judge USA Crate\nDescription=the mod import judge's North American crate\nAuthor=the judge\nVersion=v1.64\n!Made at run time from the North American disc.\n!For the mod to work, apply Classic Slide Jump for Crash and Classic Explosion Damage.\nModLoaderVersion=v1.3.0\nGame=CrashTS\n",
+    "bank": "Language\\Code\\American.txt",
+    "from": "graphic options",
+    "to": "graphic optionz",
+    "music_mh_byte": 100,
+    "files_changed": [
+      "CRASH6/CRASH.BD",
+      "CRASH6/MUSIC.MH"
+    ],
+    "region": "NTSC-U",
+    "executable": "SLUS_209.09",
+    "redump_starts": "SLUS-20909 v",
+    "note": "For the mod to work, apply Classic Slide Jump for Crash and Classic Explosion Damage.",
+    "warning": "this mod asks for game-code settings of Crate Mod Loader (Classic Slide Jump for Crash, Classic Explosion Damage) that this port cannot apply",
+    "settings": [
+      "Classic Slide Jump for Crash",
+      "Classic Explosion Damage"
+    ],
+    "european_warning_starts": "it looks made for the North American disc: 1 of its archive entries",
+    "why": "a USA Mod Crate's shape (a real USA crate's: a lower-case layer0/crash6/ folder, layer1 entries by the North American index's names, a '!' line asking for Crate Mod Loader settings) made at run time from --ntsc-iso, never kept: imported against that disc -- base NTSC-U / SLUS_209.09 / its Redump name, the '!' lines kept as notes, the warning naming the settings the port cannot apply, MUSIC.MH replaced whole, the archive a recipe with the bank's one changed line; verify, this judge's recomposition, inspect the same; over --iso (the European disc) it imports with the warning that it looks made for the North American disc (American.txt is not this disc's entry). The real crate is never a judge input"
+  }
+}

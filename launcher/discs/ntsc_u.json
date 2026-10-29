@@ -1,0 +1,273 @@
+{
+  "schema": 2,
+  "kind": "files",
+  "id": "ntsc-u",
+  "title": "Crash Twinsanity",
+  "region": "NTSC-U",
+  "serial": "SLUS-20909",
+  "executable": "SLUS_209.09",
+  "volume_id": "CRASH",
+  "sectors": 1029536,
+  "retail": true,
+  "provenance": "the retail dump: Redump disc 13689 (SLUS-20909 v2.00), matched by size, CRC-32 and SHA-1",
+  "image": {
+    "bytes": 2108489728,
+    "crc32": "06c5bb4a",
+    "sha1": "4f1a56f633c1b500bf3e39a0df1fdc8f101018ff",
+    "redump": {
+      "compared": [
+        42680,
+        13689
+      ],
+      "match": 13689,
+      "verdict": "matches Redump disc 13689 (SLUS-20909 v2.00): size, CRC-32 and SHA-1"
+    }
+  },
+  "system_cnf": {
+    "boot2": "cdrom0:\\SLUS_209.09;1",
+    "ver": "2.00",
+    "vmode": "NTSC"
+  },
+  "elf": {
+    "entry": "0x00100008",
+    "machine": 8,
+    "bytes": 2151940
+  },
+  "made_by": "tools/discs/manifest.py --label retail: names, sizes and hashes only (no byte of any file)",
+  "files": [
+    {
+      "path": "SYSTEM.CNF",
+      "bytes": 57,
+      "sha256": "4d64b7c23e8ec14f94aa5c27343b97bf078dbb029d5e92c9eb741f45fe10021a",
+      "core": true
+    },
+    {
+      "path": "SLUS_209.09",
+      "bytes": 2151940,
+      "sha256": "8d114879fb704d328394771aec6276136bdb4ecf4c5f8de06139b7b42974038f",
+      "core": true
+    },
+    {
+      "path": "FMV/ATTRACT.PSS",
+      "bytes": 79216644,
+      "sha256": "feb26fb3ca10ae61660ca2faa70e01e15fe2d364e6ac274469b817d15b221ee0",
+      "core": false
+    },
+    {
+      "path": "FMV/B01_A.PSS",
+      "bytes": 38584324,
+      "sha256": "a150bb7dddf547675c1728bb1aedc047760277c0d25ac1b2c122ecd3b01c65c7",
+      "core": false
+    },
+    {
+      "path": "FMV/B01_B.PSS",
+      "bytes": 39878660,
+      "sha256": "79ccc4c86373c07fa5da074d59cd942b60a17ad9a18e662ccc1a606b18c13dd0",
+      "core": false
+    },
+    {
+      "path": "FMV/B04_A.PSS",
+      "bytes": 67993604,
+      "sha256": "033c5eb72716f171e0d67a3d2225a716a123298f9fadc557bf0d8ed41362a01e",
+      "core": false
+    },
+    {
+      "path": "FMV/BONUS/BONUS1.PSS",
+      "bytes": 14565380,
+      "sha256": "32e931ce18bbdd7d40bef085eab0e86912b7916cd0ef6dc72d94fd3959039d02",
+      "core": false
+    },
+    {
+      "path": "FMV/BONUS/BONUS2.PSS",
+      "bytes": 15597572,
+      "sha256": "0dd3a9c8a2b53f602c800b378524e95dd0bf48c5f3bd8386e89c81dd6625206e",
+      "core": false
+    },
+    {
+      "path": "FMV/BONUS/BONUS3.PSS",
+      "bytes": 10584068,
+      "sha256": "f3e44e9b32a5dcefcbb66d94ec2afcbd9cc41250f4d181869fbba88bf76efecd",
+      "core": false
+    },
+    {
+      "path": "FMV/BONUS/BONUS4.PSS",
+      "bytes": 15073284,
+      "sha256": "546bfd4f4b4732840de71b4ca9326799d35c06802c348be7195a9f2f1bd406cb",
+      "core": false
+    },
+    {
+      "path": "FMV/COMPLETE.PSS",
+      "bytes": 101351428,
+      "sha256": "eda8ea0bce8c827bda300dc2064b344f3200af5fe7b03bd1d476025cd28bd49c",
+      "core": false
+    },
+    {
+      "path": "FMV/H01_A.PSS",
+      "bytes": 35454980,
+      "sha256": "0ceca8b9a7c67fc2171a0c36f1e9501dfa17e52afa8fe6396ec1495ba895bb8f",
+      "core": false
+    },
+    {
+      "path": "FMV/H01_F.PSS",
+      "bytes": 61194244,
+      "sha256": "c4f45b8ea0964098980f5c52dff0de49988e9d67641fe9fa6394196e99a01e48",
+      "core": false
+    },
+    {
+      "path": "FMV/H02_A.PSS",
+      "bytes": 46710788,
+      "sha256": "3bc1db68a4b1c488a5f0db740995b2817ea914679b52c42ef0c95a8a5ec5b1df",
+      "core": false
+    },
+    {
+      "path": "FMV/H02_B.PSS",
+      "bytes": 16449540,
+      "sha256": "5aba0a764cb28107db8f706be0384858402a3a1ac97761b148e0aa9d6acabe0c",
+      "core": false
+    },
+    {
+      "path": "FMV/H02_KA.PSS",
+      "bytes": 24739844,
+      "sha256": "9f1f9e0cd9a78e2792aa4155ccf51dc9800c33a18286a13d3928991c8e291f5c",
+      "core": false
+    },
+    {
+      "path": "FMV/H02_N.PSS",
+      "bytes": 6029316,
+      "sha256": "ac7b02c8e832c996c4a68ccd2d746bc295a8a9f5e2728a46d89e414a6a5a8ce4",
+      "core": false
+    },
+    {
+      "path": "FMV/H03_F.PSS",
+      "bytes": 74678276,
+      "sha256": "c5da7a036c15197ab8d2c8eb7f263250dcd35f0d531ba6e3dba6ee51b291a5ee",
+      "core": false
+    },
+    {
+      "path": "FMV/H04_A.PSS",
+      "bytes": 67993604,
+      "sha256": "033c5eb72716f171e0d67a3d2225a716a123298f9fadc557bf0d8ed41362a01e",
+      "core": false
+    },
+    {
+      "path": "FMV/H04_DA.PSS",
+      "bytes": 44335108,
+      "sha256": "f6580054e38e4453c22a8b0e951d79b27b8a724d21582f34662f2062983e45ba",
+      "core": false
+    },
+    {
+      "path": "FMV/H04_DB.PSS",
+      "bytes": 65798148,
+      "sha256": "8fde93da8773986c5428167b36278544a63ffbb2d57a40fb4ae26290543a8ea9",
+      "core": false
+    },
+    {
+      "path": "FMV/SPYRO.PSS",
+      "bytes": 108937220,
+      "sha256": "b0ea76483f7db9b9f4b63e361a3c2323c8cee06f73c34b5de566c01cb5f475fa",
+      "core": false
+    },
+    {
+      "path": "FMV/TTIDENT.PSS",
+      "bytes": 15941636,
+      "sha256": "50ec14819b4f90a3da3e11839b0c272a6351c19e88056618d33e5ee3cd3bd60c",
+      "core": false
+    },
+    {
+      "path": "FMV/VIVENDI.PSS",
+      "bytes": 7127044,
+      "sha256": "e29c3813bdc7315763713c913e6082f903cde2566d93c47b002d0854979d9d67",
+      "core": false
+    },
+    {
+      "path": "CRASH6/AMERICAN.MB",
+      "bytes": 13121536,
+      "sha256": "ce8a5322d722ed8338f8aa62afee131e9934022d134c8e80d1b5dae7787277a4",
+      "core": false
+    },
+    {
+      "path": "CRASH6/AMERICAN.MH",
+      "bytes": 2868,
+      "sha256": "7517e3f9b551e156996ea55e70c8d21d51d149d7acc7cd898f8b8c6062f7f914",
+      "core": false
+    },
+    {
+      "path": "CRASH6/CRASH.BD",
+      "bytes": 890851747,
+      "sha256": "eeedcae83d4e0c3ff483fe9f8afa8d3822bd734027434a7a1abbb84273dd17d7",
+      "core": true
+    },
+    {
+      "path": "CRASH6/CRASH.BH",
+      "bytes": 27376,
+      "sha256": "27fe74b6f1253954dc9c2bede794a8528df0b035852ce4e8213d8d08ad42f6a7",
+      "core": true
+    },
+    {
+      "path": "CRASH6/MUSIC.MB",
+      "bytes": 221773824,
+      "sha256": "cc5cb043dcbdd23745652df015b7fe055dbd276d16bd3924057d90ff4c9eb371",
+      "core": true
+    },
+    {
+      "path": "CRASH6/MUSIC.MH",
+      "bytes": 2868,
+      "sha256": "b979171c1ae105d1bd19e1dfd624c625acbf4b57b3c3df2f2445b51cfa1176a0",
+      "core": true
+    },
+    {
+      "path": "CRASH6/SYS/CDVDSTM.IRX",
+      "bytes": 33521,
+      "sha256": "276c175fe4a6d83d43baeb86b40cd5a7c3fc7b13b15df6da541040f926d5eb07",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/IOPRP300.IMG",
+      "bytes": 275345,
+      "sha256": "02d314464c17c715d7e809297b0aba184173a98616b1fafeac27fe33fc480c82",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/LIBSD.IRX",
+      "bytes": 28573,
+      "sha256": "89e2322522f30fe5631c2e6c72ef82ac948377f5005331989165a5751297bc10",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/MCMAN.IRX",
+      "bytes": 96181,
+      "sha256": "e4e2afe72c123faa7c5f86624185479cd800d94c065ce5d023c540aa0935830a",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/MCSERV.IRX",
+      "bytes": 7385,
+      "sha256": "dd33d243b91adb6fb5587ee77b212ca7fe6bb24bffa6cd128bc3d59e6cf6e6d2",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/PADMAN.IRX",
+      "bytes": 45797,
+      "sha256": "7362ff796dced5c94a99d04fd50a774d92aa23d5605eb04d84997dd7cb5508c0",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/SDRDRV.IRX",
+      "bytes": 7313,
+      "sha256": "92856b7620241881e55f2f981e1eded2d400d457bdf8d348ccc564da7a3049a6",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/SIO2MAN.IRX",
+      "bytes": 6553,
+      "sha256": "1964b83bcc8c0cab9dfcf9b9637e0e313e69c23fd5c73408fe889ace91f13708",
+      "core": false
+    },
+    {
+      "path": "CRASH6/SYS/STREAM.IRX",
+      "bytes": 116156,
+      "sha256": "96ef95beac5173873c93073ea394b9dd245f1fae06cf18615dcb8d20efef6760",
+      "core": false
+    }
+  ]
+}

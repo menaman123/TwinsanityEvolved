@@ -1,0 +1,26 @@
+{
+  "schema": 2,
+  "id": "arabic",
+  "kind": "language",
+  "name": "arabic",
+  "author": "TwinsanityEvolved",
+  "version": "1.1.0",
+  "description": "The game's texts in Arabic: our translation (tools/text/arabic.tsv) drawn right to left with our own Arabic glyphs in the game's lettering style (tools/font). A language pack, not a mod: it is offered as a text language in the game's options and the launcher's Settings whenever it is in the mods folder; the speech is the speech language's. Holds no disc data.",
+  "source": {
+    "kind": "repo",
+    "artefact": "tools/text/arabic.tsv",
+    "sha256": "532f7fe30bb8605e69a5cee5cd70582c95823d912affb85ca4c391c4225bfb2d"
+  },
+  "base": {
+    "region": "PAL",
+    "executable": "SLES_525.68"
+  },
+  "files": [],
+  "language": {
+    "id": "arabic",
+    "label": "arabic",
+    "text_bank": "data/arabic.bank",
+    "font": "data/arabic.font",
+    "direction": "rtl"
+  }
+}

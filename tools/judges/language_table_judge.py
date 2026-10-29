@@ -1,25 +1,34 @@
 #!/usr/bin/env python3
-"""language_table_judge.py -- is EVERY language the disc carries (text or speech) in the language table, Spanish included?
+"""language_table_judge.py -- does the game offer EVERY language the disc carries, as two independent rows: the TEXT
+languages and the SPEECH languages?
 
-The user's PAL image is a text-only patch: the `English` slot's text is Portuguese and the `Spanish` slot's text is English, every
-speech bank (Crash6\\<Slot>.mb), FMV track and title card is the 2004 retail file. The first tuple table offered one row per TEXT language
-and so had no Spanish: the Spanish speech, title cards and credits were unreachable. This judge checks, against the disc itself:
+The PAL image used for development is a text-only patch: the `English` slot's text is Portuguese and the `Spanish` slot's text is English, every
+speech bank (Crash6\\<Slot>.mb), FMV track and title card is the 2004 retail file. The text and the speech are two settings, so
+the table is two lists. This judge checks, against the disc itself:
 
   A  EVIDENCE   ten strings per slot off the disc (Language\\Code\\<slot>.txt lines 9-15: the title menu and the Options rows;
                 Language\\AgentLab\\<slot>.txt lines 0, 4, 7: the credits' thank-you and the first level's dialogue) and the
                 language they are in, decided by a per-language word table over all ten (not the one "new game" string). The
                 table is printed; the fixture's per-slot verdict must agree with it (the fixture is frozen FROM this evidence).
-  B  TABLE      a run's language line lists one row per text language the disc carries PLUS one per speech bank whose language
-                has no text, labelled by content ("spanish (english text)", "portuguese (english voice)"); a spanish row exists.
-  C  SELECTION  one deterministic headless run per disc language (the five slot languages: english, french, german, spanish,
-                italian) with `--language <name>` to the Title: the runner selects it BY NAME (not "no language ... : english"),
-                the speech bank opened is that language's Crash6\\<Slot>.mb, the Code text the game ended in (`game text 9`) is
-                the language's text slot's line 9, GameController reached Title (7).
-  D  MENU       one run playing fixtures/padlogs/language_table_rows.padlog (title -> OPTIONS -> GAME OPTIONS -> the language row
-                stepped RIGHT seven times): the Options row cycles through EVERY row of the table, spanish included, and the
-                spanish step opens Crash6\\Spanish.mb.
+  B  TABLE      a run's language line lists the TEXT languages (one per text content, english first, then slot order; then the
+                language packs the fixture names) and the SPEECH languages (one per speech bank, english first, then slot
+                order): on this disc text english portuguese french german italian, speech english french german spanish
+                italian -- spanish is a speech language, portuguese a text language, neither needs the other.
+  C  SELECTION  one deterministic headless run per pairing of the fixture ("pairs": every text language and every speech
+                language at least once, each with ANOTHER language for the other row) with `--text-language X --speech-language
+                Y` to the Title: both chosen BY NAME, the Code text the game ended in (`game text 9`) is X's line 9, the speech
+                bank opened is Y's Crash6\\<Slot>.mb, the voice slot is Y's, GameController reached Title (7).
+  D  MENU       one run playing fixtures/padlogs/language_rows.padlog (title -> OPTIONS -> GAME OPTIONS -> the TEXT LANGUAGE row
+                stepped RIGHT through every choice, then the SPEECH LANGUAGE row through every choice): each row cycles through
+                every language of its list, a text step leaves the speech as it was, a speech step leaves the text as it was,
+                and every speech step opens that language's Crash6\\<Slot>.mb.
 
 RED on bin/twinsanityevolved.310b6f0 (no spanish row: C's spanish run falls back to english, D cycles five rows), GREEN after.
+2026-10-27: two lists; RED on the runner of 43e9989 (one row of tuples, no --text-language), GREEN on its change.
+
+A fixture may name language packs in the mods folder for every run ("runner_args") and the text languages they add after
+the disc's ("mod_rows": fixtures/judges/language_table_arabic_pal.json): the text list must then end with them, the menu's
+text row must step through them too, and the speech list is unchanged (a pack never adds speech).
 
 Usage: language_table_judge.py --bin BIN --iso ISO [--out DIR] [--fixture F] [--evidence-only]
 Exit 0 = GREEN, 1 = RED, 2 = the run failed / the disc has no banks.
@@ -59,8 +68,11 @@ WORDS = {
 }
 
 LANGLINE = re.compile(r"\[twinsanityevolved\] language: (.*)")
-ROW = re.compile(r"\[(\w+): text slot (\d+)(?: \((\w+)\))?, voice slot (\d+) \((\w+)\), row '([^']*)'\]")
-SELECTED_BY = re.compile(r"requested '([^']*)' -> (.*?) by (.+?): text slot (\d+), voice slot (\d+), Language\(\) (\d+)")
+TEXTS = re.compile(r"; text languages((?: \[[^\]]*\])*)")
+SPEECHES = re.compile(r"; speech languages((?: \[[^\]]*\])*)")
+TEXT_ROW = re.compile(r"\[(\w+): text slot (\d+)(?:, pack (\w+))?\]")
+SPEECH_ROW = re.compile(r"\[(\w+): voice slot (\d+) \(([^)]*)\)\]")
+SELECTED_BY = re.compile(r"requested text '([^']*)' speech '([^']*)' -> text (\w+) by ([^:]+): text slot (\d+); speech (\w+) by ([^:]+): voice slot (\d+); Language\(\) (\d+)")
 TEXT9 = re.compile(r"game text 9 = '([^']*)'")
 BANK_OPEN = re.compile(r'\[stream\] open #(\d+) "Crash6\\(\w+)\.mb" -> found')
 GSTATE = re.compile(r"game state @ boundary (\d+): (\w+) \((\d+)\)")
@@ -148,35 +160,35 @@ def disc_slots(iso):
         return slots
 
 
-def derive_table(slots):
-    """The expected table: {language: {text_slot, voice_slot, speech_bank, row}} -- one per text language (english first), the
-    voice slot the slot NAMED for it with a speech bank (else English's); then one per speech bank whose language has no text,
-    on English's text slot (else its own), labelled '(<text> text)'."""
-    out = {}
+def derive_lists(slots):
+    """The expected two lists: texts {language: {text_slot}} (one per text content, english first, then slot order) and
+    speeches {language: {voice_slot, speech_bank}} (one per speech bank, english first, then slot order)."""
+    texts, speeches = {}, {}
     for slot in sorted(slots):
-        text = slots[slot]["text"]
-        if text in out:
-            continue
-        voice = next((s for s in sorted(slots) if slots[s]["speech"] == text), None)
-        if voice is None:
-            voice = next((s for s in sorted(slots) if slots[s]["speech"] == "english"), slot)
-        vl = slots[voice]["speech"] or slots[voice]["name"].lower()
-        out[text] = {"text_slot": slot, "voice_slot": voice, "speech_bank": slots[voice]["speech_bank"],
-                     "row": text + (" (%s voice)" % vl if vl != text else "")}
-    order = ["english"] + [k for k in out if k != "english"]
-    out = {k: out[k] for k in order}
-    english_text = out["english"]["text_slot"] if "english" in out else None
-    for slot in sorted(slots):
-        sl = slots[slot]["speech"]
-        if sl is None or sl in out:
-            continue
-        text_slot = english_text if english_text is not None else slot
-        out[sl] = {"text_slot": text_slot, "voice_slot": slot, "speech_bank": slots[slot]["speech_bank"],
-                   "row": "%s (%s text)" % (sl, slots[text_slot]["text"])}
-    return out
+        t = slots[slot]["text"]
+        if t not in texts:
+            texts[t] = {"text_slot": slot, "text9": slots[slot]["text9"]}
+        sp = slots[slot]["speech"]
+        if sp and sp not in speeches:
+            speeches[sp] = {"voice_slot": slot, "speech_bank": slots[slot]["speech_bank"]}
+    order = lambda d: {k: d[k] for k in (["english"] if "english" in d else []) + [k for k in d if k != "english"]}
+    return order(texts), order(speeches)
 
 
 # ---- the runs ------------------------------------------------------------------------------------------------------------
+def supports(binary, flag):
+    """Does the runner's usage (--help, headless, no stdin) name `flag`?"""
+    try:
+        r = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+                           env=dict(os.environ, TE_GFX_HEADLESS="1"))
+    except Exception:
+        return False
+    return flag in (r.stderr + r.stdout)
+
+
+RUNNER_ARGS = []   # the fixture's "runner_args" (every run): a language mod switched on
+
+
 def run(binary, iso, out, tag, extra, stop_at, run_seconds):
     d = os.path.join(out, tag)
     shutil.rmtree(d, ignore_errors=True)
@@ -184,7 +196,7 @@ def run(binary, iso, out, tag, extra, stop_at, run_seconds):
     os.makedirs(mc)
     log = os.path.join(d, "run.log")
     args = [binary, "--iso", iso, "--deterministic", "--no-sdl-input", "--no-audio", "--trace-state", "--mc-dir", mc,
-            "--stop-at", str(stop_at), "--run-seconds", str(run_seconds)] + extra
+            "--stop-at", str(stop_at), "--run-seconds", str(run_seconds)] + RUNNER_ARGS + extra
     env = dict(os.environ)
     env["TE_GFX_HEADLESS"] = "1"
     env["TE_STREAM_TRACE"] = "1"
@@ -196,25 +208,28 @@ def run(binary, iso, out, tag, extra, stop_at, run_seconds):
 
 
 def parse_log(path):
-    """The language lines in order (rows, the selection each announces), the speech banks opened in order (with the line
-    number), the game's text 9 at exit, whether Title (7) was reached."""
-    r = {"lines": [], "banks": [], "text9": None, "title": False, "rows": None}
-    with open(path, errors="replace") as f:
+    """The language lines in order (the two lists, the selection each announces), the speech banks opened in order (with the
+    line number), the game's text 9 at exit, whether Title (7) was reached."""
+    r = {"lines": [], "banks": [], "text9": None, "title": False, "texts": None, "speeches": None}
+    with open(path, encoding="latin-1") as f:   # byte for byte (a language pack's text is Windows-1256)
         for n, line in enumerate(f):
             m = LANGLINE.search(line)
             if m:
                 body = m.group(1)
-                rows = [(x[0], int(x[1]), x[2] or x[0], int(x[3]), x[4], x[5]) for x in ROW.findall(body)]
+                mt, ms = TEXTS.search(body), SPEECHES.search(body)
+                texts = [(x[0], int(x[1]), x[2]) for x in TEXT_ROW.findall(mt.group(1))] if mt else []
+                speeches = [(x[0], int(x[1]), x[2]) for x in SPEECH_ROW.findall(ms.group(1))] if ms else []
                 sel = SELECTED_BY.search(body)
-                entry = {"n": n, "rows": [x[5] for x in rows],
-                         "table": {x[0]: {"text_slot": x[1], "text_language": x[2], "voice_slot": x[3], "voice_language": x[4], "row": x[5]} for x in rows},
-                         "selected": None}
+                entry = {"n": n, "texts": [x[0] for x in texts], "speeches": [x[0] for x in speeches], "selected": None,
+                         "text_slots": {x[0]: x[1] for x in texts}, "packs": {x[0]: x[2] for x in texts if x[2]},
+                         "voice_slots": {x[0]: x[1] for x in speeches}}
                 if sel:
-                    entry["selected"] = {"requested": sel.group(1), "row": sel.group(2), "how": sel.group(3), "text_slot": int(sel.group(4)),
-                                         "voice_slot": int(sel.group(5)), "code": int(sel.group(6))}
+                    entry["selected"] = {"requested_text": sel.group(1), "requested_speech": sel.group(2), "text": sel.group(3),
+                                         "how_text": sel.group(4), "text_slot": int(sel.group(5)), "speech": sel.group(6),
+                                         "how_speech": sel.group(7), "voice_slot": int(sel.group(8)), "code": int(sel.group(9))}
                 r["lines"].append(entry)
-                if r["rows"] is None and rows:
-                    r["rows"] = entry["rows"]
+                if r["texts"] is None and (texts or speeches):
+                    r["texts"], r["speeches"] = entry["texts"], entry["speeches"]
                 m9 = TEXT9.search(body)
                 if m9:
                     r["text9"] = m9.group(1)
@@ -254,90 +269,132 @@ def main():
     fx_slots = {int(k): v for k, v in fx["slots"].items()}
     same_disc = len(slots) == len(fx_slots) and all(k in slots and slots[k]["text"] == v["text"] and slots[k]["speech"] == v["speech"] for k, v in fx_slots.items())
     if same_disc:
-        table = fx["languages"]
-        print("language_table_judge: the disc's slots match the frozen fixture (%s): its table stands" % os.path.relpath(a.fixture, ROOT))
+        texts, speeches = dict(fx["texts"]), dict(fx["speeches"])
+        print("language_table_judge: the disc's slots match the frozen fixture (%s): its lists stand" % os.path.relpath(a.fixture, ROOT))
     else:
-        table = derive_table(slots)
-        print("language_table_judge: another disc than the fixture's: the table is derived from its slots")
-    rows_expected = [table[k]["row"] for k in table]
-    for lang, t in table.items():
-        print(json.dumps({"language": lang, **t, "text9": slots[t["text_slot"]]["text9"]}))
-    if not any(l == "spanish" for l in table):
-        print("language_table_judge: NOTE the disc has neither Spanish text nor a Spanish speech bank: no spanish row is expected")
+        texts, speeches = derive_lists(slots)
+        print("language_table_judge: another disc than the fixture's: the lists are derived from its slots")
+    # a fixture with language packs in the mods folder (runner_args) names the text languages they add after the disc's
+    global RUNNER_ARGS
+    RUNNER_ARGS = list(fx.get("runner_args", []))
+    for lang, row in fx.get("mod_rows", {}).items():
+        texts[lang] = row
+    texts_expected, speeches_expected = list(texts), list(speeches)
+    print(json.dumps({"texts": texts, "speeches": speeches}))
+    if "spanish" not in speeches:
+        print("language_table_judge: NOTE the disc has no Spanish speech bank: no spanish speech language is expected")
     if a.evidence_only:
         return 0
+    if not supports(a.bin, "--text-language"):
+        print(json.dumps({"verdict": "red", "bin": a.bin, "reasons": ["the runner has no --text-language / --speech-language: one language row "
+                                                                     "drives the text and the speech (no two lists)"]}))
+        print("language_table_judge: RED (the runner has no text and speech languages of their own)")
+        return 1
 
-    # B + C -- one run per disc language
-    languages = fx.get("select", [l for l in table])
+    # B + C -- one run per pairing (text X, speech Y)
+    pairs = fx.get("pairs") or [[t, speeches_expected[i % len(speeches_expected)]] for i, t in enumerate(texts_expected)]
+    covered_t = {t for t, _ in pairs}
+    covered_s = {sp for _, sp in pairs}
     verdicts = {}
-    for lang in languages:
-        if lang not in table:
-            fails.append("%s: the disc has no such language (table %s)" % (lang, list(table)))
+    for lang in [l for l in texts_expected if l not in covered_t]:
+        fails.append("C: the pairs leave the text language %s out" % lang)
+    for lang in [l for l in speeches_expected if l not in covered_s]:
+        fails.append("C: the pairs leave the speech language %s out" % lang)
+    for t, sp in pairs:
+        tag = "%s+%s" % (t, sp)
+        if t not in texts or sp not in speeches:
+            fails.append("%s: the disc has no such pair (texts %s, speeches %s)" % (tag, texts_expected, speeches_expected))
             continue
-        exp = table[lang]
-        log, rc = run(a.bin, a.iso, out, lang, ["--language", lang], fx.get("stop_at", 2500), fx.get("run_seconds", 300))
+        log, rc = run(a.bin, a.iso, out, tag, ["--text-language", t, "--speech-language", sp], fx.get("stop_at", 2500), fx.get("run_seconds", 300))
         if rc != 0:
-            print("language_table_judge: run %s exited %d" % (lang, rc), file=sys.stderr)
+            print("language_table_judge: run %s exited %d" % (tag, rc), file=sys.stderr)
             return 2
         r = parse_log(log)
         f = []
-        if r["rows"] is None:
-            f.append("TABLE: the runner printed no language table")
-        elif r["rows"] != rows_expected:
-            f.append("TABLE: rows %s, expected %s" % (r["rows"], rows_expected))
-        if r["rows"] is not None and not any(x.startswith("spanish") for x in r["rows"]) and "spanish" in table:
-            f.append("TABLE: no spanish row")
+        if r["texts"] is None:
+            f.append("TABLE: the runner printed no text / speech lists (one row of language tuples?)")
+        else:
+            if r["texts"] != texts_expected:
+                f.append("TABLE: text languages %s, expected %s" % (r["texts"], texts_expected))
+            if r["speeches"] != speeches_expected:
+                f.append("TABLE: speech languages %s, expected %s" % (r["speeches"], speeches_expected))
         sel = r["lines"][0]["selected"] if r["lines"] else None
         if sel is None:
-            f.append("SELECTION: the runner reported no selection")
+            f.append("SELECTION: the runner reported no text / speech selection")
         else:
-            if sel["how"] != "name":
-                f.append("SELECTION: '%s' selected by %s, not by name (-> %s)" % (lang, sel["how"], sel["row"]))
-            if sel["text_slot"] != exp["text_slot"] or sel["voice_slot"] != exp["voice_slot"]:
-                f.append("SELECTION: text slot %d / voice slot %d, expected %d / %d" % (sel["text_slot"], sel["voice_slot"], exp["text_slot"], exp["voice_slot"]))
+            if sel["how_text"] != "name" or sel["text"] != t:
+                f.append("SELECTION: the text is %s by %s, not %s by name" % (sel["text"], sel["how_text"], t))
+            if sel["how_speech"] != "name" or sel["speech"] != sp:
+                f.append("SELECTION: the speech is %s by %s, not %s by name" % (sel["speech"], sel["how_speech"], sp))
+            if sel["text_slot"] != texts[t]["text_slot"] or sel["voice_slot"] != speeches[sp]["voice_slot"]:
+                f.append("SELECTION: text slot %d / voice slot %d, expected %d / %d" % (sel["text_slot"], sel["voice_slot"], texts[t]["text_slot"],
+                                                                                        speeches[sp]["voice_slot"]))
         bank = "Crash6\\%s.mb" % r["banks"][-1][1] if r["banks"] else None
-        if (bank or "").lower() != (exp["speech_bank"] or "").lower():
-            f.append("SPEECH: the speech bank opened is %s, expected %s" % (bank, exp["speech_bank"]))
-        want9 = slots[exp["text_slot"]]["text9"]
+        if (bank or "").lower() != (speeches[sp]["speech_bank"] or "").lower():
+            f.append("SPEECH: the speech bank opened is %s, expected %s" % (bank, speeches[sp]["speech_bank"]))
+        # a language pack's text 9 is its bank's (Windows-1256 bytes, as the log carries them); a disc language's the slot's line 9
+        want9 = texts[t]["text9"].encode("cp1256").decode("latin-1") if texts[t].get("mod") else slots[texts[t]["text_slot"]]["text9"]
         if r["text9"] != want9:
-            f.append("TEXT: game text 9 is %r, expected the slot %d text's %r" % (r["text9"], exp["text_slot"], want9))
+            f.append("TEXT: game text 9 is %r, expected %r" % (r["text9"], want9))
         if not r["title"]:
             f.append("the run did not reach Title (7)")
-        verdicts[lang] = {"rows": r["rows"], "selected": sel, "speech_bank": bank, "text9": r["text9"], "title": r["title"],
-                          "verdict": "green" if not f else "red", "reasons": f}
-        print(json.dumps({"run": lang, **verdicts[lang]}))
-        fails += ["%s: %s" % (lang, x) for x in f]
+        verdicts[tag] = {"texts": r["texts"], "speeches": r["speeches"], "selected": sel, "speech_bank": bank, "text9": r["text9"],
+                         "title": r["title"], "verdict": "green" if not f else "red", "reasons": f}
+        print(json.dumps({"run": tag, **verdicts[tag]}))
+        fails += ["%s: %s" % (tag, x) for x in f]
 
-    # D -- the Options menu steps through every row
-    log, rc = run(a.bin, a.iso, out, "menu", ["--skip-movies", "--language", fx.get("menu_start", "english"), "--play-pad",
-                                               os.path.join(ROOT, fx["menu_padlog"])], fx.get("menu_stop_at", 2000), fx.get("run_seconds", 300))
+    # D -- the Options menu steps both rows through every language, each leaving the other alone
+    log, rc = run(a.bin, a.iso, out, "menu", ["--skip-movies", "--text-language", fx.get("menu_start", "english"), "--speech-language",
+                                               fx.get("menu_start", "english"), "--play-pad", os.path.join(ROOT, fx["menu_padlog"])],
+                  fx.get("menu_stop_at", 2400), fx.get("run_seconds", 300))
     if rc != 0:
         print("language_table_judge: the menu run exited %d" % rc, file=sys.stderr)
         return 2
     r = parse_log(log)
-    steps = [(e["n"], e["selected"]["requested"], e["selected"]["voice_slot"]) for e in r["lines"] if e["selected"] and e["selected"]["how"] == "options menu"]
-    stepped = []
-    for n, name, voice in steps:
-        if name not in stepped:
-            stepped.append(name)
+    steps = [e for e in r["lines"] if e["selected"] and "options menu" in (e["selected"]["how_text"], e["selected"]["how_speech"])]
+    text_steps, speech_steps = [], []
     f = []
+    prev = None
+    for e in steps:
+        sel = e["selected"]
+        if prev is not None:
+            moved_text, moved_speech = sel["text"] != prev["text"], sel["speech"] != prev["speech"]
+            if moved_text and moved_speech:
+                f.append("MENU: one step changed both rows (%s/%s -> %s/%s)" % (prev["text"], prev["speech"], sel["text"], sel["speech"]))
+            if moved_text:
+                text_steps.append((e["n"], sel["text"]))
+            if moved_speech:
+                speech_steps.append((e["n"], sel["speech"]))
+        else:
+            # the first step: from the run's start (english / english)
+            if sel["text"] != fx.get("menu_start", "english"):
+                text_steps.append((e["n"], sel["text"]))
+            if sel["speech"] != fx.get("menu_start", "english"):
+                speech_steps.append((e["n"], sel["speech"]))
+        prev = sel
     if not steps:
-        f.append("MENU: no Options-menu language step was logged (the pad log did not reach the row?)")
-    missing = [l for l in table if l not in stepped]
-    if missing:
-        f.append("MENU: the Options row never showed %s (stepped: %s)" % (missing, stepped))
-    if "spanish" in table:
-        es = [n for n, name, voice in steps if name == "spanish"]
-        if es:
-            after = [b for (n, b) in r["banks"] if n > es[0]]
-            if not after or after[0].lower() != "spanish":
-                f.append("MENU: the spanish step did not open Crash6\\Spanish.mb (banks after it: %s)" % after[:2])
-    verdicts["menu"] = {"steps": [(name, voice) for n, name, voice in steps], "banks": [b for n, b in r["banks"]], "verdict": "green" if not f else "red", "reasons": f}
+        f.append("MENU: no Options-menu language step was logged (the pad log did not reach the rows?)")
+    stepped_t = [fx.get("menu_start", "english")] + [x for _, x in text_steps]
+    stepped_s = [fx.get("menu_start", "english")] + [x for _, x in speech_steps]
+    missing_t = [l for l in texts_expected if l not in stepped_t]
+    missing_s = [l for l in speeches_expected if l not in stepped_s]
+    if missing_t:
+        f.append("MENU: the TEXT LANGUAGE row never showed %s (stepped: %s)" % (missing_t, stepped_t))
+    if missing_s:
+        f.append("MENU: the SPEECH LANGUAGE row never showed %s (stepped: %s)" % (missing_s, stepped_s))
+    for n, lang in speech_steps:
+        after = [b for (m, b) in r["banks"] if m > n]
+        want = speeches.get(lang, {}).get("speech_bank", "")
+        if not after or ("Crash6\\%s.mb" % after[0]).lower() != (want or "").lower():
+            f.append("MENU: the speech step to %s did not open %s (banks after it: %s)" % (lang, want, after[:2]))
+    verdicts["menu"] = {"text_steps": [x for _, x in text_steps], "speech_steps": [x for _, x in speech_steps], "banks": [b for n, b in r["banks"]],
+                        "verdict": "green" if not f else "red", "reasons": f}
     print(json.dumps({"run": "menu", **verdicts["menu"]}))
     fails += ["menu: %s" % x for x in f]
 
     verdict = "GREEN" if not fails else "RED"
-    print(json.dumps({"verdict": verdict.lower(), "bin": a.bin, "languages": languages, "rows_expected": rows_expected, "reasons": fails}))
+    print(json.dumps({"verdict": verdict.lower(), "bin": a.bin, "pairs": pairs, "texts_expected": texts_expected, "speeches_expected": speeches_expected,
+                      "reasons": fails}))
     print("language_table_judge: %s (%s)" % (verdict, ", ".join("%s %s" % (k, v["verdict"]) for k, v in verdicts.items())))
     return 0 if not fails else 1
 

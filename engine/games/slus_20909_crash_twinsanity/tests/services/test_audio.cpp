@@ -288,6 +288,63 @@ int main() {
     paused_release.PauseAll();
     CHECK(paused_release.KeyOff(0) == 0);
     CHECK(Silent(paused_release.MixTick()) && paused_release.IsVoiceFree(0) == 1);
+    {
+        // The voices' block loop (the default) against the frame loop of the earlier builds (SetLegacyMix(true)): the same
+        // voice copied, every parameter random (attack 0..127, decay, sustain 0..15 -- the Decay phase --, release, pitch
+        // 0..0x3fff, inverted-phase volumes), volume ramps targeted between runs, releases, held runs, runs of random length:
+        // the outputs and every state field bit for bit.
+        std::mt19937 random(20261027);
+        std::vector<std::shared_ptr<const std::vector<uint8_t>>> assets;
+        for (uint32_t k = 0; k < 8; ++k)
+            assets.push_back(std::make_shared<const std::vector<uint8_t>>(Sample(2 + random() % 30, k % 2 == 0, 100 + k)));
+        uint64_t compared = 0;
+        bool same = true;
+        for (int v = 0; v < 400 && same; ++v) {
+            title::SampleVoice::Parameters parameters;
+            parameters.pitch = static_cast<uint16_t>(random() % 3 ? 0x1000 : random() % 0x4000);
+            parameters.left = static_cast<uint16_t>(random() % 0x8000);
+            parameters.right = static_cast<uint16_t>(random() % 0x8000);
+            parameters.attack = static_cast<uint8_t>(random() % 2 ? 0 : random() % 128);
+            parameters.decay = static_cast<uint8_t>(random() % 16);
+            parameters.sustain = static_cast<uint8_t>(random() % 2 ? 15 : random() % 16);
+            parameters.release = static_cast<uint8_t>(random() % 32);
+            title::SampleVoice frame_loop, block_loop;
+            CHECK(frame_loop.Start(assets[random() % assets.size()], parameters));
+            block_loop = frame_loop;
+            const uint32_t repeats = random() % 4 ? 0 : 1 + random() % 3;
+            for (int run = 0; run < 40 && same; ++run) {
+                const uint32_t op = random() % 8, a = random() % 0x8000, b = random() % 0x8000;
+                for (title::SampleVoice* voice : {&frame_loop, &block_loop}) {
+                    if (op == 0) voice->RampVolumes(static_cast<uint16_t>(a), static_cast<uint16_t>(b));
+                    else if (op == 1) voice->Release(static_cast<uint8_t>(a % 32));
+                    else if (op == 2) voice->SetPitch(static_cast<uint16_t>(a % 0x4000));
+                    voice->AdvanceControls();
+                }
+                const uint32_t frames = 1 + random() % 200;
+                const bool held = random() % 6 == 0;
+                std::vector<float> fl(frames, 7.0f), fr(frames, 7.0f), bl(frames, 9.0f), br(frames, 9.0f);
+                title::SampleVoice::SetLegacyMix(true);
+                if (held) frame_loop.StepPausedRun(frames);
+                else frame_loop.StepRun(frames, repeats, fl.data(), fr.data());
+                title::SampleVoice::SetLegacyMix(false);
+                if (held) block_loop.StepPausedRun(frames);
+                else block_loop.StepRun(frames, repeats, bl.data(), br.data());
+                const auto& x = frame_loop.Capture();
+                const auto& y = block_loop.Capture();
+                const auto bits = [](const auto& value_a, const auto& value_b) { return std::memcmp(&value_a, &value_b, sizeof value_a) == 0; };
+                same = (held || (std::memcmp(fl.data(), bl.data(), frames * 4) == 0 && std::memcmp(fr.data(), br.data(), frames * 4) == 0)) &&
+                       x.phase == y.phase && x.block_offset == y.block_offset && x.loop_offset == y.loop_offset &&
+                       x.fraction == y.fraction && x.sample_index == y.sample_index && x.history.h1 == y.history.h1 &&
+                       x.history.h2 == y.history.h2 && x.block == y.block && x.flags == y.flags && x.previous == y.previous &&
+                       bits(x.envelope, y.envelope) && bits(x.left, y.left) && bits(x.right, y.right) && x.ends == y.ends &&
+                       (x.samples == nullptr) == (y.samples == nullptr) && bits(x.left_ramp.Capture().step, y.left_ramp.Capture().step);
+                compared += held ? 0 : frames;
+            }
+        }
+        CHECK(same);
+        CHECK(compared > 100000);
+        title::SampleVoice::SetLegacyMix(false);
+    }
     std::printf("Audio: %d checks, %d failures\n", checks, failures);
     return failures != 0;
 }

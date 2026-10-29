@@ -5,14 +5,14 @@
 # tools/ci/release_launcher.sh.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\ci\release_launcher.ps1 -Qt C:\Qt\6.8.0\msvc2022_64 [-BuildDir DIR]
-#              [-DistDir DIR] [-Engine DIR] [-SkipBuild] [-SourceUrl URL]
+#              [-DistDir DIR] [-Engine DIR] [-SkipBuild] [-ReleasesUrl URL]
 param(
     [string]$Qt = $env:QT_PREFIX,
     [string]$BuildDir = "build-launcher-windows",
     [string]$DistDir = "dist",
     [string]$Engine = "engine",
     [switch]$SkipBuild,
-    [string]$SourceUrl = ""
+    [string]$ReleasesUrl = ""
 )
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -47,11 +47,13 @@ if (-not (Test-Path $Exe)) { throw "release_launcher: no $Exe" }
 $Dist = Join-Path $DistDir $Product   # the folder inside the zip players see
 Step "stage $Dist"
 if (Test-Path $Dist) { Remove-Item -Recurse -Force $Dist }
-New-Item -ItemType Directory -Force -Path (Join-Path $Dist "titles"), (Join-Path $Dist "licenses") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $Dist "titles\discs"), (Join-Path $Dist "licenses") | Out-Null
 Copy-Item $Exe (Join-Path $Dist "$Product.exe")
-# the manifest: the launcher always installs the latest commit of the source repository (-SourceUrl overrides it)
-if ($SourceUrl) { $m.source.url = $SourceUrl }
+# the manifest (the launcher installs the newest release it names; -ReleasesUrl points it elsewhere) and the retail
+# disc lists beside it (file names, sizes, sha256)
+if ($ReleasesUrl) { $m.release.releases_url = $ReleasesUrl }
 $m | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $Dist "titles\title.json") -Encoding UTF8
+Copy-Item (Join-Path $Root "launcher\discs\*.json") (Join-Path $Dist "titles\discs")
 $QtVersion = & (Join-Path $Qt "bin\qmake.exe") -query QT_VERSION
 @(
     "$Product launcher $Version (windows-x64)",
@@ -69,9 +71,10 @@ Copy-Item $lgpl.FullName (Join-Path $Dist "licenses\Qt-LICENSE.LGPL3")
 @"
 # $Product launcher -- third-party notices -- $Product launcher $Version (windows-x64)
 
-This application is the NativeEE engine's launcher (engine/app/launcher, MIT) carrying this title's manifest. It
-contains NO game data and no code derived from the game: on its first run it downloads the port's source and the
-pinned toolchain into %LOCALAPPDATA%\$Product and builds the game there from your own disc image.
+This application is the NativeEE engine's launcher (engine/app/launcher, MIT) carrying this title's manifest and its
+retail disc lists (file names, sizes and sha256 -- no game data). It contains NO game data and no code derived from the
+game: it recognises your own disc image, downloads the finished game from the project's releases (checked against their
+SHA256SUMS) into the game folder you choose, and starts it.
 
 | component | how it is linked | licence | text |
 |---|---|---|---|

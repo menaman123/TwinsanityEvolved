@@ -1,0 +1,194 @@
+{
+  "judge": "launcher_mods_judge",
+  "description": "The launcher's Mods page against a mods folder, through its Qt Test driver (test_launcher_mods, offscreen, a fresh home folder with the game folder the setup makes): the rows and their lines, a switch, the order (Move down, a drag's drop), Remove with its confirmation, a dropped mod folder, a dropped Mod Crate folder handed to the import library, an import without a disc. The expected lines are frozen here AND recomputed from each mod.json by the judge (the rules of  'Mods').",
+  "generator": "tools/mods/make_fixture_overlay.py",
+  "generator_kinds": "order",
+  "code_mod": {
+    "id": "antagony",
+    "manifest": {
+      "schema": 2,
+      "id": "antagony",
+      "kind": "disc",
+      "name": "Ant Agony [remix]",
+      "author": "the mods page judge",
+      "version": "1.2",
+      "description": "A modified executable: its data changes apply, its code changes cannot (no payload: an empty disc tree).",
+      "source": {
+        "kind": "folder",
+        "artefact": "antagony",
+        "sha256": ""
+      },
+      "base": {
+        "region": "PAL",
+        "executable": "SLES_525.68"
+      },
+      "files": [],
+      "executable": {
+        "data_changes": {
+          ".rodata": 4
+        },
+        "code_changes": [
+          "FUN_001ac8d0 Font::ConstructBase",
+          "FUN_001acb10 Font::Draw"
+        ]
+      }
+    }
+  },
+  "language_mod": "mods/arabic",
+  "broken_mod": {
+    "id": "zz_broken",
+    "text": "{ \"schema\": 2, \"id\": \"zz_broken\", "
+  },
+  "crate": {
+    "folder": "Cave Remix",
+    "info": "Name=Cave Remix\nAuthor=the launcher mods judge\nVersion=2.0\nDescription=A fixture crate: SYSTEM.CNF from the disc with its version line changed.\n",
+    "layer0_file": "SYSTEM.CNF",
+    "change": [
+      "VER = 1.01",
+      "VER = 1.02"
+    ],
+    "why": "a Mod Crate folder (ModCrateInfo.txt + layer0/<disc file>) made at run time from the disc, never kept: with the stub the page shows its refusal sentence; with the import library the mod appears as a row"
+  },
+  "builtins": [
+    {
+      "id": "level_select",
+      "name": "Level select",
+      "switchable": false,
+      "summary_starts": "Always in the game under Options > Mods."
+    },
+    {
+      "id": "speedrun",
+      "name": "Speedrun mode",
+      "switchable": true
+    }
+  ],
+  "rows": [
+    {
+      "id": "antagony",
+      "name": "Ant Agony [remix]",
+      "byline": "by the mods page judge · 1.2",
+      "region": "PAL",
+      "summary": "Data changes in the executable.",
+      "warning": "Code changes not supported: FUN_001ac8d0 Font::ConstructBase, FUN_001acb10 Font::Draw."
+    },
+    {
+      "id": "order_a",
+      "name": "order a",
+      "byline": "by the disc overlay judge · 1",
+      "region": "PAL",
+      "summary": "Changes CRASH6/CRASH.BD.",
+      "warning": ""
+    },
+    {
+      "id": "order_b",
+      "name": "order b",
+      "byline": "by the disc overlay judge · 1",
+      "region": "PAL",
+      "summary": "Changes CRASH6/CRASH.BD.",
+      "warning": ""
+    },
+    {
+      "id": "zz_broken",
+      "broken": true,
+      "summary": "This mod's description cannot be read."
+    }
+  ],
+  "steps": {
+    "switch": "order_a",
+    "move_down": "antagony",
+    "after_move_down": "order_a,antagony,order_b",
+    "drag": "order_b:0",
+    "after_drag": "order_b,order_a,antagony",
+    "drop_event": "order_b:end",
+    "after_drop_event": "order_a,antagony,order_b",
+    "remove": "antagony",
+    "order_after_remove": "order_a,order_b"
+  },
+  "stub_refusal": "Cave Remix could not be added. Importing is not available in this version of the launcher.",
+  "cancel_notice": "Adding Cave Remix was stopped; nothing was added.",
+  "no_disc": "Add your disc image on the Games page first: a mod is made against your disc.",
+  "frozen": "2026-10-25: RED on the base's launcher (edb23b8: no Mods page driver -- its page has no order, summary, warning, Remove or import); GREEN on the Mods page change with the stub importer (the crate refused with the stub's sentence) and, after the import library (ee9eaac), GREEN with the import library (the crate became the row 'Cave Remix', PAL, 'Changes SYSTEM.CNF.', with its mod.json); 2026-10-26: the replace rule (a ready folder and the crate, declined and accepted) and the North American mod's row -- RED on 59a161b (the same id refused: 'A mod named copied is already in the mods folder. Remove it first to replace it.'; no sheet, no region phrase), GREEN on its change | 2026-10-27: a language pack is not a mod -- mods/arabic in the folder is on no row (not_listed), the order holds the three mods only (the steps' orders without arabic), and the pack's earlier switch / order place are dropped at a write. RED on 43e9989 (the page lists 'arabic (text)' with a switch, 'Text-only language...'), GREEN on its change. | 2026-10-27: the game's own Mods page lists the built-ins only, so the launcher's row of the North American mod (its archive recipe records the North American archive, as an import writes it) says 'Left out on this disc: made for the North American disc.' first in the warning colour; the summary keeps its region. RED on 21f1107's launcher (the warning has no left-out line), GREEN on its change.",
+  "usa_mod": {
+    "folder": "USA Mod",
+    "manifest": {
+      "schema": 2,
+      "id": "usa_mod",
+      "kind": "disc",
+      "name": "Nitro USA [judge]",
+      "author": "the launcher mods judge",
+      "version": "v1.64",
+      "description": "A mod made over the North American disc, as the importer writes one from a Mod Crate (empty files: no game data).",
+      "notes": [
+        "For the mod to work, apply Classic Slide Jump for Crash and Classic Explosion Damage.",
+        "Good luck."
+      ],
+      "source": {
+        "kind": "modcrate",
+        "artefact": "Nitro_USA.zip",
+        "sha256": ""
+      },
+      "base": {
+        "region": "NTSC-U",
+        "executable": "SLUS_209.09",
+        "disc": {
+          "size": 2108489728,
+          "sha1": "4f1a56f633c1b500bf3e39a0df1fdc8f101018ff",
+          "redump": "SLUS-20909 v2.00"
+        }
+      },
+      "files": [
+        {
+          "path": "CRASH6/CRASH.BD",
+          "form": "ranges",
+          "bytes": 1041890518,
+          "base_bytes": 890851747,
+          "base_sha256": "eeedcae83d4e0c3ff483fe9f8afa8d3822bd734027434a7a1abbb84273dd17d7",
+          "base_sample_sha256": "580d3a04a2a0644b2a712e57d324b800e871d01a4b693bb00bfc324866ebcd56",
+          "base_sample_windows": 64,
+          "base_sample_window_bytes": 65536
+        },
+        {
+          "path": "CRASH6/MUSIC.MB",
+          "form": "replace"
+        },
+        {
+          "path": "CRASH6/MUSIC.MH",
+          "form": "replace"
+        }
+      ],
+      "import": {
+        "tool": "twinsanityevolved-modtool",
+        "format": 1,
+        "warnings": [
+          "this mod asks for game-code settings of Crate Mod Loader (Classic Slide Jump for Crash, Classic Explosion Damage) that this port cannot apply"
+        ],
+        "game_code_settings": [
+          "Classic Slide Jump for Crash",
+          "Classic Explosion Damage"
+        ]
+      }
+    },
+    "row": {
+      "name": "Nitro USA [judge]",
+      "byline": "by the launcher mods judge · v1.64",
+      "region": "NTSC-U",
+      "summary": "Changes 3 files, made for the North American disc.",
+      "warning": "Left out on this disc: made for the North American disc.\nIt asks for Crate Mod Loader settings the game cannot apply: Classic Slide Jump for Crash, Classic Explosion Damage.",
+      "notes": "For the mod to work, apply Classic Slide Jump for Crash and Classic Explosion Damage.\nGood luck."
+    },
+    "why": "a mod folder made over the North American disc (base.region NTSC-U) dropped on this European game folder (the PAL disc used for development), with the archive recipe an import writes (CRASH6/CRASH.BD ranges recording the North American archive it was made over: its size and hashes from a real USA crate's import, no game data; the folder's recipe is a few zeros): the badge NTSC-U; the summary says the disc it was made for; first in the warning colour 'Left out on this disc: made for the North American disc.' -- the game's base check leaves it out on this disc, and the game's own Mods page no longer says so; the warning names the Crate Mod Loader settings it asks for, the notes are the crate's '!' lines. A mod of whole files made for the other region is composed by the game all the same: the summary's region alone, no left-out line (test_launcher_mods: beta)"
+  },
+  "replace": {
+    "text": "The copy you have is removed first.",
+    "folder_title": "Replace Copied mod 1?",
+    "folder_declined": "Nothing was added: you keep Copied mod 1.",
+    "folder_accepted": "Copied mod replaced the copy you had; its switch and its place in the order are kept. It takes effect the next time the game starts.",
+    "crate_title": "Replace Cave Remix 2.0?",
+    "crate_declined": "Nothing was added: you keep Cave Remix 2.0.",
+    "crate_accepted": "Cave Remix replaced the copy you had; its switch and its place in the order are kept. It takes effect the next time the game starts.",
+    "why": "ONE RULE for an id the mods folder has: the page asks first for the drop of a ready mod folder and for an import (Add a mod..., a drop); declined, nothing changes; accepted, the new copy replaces the old one (staged, then swapped) and keeps its switch and its place in the order"
+  },
+  "not_listed": [
+    "arabic"
+  ]
+}

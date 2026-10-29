@@ -1,7 +1,6 @@
 // app/launcher/games_page.cpp -- the Games page.
 #include "games_page.h"
 #include <QDragEnterEvent>
-#include "app_data.h"
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -10,27 +9,27 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QScrollArea>
-#include <QTimer>
+#include <QStandardPaths>
 #include <QVBoxLayout>
-#include "build_runner.h"
-#include "details_sheet.h"
+#include "app_data.h"
 #include "disc_scanner.h"
 #include "empty_state.h"
-#include "first_run_sheet.h"
 #include "flat_button.h"
 #include "folder_row.h"
 #include "game_card.h"
 #include "game_library.h"
 #include "game_process.h"
-#include "installer.h"
 #include "launcher_app.h"
 #include "launcher_theme.h"
+#include "launcher_update_box.h"
 #include "page_header.h"
 #include "progress_panel.h"
+#include "release_catalogue.h"
+#include "release_installer.h"
 #include "title_manifest.h"
 namespace ps2r::launcher {
 
-GamesPage::GamesPage(LauncherApp* app, DetailsSheet* details, QWidget* parent) : QWidget(parent), app_(app), details_(details) {
+GamesPage::GamesPage(LauncherApp* app, QWidget* parent) : QWidget(parent), app_(app) {
     const LauncherTheme& t = LauncherTheme::instance();
     setAcceptDrops(true);
     scroll_ = new QScrollArea(this);
@@ -41,46 +40,63 @@ GamesPage::GamesPage(LauncherApp* app, DetailsSheet* details, QWidget* parent) :
     auto* col = new QVBoxLayout(inner);
     col->setContentsMargins(LauncherTheme::S5, 0, LauncherTheme::S5, LauncherTheme::S5);
     col->setSpacing(LauncherTheme::S3);
-    col->addWidget(new PageHeader(QStringLiteral("Games"), QStringLiteral("Your disc images, found by what is on the disc, never by the file name."), inner));
+    col->addWidget(new PageHeader(QStringLiteral("Games"), QStringLiteral("Your disc images, recognised by what is on them."), inner));
+    // a newer launcher: offered here, where the launcher opens; hidden while there is nothing to say
+    launcherUpdate_ = new LauncherUpdateBox(app, LauncherUpdateBox::OnGames, inner);
+    col->addWidget(launcherUpdate_);
+    banner_ = new QLabel(inner);
+    banner_->setObjectName(QStringLiteral("games_banner"));
+    banner_->setFont(t.font(LauncherTheme::Body));
+    banner_->setWordWrap(true);
+    QColor tint = t.color(LauncherTheme::Error);
+    tint.setAlphaF(0.10f);
+    banner_->setStyleSheet(QStringLiteral("color: %1; background: rgba(%2, %3, %4, %5); border-radius: 6px; padding: 8px 10px;")
+                               .arg(t.css(LauncherTheme::Error)).arg(tint.red()).arg(tint.green()).arg(tint.blue()).arg(tint.alphaF()));
+    banner_->hide();
+    col->addWidget(banner_);
     cardsHost_ = new QWidget(inner);
     cardsLayout_ = new QVBoxLayout(cardsHost_);
     cardsLayout_->setContentsMargins(0, 0, 0, 0);
     cardsLayout_->setSpacing(LauncherTheme::S3);
     col->addWidget(cardsHost_);
-    QStringList places;
-    for (const QString& f : app->manifest()->scanFolders()) {
-        const QString name = QFileInfo(app->appData()->expand(f, app->folder("games"))).fileName();
-        if (!name.isEmpty()) places << name;
-    }
-    empty_ = new EmptyState(QStringLiteral("No game found — drop your disc image here"),
-                            QStringLiteral("%1 and removable drives were searched for a disc of %2.").arg(places.join(", "), app->manifest()->name()),
+    empty_ = new EmptyState(QStringLiteral("No disc image yet"),
+                            QStringLiteral("Drop your disc image here, or choose it. The launcher recognises it by what is on it."),
                             QStringLiteral("Choose a disc image…"), QStringLiteral("Search again"), inner);
     empty_->setObjectName(QStringLiteral("empty_state"));
     col->addWidget(empty_);
-    auto* foldersTitle = new QLabel(QStringLiteral("Folders"), inner);
-    foldersTitle->setFont(t.font(LauncherTheme::Title));
-    col->addSpacing(LauncherTheme::S2);
-    col->addWidget(foldersTitle);
-    for (const FolderSpec& f : app->manifest()->folders()) {
-        auto* row = new FolderRow(f.label, inner);
-        row->setObjectName(QStringLiteral("folder_%1").arg(f.id));
-        row->setProperty("folder_id", f.id);
-        connect(row, &FolderRow::changeRequested, this, [this, id = f.id] { changeFolder(id); });
-        folders_ << row;
-        col->addWidget(row);
-    }
     auto* bottom = new QHBoxLayout();
     bottom->setSpacing(LauncherTheme::S2);
-    scanNote_ = new QLabel(inner);
-    scanNote_->setFont(t.font(LauncherTheme::Caption));
-    scanNote_->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::TextMuted)));
-    bottom->addWidget(scanNote_, 1);
+    searchNote_ = new QLabel(inner);
+    searchNote_->setFont(t.font(LauncherTheme::Caption));
+    searchNote_->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::TextMuted)));
+    bottom->addWidget(searchNote_, 1);
     add_ = new FlatButton(QStringLiteral("Add a disc image…"), FlatButton::Secondary, inner);
-    rescan_ = new FlatButton(QStringLiteral("Rescan"), FlatButton::Quiet, inner);
+    search_ = new FlatButton(QStringLiteral("Search again"), FlatButton::Quiet, inner);
     bottom->addWidget(add_);
-    bottom->addWidget(rescan_);
-    col->addSpacing(LauncherTheme::S2);
+    bottom->addWidget(search_);
     col->addLayout(bottom);
+    // the installs and an update in progress
+    auto* installedTitle = new QLabel(QStringLiteral("Installed"), inner);
+    installedTitle->setFont(t.font(LauncherTheme::Title));
+    installedTitle->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::Text)));
+    col->addSpacing(LauncherTheme::S2);
+    col->addWidget(installedTitle);
+    installsHost_ = new QWidget(inner);
+    installsLayout_ = new QVBoxLayout(installsHost_);
+    installsLayout_->setContentsMargins(0, 0, 0, 0);
+    installsLayout_->setSpacing(LauncherTheme::S1);
+    col->addWidget(installsHost_);
+    updateProgress_ = new ProgressPanel(inner);
+    updateProgress_->hide();
+    col->addWidget(updateProgress_);
+    updateLine_ = new QLabel(inner);
+    updateLine_->setObjectName(QStringLiteral("games_update_line"));
+    updateLine_->setFont(t.font(LauncherTheme::Body));
+    updateLine_->setWordWrap(true);
+    updateLine_->hide();
+    col->addWidget(updateLine_);
+    another_ = new FlatButton(QStringLiteral("Get the game for PS Vita or another computer…"), FlatButton::Secondary, inner);
+    col->addWidget(another_, 0, Qt::AlignLeft);
     col->addStretch(1);
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
@@ -89,46 +105,57 @@ GamesPage::GamesPage(LauncherApp* app, DetailsSheet* details, QWidget* parent) :
     connect(empty_, &EmptyState::primaryClicked, this, &GamesPage::chooseDisc);
     connect(empty_, &EmptyState::quietClicked, this, [this] { app_->scan(); });
     connect(add_, &QAbstractButton::clicked, this, &GamesPage::chooseDisc);
-    connect(rescan_, &QAbstractButton::clicked, this, [this] { app_->scan(); });
+    connect(search_, &QAbstractButton::clicked, this, [this] {
+        searchNote_->setText(QStringLiteral("Looking for disc images…"));
+        app_->scan();
+    });
+    connect(another_, &QAbstractButton::clicked, this, &GamesPage::anotherPlaceRequested);
     connect(app_->library(), &GameLibrary::changed, this, &GamesPage::rebuildCards);
     connect(app_, &LauncherApp::stateChanged, this, &GamesPage::refreshCards);
-    connect(app_, &LauncherApp::foldersChanged, this, &GamesPage::refreshFolders);
+    connect(app_, &LauncherApp::installsChanged, this, &GamesPage::rebuildInstalls);
+    connect(app_, &LauncherApp::updateAvailable, this, [this](const QString&, const QString&) { rebuildInstalls(); refreshCards(); });
+    connect(app_->scanner(), &DiscScanner::found, this, [this](const DiscFound& d) {
+        if (!app_->setupDone()) return;   // the setup's step 1 chooses; afterwards a found disc is a card
+        if (!locating_.isEmpty()) {   // Locate…: the card follows the disc to where it is now
+            app_->library()->relocate(locating_, d);
+            locating_.clear();
+            return;
+        }
+        app_->addDisc(d);
+        banner_->hide();
+    });
     connect(app_->scanner(), &DiscScanner::finished, this, [this](int n, int) {
-        scanNote_->setText(n == 0 ? QStringLiteral("No disc image of %1 was found in the usual places.").arg(app_->manifest()->name())
-                                  : QStringLiteral("%1 disc image%2 found.").arg(n).arg(n == 1 ? "" : "s"));
-        rebuildCards();
+        if (!app_->setupDone()) return;
+        searchNote_->setText(n == 0 ? QStringLiteral("No disc image of %1 was found in the usual places.").arg(app_->manifest()->name())
+                                    : QStringLiteral("%1 disc image%2 found.").arg(n).arg(n == 1 ? "" : "s"));
     });
-    connect(app_->builder(), &BuildRunner::progress, this, [this](const QString& text, int done, int total, qint64 elapsed, qint64 remaining) {
-        for (GameCard* c : cards_) {
-            c->progress()->setText(QStringLiteral("Building for this machine — %1").arg(text));
-            c->progress()->setProgress(done, total);
-            QString cap = QStringLiteral("%1 elapsed").arg(BuildRunner::durationText(elapsed));
-            if (remaining >= 0) cap += QStringLiteral(" · about %1 left").arg(BuildRunner::durationText(remaining));
-            c->progress()->setCaption(cap);
-        }
+    connect(app_, &LauncherApp::discRefused, this, [this](const QString& path, const QString& reason) {
+        if (!app_->setupDone()) return;
+        locating_.clear();
+        showRefusal(path, reason);
     });
-    connect(app_->builder(), &BuildRunner::logLine, this, [this](const QString& l) { details_->appendLine(l); });
-    connect(app_->builder(), &BuildRunner::finished, this, [this](const QString&, bool, const BuildRecord&) { refreshCards(); });
-    auto* ticker = new QTimer(this);
-    ticker->setInterval(1000);
-    connect(ticker, &QTimer::timeout, this, [this] {
-        if (app_->game()->running()) refreshCards();
-        if (app_->builder()->running() && app_->builder()->runningTarget() == app_->hostTarget()) {
-            // the configure phase prints no ninja lines: the elapsed time still moves
-            for (GameCard* c : cards_) {
-                const QString cap = c->progress()->caption();
-                if (!cap.contains(QStringLiteral("left"))) c->progress()->setCaption(QStringLiteral("%1 elapsed").arg(BuildRunner::durationText(app_->builder()->elapsedSeconds())));
-            }
-        }
+    ReleaseInstaller* inst = app_->installer();
+    connect(inst, &ReleaseInstaller::progress, this, [this](qint64 received, qint64 total, double rate) {
+        if (updating_.isEmpty()) return;
+        updateProgress_->setProgress(int(received >> 10), int(qMax<qint64>(1, total) >> 10));
+        updateProgress_->setCaption(QStringLiteral("%1 of %2 · %3").arg(ReleaseCatalogue::bytesText(received), ReleaseCatalogue::bytesText(total),
+                                                                       ReleaseCatalogue::rateText(rate)));
     });
-    ticker->start();
-    refreshFolders();
+    connect(inst, &ReleaseInstaller::finished, this, [this](bool ok) {
+        if (updating_.isEmpty()) return;
+        const LauncherTheme& th = LauncherTheme::instance();
+        updateProgress_->clear();
+        updateProgress_->hide();
+        updateLine_->setStyleSheet(QStringLiteral("color: %1;").arg(th.css(ok ? LauncherTheme::Ok : LauncherTheme::Error)));
+        updateLine_->setText(ok ? QStringLiteral("Updated to %1. Your settings, saves and mods were kept.").arg(app_->installer()->tag())
+                                : QStringLiteral("The update did not finish. %1").arg(app_->installer()->failureText()));
+        updateLine_->show();
+        updating_.clear();
+        rebuildInstalls();
+        refreshCards();
+    });
     rebuildCards();
-}
-
-FolderRow* GamesPage::folderRow(const QString& id) const {
-    for (FolderRow* r : folders_) if (r->property("folder_id").toString() == id) return r;
-    return nullptr;
+    rebuildInstalls();
 }
 
 GameCard* GamesPage::card(const QString& isoPath) const {
@@ -136,83 +163,130 @@ GameCard* GamesPage::card(const QString& isoPath) const {
     return nullptr;
 }
 
-void GamesPage::refreshFolders() {
-    for (FolderRow* r : folders_) r->setPath(app_->folder(r->property("folder_id").toString()));
-}
+QString GamesPage::bannerText() const { return banner_->isVisible() ? banner_->text() : QString(); }
+QString GamesPage::updateText() const { return updateLine_->isVisible() ? updateLine_->text() : QString(); }
 
 void GamesPage::rebuildCards() {
     for (GameCard* c : cards_) { cardsLayout_->removeWidget(c); c->deleteLater(); }
     cards_.clear();
     for (const GameEntry& g : app_->library()->games()) {
-        auto* c = new GameCard(app_, g.path, cardsHost_);
+        auto* c = new GameCard(app_, g.disc.path, cardsHost_);
         c->setObjectName(QStringLiteral("card_%1").arg(cards_.size()));
-        connect(c, &GameCard::actionRequested, this, [this, path = g.path] { runCardAction(path); });
-        connect(c, &GameCard::detailsRequested, this, [this] {
-            const BuildRecord r = app_->builder()->record(app_->hostTarget());
-            details_->showLogFile(QStringLiteral("Build details"), app_->builder()->currentLogPath());
-            Q_UNUSED(r);
-        });
-        connect(c, &GameCard::cancelRequested, this, [this] { app_->builder()->cancel(); });
-        connect(c, &GameCard::removeRequested, this, [this, path = g.path] { app_->library()->remove(path); });
+        connect(c, &GameCard::playRequested, this, [this, path = g.disc.path] { play(path); });
+        connect(c, &GameCard::installRequested, this, &GamesPage::installHereRequested);
+        connect(c, &GameCard::updateRequested, this, [this] { startUpdate(app_->hostTarget()); });
+        connect(c, &GameCard::locateRequested, this, [this, path = g.disc.path] { locate(path); });
+        connect(c, &GameCard::removeRequested, this, [this, path = g.disc.path] { app_->library()->remove(path); });
         cards_ << c;
         cardsLayout_->addWidget(c);
     }
     empty_->setVisible(cards_.isEmpty());
-    empty_->setTone(EmptyState::Neutral);
+    if (cards_.isEmpty()) {
+        empty_->setTone(EmptyState::Neutral);
+        empty_->setTexts(QStringLiteral("No disc image yet"),
+                         QStringLiteral("Drop your disc image here, or choose it. The launcher recognises it by what is on it."));
+    }
     cardsHost_->setVisible(!cards_.isEmpty());
+    add_->setVisible(!cards_.isEmpty());
+    search_->setVisible(!cards_.isEmpty());
+}
+
+void GamesPage::rebuildInstalls() {
+    const LauncherTheme& t = LauncherTheme::instance();
+    while (QLayoutItem* item = installsLayout_->takeAt(0)) {
+        if (item->widget()) item->widget()->deleteLater();
+        delete item;
+    }
+    const QVector<InstallRecord> all = app_->installs();
+    if (all.isEmpty()) {
+        auto* none = new QLabel(QStringLiteral("Nothing is installed yet."), installsHost_);
+        none->setFont(t.font(LauncherTheme::Body));
+        none->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::TextMuted)));
+        installsLayout_->addWidget(none);
+        return;
+    }
+    for (const InstallRecord& r : all) {
+        auto* w = new QWidget(installsHost_);
+        w->setObjectName(QStringLiteral("install_%1").arg(r.target));
+        auto* row = new QHBoxLayout(w);
+        row->setContentsMargins(0, LauncherTheme::S1, 0, LauncherTheme::S1);
+        row->setSpacing(LauncherTheme::S2);
+        const QString where = r.target == app_->hostTarget() ? QStringLiteral("This computer") : app_->manifest()->targetLabel(r.target);
+        auto* label = new QLabel(QStringLiteral("<b>%1</b> · %2 · %3").arg(where.toHtmlEscaped(), r.tag.toHtmlEscaped(), AppData::shortPath(r.folder).toHtmlEscaped()), w);
+        label->setFont(t.font(LauncherTheme::Body));
+        label->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::Text)));
+        row->addWidget(label, 1);
+        const QString newer = app_->updateFor(r.target);
+        if (!newer.isEmpty() && r.target != app_->hostTarget()) {
+            auto* up = new FlatButton(QStringLiteral("Update to %1").arg(newer), FlatButton::Secondary, w);
+            connect(up, &QAbstractButton::clicked, this, [this, target = r.target] { startUpdate(target); });
+            row->addWidget(up);
+        }
+        auto* open = new FlatButton(FolderRow::openInFileManagerLabel(), FlatButton::Quiet, w);
+        open->setAccessibleName(QStringLiteral("Open %1's folder").arg(where));
+        connect(open, &QAbstractButton::clicked, this, [folder = r.folder] { FolderRow::revealInFileManager(folder); });
+        row->addWidget(open);
+        installsLayout_->addWidget(w);
+    }
 }
 
 void GamesPage::refreshCards() {
     for (GameCard* c : cards_) c->refresh();
 }
 
-void GamesPage::runCardAction(const QString& isoPath) {
-    switch (app_->nextAction(isoPath)) {
-    case LauncherApp::Missing: app_->library()->remove(isoPath); break;
-    case LauncherApp::Install:
-        if (firstRun_) firstRun_->open();
-        app_->install();
-        break;
-    case LauncherApp::Build:
-        app_->build(app_->hostTarget());
-        refreshCards();
-        break;
-    case LauncherApp::Play: {
-        QString err;
-        if (!app_->play(isoPath, &err)) showDiscError(err);
-        break;
-    }
-    case LauncherApp::Playing: break;
-    }
+void GamesPage::startUpdate(const QString& target) {
+    const InstallRecord r = app_->installFor(target);
+    if (r.target.isEmpty() || app_->installer()->running()) return;
+    updating_ = target;
+    updateLine_->hide();
+    updateProgress_->show();
+    updateProgress_->setText(QStringLiteral("Updating %1 to %2…").arg(app_->manifest()->targetLabel(target), app_->updateFor(target)));
+    updateProgress_->setIndeterminate(true);
+    app_->startInstall(target, r.folder);
+}
+
+void GamesPage::play(const QString& isoPath) {
+    QString err;
+    if (!app_->play(isoPath, &err)) showRefusal(isoPath, err);
 }
 
 void GamesPage::chooseDisc() {
     QStringList filters;
     for (const QString& e : app_->manifest()->discExtensions()) filters << "*" + e;
-    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a disc image of %1").arg(app_->manifest()->name()),
-                                                      app_->folder("games"), QStringLiteral("Disc images (%1)").arg(filters.join(' ')));
+    const QString start = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Choose your %1 disc image").arg(app_->manifest()->name()), start,
+                                                      QStringLiteral("Disc images (%1)").arg(filters.join(' ')));
     if (!path.isEmpty()) addDiscFromPath(path);
 }
 
+void GamesPage::locate(const QString& isoPath) {
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Where is the disc image now?"), QFileInfo(isoPath).absolutePath());
+    if (path.isEmpty()) return;
+    locating_ = isoPath;
+    app_->identify(path);
+}
+
 void GamesPage::addDiscFromPath(const QString& path) {
-    QString reason;
-    if (!app_->addDisc(path, &reason)) showDiscError(reason);
+    banner_->hide();
+    app_->identify(path);
 }
 
-void GamesPage::showDiscError(const QString& reason) {
-    empty_->setTone(EmptyState::Error);
-    const int cut = reason.indexOf(". ");
-    const QString title = cut > 0 ? reason.left(cut) : QStringLiteral("That did not work");
-    const QString body = cut > 0 ? reason.mid(cut + 2) : reason;
-    empty_->setTexts(title, body);
-    empty_->setVisible(true);
+void GamesPage::showRefusal(const QString& path, const QString& reason) {
+    const QString title = QStringLiteral("%1 cannot be used.").arg(QFileInfo(path).fileName());
+    if (cards_.isEmpty()) {
+        empty_->setTone(EmptyState::Error);
+        empty_->setTexts(title, reason);
+        empty_->setVisible(true);
+        return;
+    }
+    banner_->setText(QStringLiteral("%1 %2").arg(title, reason));
+    banner_->show();
 }
 
-void GamesPage::changeFolder(const QString& id) {
-    const QString dir = QFileDialog::getExistingDirectory(this, QStringLiteral("Choose the %1 folder").arg(QString(id).replace('_', ' ')), app_->folder(id));
-    if (dir.isEmpty()) return;
-    if (id == "game_output") app_->chooseGameFolder(dir);   // a folder of the title's name inside it, the game copied there
-    else app_->setFolder(id, dir);
+void GamesPage::showEvent(QShowEvent* event) {
+    app_->library()->refreshMissing();
+    refreshCards();
+    QWidget::showEvent(event);
 }
 
 void GamesPage::dragEnterEvent(QDragEnterEvent* event) {
@@ -235,8 +309,7 @@ void GamesPage::paintEvent(QPaintEvent*) {
     const LauncherTheme& t = LauncherTheme::instance();
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(t.color(LauncherTheme::Accent), 2, Qt::DashLine);
-    p.setPen(pen);
+    p.setPen(QPen(t.color(LauncherTheme::Accent), 2, Qt::DashLine));
     p.setBrush(Qt::NoBrush);
     p.drawRoundedRect(QRectF(rect()).adjusted(LauncherTheme::S3, LauncherTheme::S3, -LauncherTheme::S3, -LauncherTheme::S3), LauncherTheme::radiusCard(), LauncherTheme::radiusCard());
     p.setFont(t.font(LauncherTheme::Title));

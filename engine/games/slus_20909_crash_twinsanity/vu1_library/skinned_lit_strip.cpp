@@ -42,6 +42,24 @@ V4 Load(QwPtr m, u32 qw) {
     return v;
 }
 
+// A loaded bone's xyz lanes clamped once: every FMAC that reads a lane reads CF of its raw bits, the same value for each
+// read (the loaded copy does not change), so the bodies below take it once per load. Likewise a value that is itself an
+// FMAC result (stored clamped) is its own CF, and x * 1.0f is x for a clamped x: those clamps are left out. Same operands,
+// same operations, same order -> the same bits.
+struct BoneC {
+    float c0[3], c1[3], c2[3], tr[3];
+};
+BoneC ClampBone(const Bone& b) {
+    BoneC c;
+    for (int k = 0; k < 3; ++k) {
+        c.c0[k] = CF(bits2f(b.c0.b[k]));
+        c.c1[k] = CF(bits2f(b.c1.b[k]));
+        c.c2[k] = CF(bits2f(b.c2.b[k]));
+        c.tr[k] = CF(bits2f(b.tr.b[k]));
+    }
+    return c;
+}
+
 }  // namespace
 
 bool SkinnedLitStrip::RunScalePhase(QwPtr m, u32 top, u32* stale_w_out) {
@@ -209,17 +227,17 @@ bool SkinnedLitStrip::RunSkin1040(QwPtr m, u32 top, u32 entry_vf19_w) {
         const float wx = CF(bits2f(wq.b[0]));
         const float wy = CF(bits2f(wq.b[1]));
         const float wz = CF(bits2f(wq.b[2]));
-        const Bone b0 = LoadBone(m, wq.b[0] & 0x1FF);
+        const BoneC b0 = ClampBone(LoadBone(m, wq.b[0] & 0x1FF));
 
         // Bone0 position: ACC = tr0*w0 FIRST, then the rotation rows; pw0 = pos * w0.
         float pw[3];
         for (int k = 0; k < 3; ++k) pw[k] = CF(CF(bits2f(pos.b[k])) * wx);
         float po[3];
         for (int k = 0; k < 3; ++k) {
-            float acc = CF(CF(bits2f(b0.tr.b[k])) * wx);
-            acc = CF(VuFloat::Fma(CF(bits2f(b0.c0.b[k])), CF(pw[0]), acc));
-            acc = CF(VuFloat::Fma(CF(bits2f(b0.c1.b[k])), CF(pw[1]), acc));
-            po[k] = CF(VuFloat::Fma(CF(bits2f(b0.c2.b[k])), CF(pw[2]), acc));
+            float acc = CF(b0.tr[k] * wx);
+            acc = CF(VuFloat::Fma(b0.c0[k], pw[0], acc));
+            acc = CF(VuFloat::Fma(b0.c1[k], pw[1], acc));
+            po[k] = CF(VuFloat::Fma(b0.c2[k], pw[2], acc));
         }
         // Normal by bone0: n = (pos.w, st.z raw, st.w raw), clamped on read.
         float nrm[3];
@@ -228,31 +246,31 @@ bool SkinnedLitStrip::RunSkin1040(QwPtr m, u32 top, u32 entry_vf19_w) {
             const float nsz = CF(bits2f(st.b[2]));
             const float nsw = CF(bits2f(st.b[3]));
             for (int k = 0; k < 3; ++k) {
-                float acc = CF(CF(bits2f(b0.c0.b[k])) * npw);
-                acc = CF(VuFloat::Fma(CF(bits2f(b0.c1.b[k])), nsz, acc));
-                nrm[k] = CF(VuFloat::Fma(CF(bits2f(b0.c2.b[k])), nsw, acc));
+                float acc = CF(b0.c0[k] * npw);
+                acc = CF(VuFloat::Fma(b0.c1[k], nsz, acc));
+                nrm[k] = CF(VuFloat::Fma(b0.c2[k], nsw, acc));
             }
         }
         if (cnt != 1) {
-            // Bone1 chained AFTER bone0 completes: ACC = prev*1.0; += tr1*w1; += rows.
-            const Bone b1 = LoadBone(m, wq.b[1] & 0x1FF);
+            // Bone1 chained AFTER bone0 completes: ACC = prev*1.0 (= prev, a clamped result); += tr1*w1; += rows.
+            const BoneC b1 = ClampBone(LoadBone(m, wq.b[1] & 0x1FF));
             for (int k = 0; k < 3; ++k) pw[k] = CF(CF(bits2f(pos.b[k])) * wy);
             for (int k = 0; k < 3; ++k) {
-                float acc = CF(CF(po[k]) * 1.0f);
-                acc = CF(VuFloat::Fma(CF(bits2f(b1.tr.b[k])), wy, acc));
-                acc = CF(VuFloat::Fma(CF(bits2f(b1.c0.b[k])), CF(pw[0]), acc));
-                acc = CF(VuFloat::Fma(CF(bits2f(b1.c1.b[k])), CF(pw[1]), acc));
-                po[k] = CF(VuFloat::Fma(CF(bits2f(b1.c2.b[k])), CF(pw[2]), acc));
+                float acc = po[k];
+                acc = CF(VuFloat::Fma(b1.tr[k], wy, acc));
+                acc = CF(VuFloat::Fma(b1.c0[k], pw[0], acc));
+                acc = CF(VuFloat::Fma(b1.c1[k], pw[1], acc));
+                po[k] = CF(VuFloat::Fma(b1.c2[k], pw[2], acc));
             }
             if (cnt != 2) {  // cnt == 3 (or 0)
-                const Bone b2 = LoadBone(m, wq.b[2] & 0x1FF);
+                const BoneC b2 = ClampBone(LoadBone(m, wq.b[2] & 0x1FF));
                 for (int k = 0; k < 3; ++k) pw[k] = CF(CF(bits2f(pos.b[k])) * wz);
                 for (int k = 0; k < 3; ++k) {
-                    float acc = CF(CF(po[k]) * 1.0f);
-                    acc = CF(VuFloat::Fma(CF(bits2f(b2.tr.b[k])), wz, acc));
-                    acc = CF(VuFloat::Fma(CF(bits2f(b2.c0.b[k])), CF(pw[0]), acc));
-                    acc = CF(VuFloat::Fma(CF(bits2f(b2.c1.b[k])), CF(pw[1]), acc));
-                    po[k] = CF(VuFloat::Fma(CF(bits2f(b2.c2.b[k])), CF(pw[2]), acc));
+                    float acc = po[k];
+                    acc = CF(VuFloat::Fma(b2.tr[k], wz, acc));
+                    acc = CF(VuFloat::Fma(b2.c0[k], pw[0], acc));
+                    acc = CF(VuFloat::Fma(b2.c1[k], pw[1], acc));
+                    po[k] = CF(VuFloat::Fma(b2.c2[k], pw[2], acc));
                 }
             }
         }
@@ -320,6 +338,16 @@ bool SkinnedLitStrip::RunSkinnedLitBody(QwPtr m, u32 node, u32 top) {
     for (int r = 0; r < 4; ++r) obj[r] = load(first + 78 + r);   // vf01..04
     for (int r = 0; r < 3; ++r) nrmR[r] = load(first + 82 + r);  // vf05..07
     for (int r = 0; r < 4; ++r) litR[r] = load(first + 85 + r);  // vf08..11
+    // The rows and the payload as every FMAC reads them (CF of the raw lanes), once (see ClampBone)
+    float objC[4][4], nrmC[3][4], litC[4][4], payC[4];
+    for (int r = 0; r < 4; ++r)
+        for (int k = 0; k < 4; ++k) {
+            objC[r][k] = CF(bits2f(obj[r].b[k]));
+            litC[r][k] = CF(bits2f(litR[r].b[k]));
+        }
+    for (int r = 0; r < 3; ++r)
+        for (int k = 0; k < 4; ++k) nrmC[r][k] = CF(bits2f(nrmR[r].b[k]));
+    for (int k = 0; k < 4; ++k) payC[k] = CF(bits2f(payload.b[k]));
 
     const u32 vqw_count = m.W(top + 1, 0) & 0xFFFF;  // MR32 + MTIR vf14.w
     if ((vqw_count & 3) != 0) return false;
@@ -337,20 +365,27 @@ bool SkinnedLitStrip::RunSkinnedLitBody(QwPtr m, u32 node, u32 top) {
         const V4 nrm = load(vq + 2);     // LQ.xyzw (.w = ADC)
         const V4 st_col = load(vq + 3);  // static RGBA ints
 
-        const V4 T = XformEmit(obj[0], obj[1], obj[2], obj[3], CF(bits2f(pos.b[0])), CF(bits2f(pos.b[1])),
-                               CF(bits2f(pos.b[2])));
-        const float Q = VuDiv(1.0f, bits2f(T.b[3]));
+        // XformEmit (ACC = row4*1; += row2*y; += row3*z; res = ACC + row1*x), the rows clamped above
+        const float vx = CF(bits2f(pos.b[0])), vy = CF(bits2f(pos.b[1])), vz = CF(bits2f(pos.b[2]));
+        float T[4];
+        for (int k = 0; k < 4; ++k) {
+            float acc = objC[3][k];
+            acc = CF(VuFloat::Fma(objC[1][k], vy, acc));
+            acc = CF(VuFloat::Fma(objC[2][k], vz, acc));
+            T[k] = CF(VuFloat::Fma(objC[0][k], vx, acc));
+        }
+        const float Q = VuDiv(1.0f, T[3]);
 
         // wn = NrmMtx * n (MULAx vf05 / MADDAy vf06 / MADDz vf07).
         const float nx = CF(bits2f(nrm.b[0])), ny = CF(bits2f(nrm.b[1])), nz = CF(bits2f(nrm.b[2]));
         float wn[3];
         for (int k = 0; k < 3; ++k) {
-            float acc = CF(CF(bits2f(nrmR[0].b[k])) * nx);
-            acc = CF(VuFloat::Fma(CF(bits2f(nrmR[1].b[k])), ny, acc));
-            wn[k] = CF(VuFloat::Fma(CF(bits2f(nrmR[2].b[k])), nz, acc));
+            float acc = CF(nrmC[0][k] * nx);
+            acc = CF(VuFloat::Fma(nrmC[1][k], ny, acc));
+            wn[k] = CF(VuFloat::Fma(nrmC[2][k], nz, acc));
         }
 
-        // Lighting -> RGBA (raw-bit MAX vs +0; MULAw vf11 first).
+        // Lighting -> RGBA (raw-bit MAX vs +0 -- of a clamped value: clamped; MULAw vf11 first).
         u32 rgba[4];
         {
             const float wcx = bits2f(Fmax_raw(f2bits(wn[0]), 0u));
@@ -358,14 +393,14 @@ bool SkinnedLitStrip::RunSkinnedLitBody(QwPtr m, u32 node, u32 top) {
             const float wcz = bits2f(Fmax_raw(f2bits(wn[2]), 0u));
             float lit[3];
             for (int k = 0; k < 3; ++k) {
-                float acc = CF(CF(bits2f(litR[3].b[k])) * 1.0f);
-                acc = CF(VuFloat::Fma(CF(bits2f(litR[0].b[k])), CF(wcx), acc));
-                acc = CF(VuFloat::Fma(CF(bits2f(litR[1].b[k])), CF(wcy), acc));
-                lit[k] = CF(VuFloat::Fma(CF(bits2f(litR[2].b[k])), CF(wcz), acc));
+                float acc = litC[3][k];
+                acc = CF(VuFloat::Fma(litC[0][k], wcx, acc));
+                acc = CF(VuFloat::Fma(litC[1][k], wcy, acc));
+                lit[k] = CF(VuFloat::Fma(litC[2][k], wcz, acc));
             }
             for (int k = 0; k < 3; ++k) {
-                const float s = (float)(int32_t)st_col.b[k];  // ITOF0
-                const float mod = CF(CF(lit[k]) * CF(s));     // MUL.xyz
+                const float s = (float)(int32_t)st_col.b[k];  // ITOF0 (an integer's float: its own CF)
+                const float mod = CF(lit[k] * s);             // MUL.xyz
                 rgba[k] = Ftoi0(Fmin_raw(f2bits(mod), f2bits(255.0f)));
             }
             const float sa = (float)(int32_t)st_col.b[3];  // alpha unmodulated
@@ -376,13 +411,13 @@ bool SkinnedLitStrip::RunSkinnedLitBody(QwPtr m, u32 node, u32 top) {
         // ADC = QW[v+2].w raw bits.
         const u32 st_qw = out_base + 1 + 3 * j;
         for (int k = 0; k < 3; ++k) {
-            const float stp = CF(CF(bits2f(stuv.b[k])) + CF(bits2f(payload.b[k])));
-            m.SetW(st_qw, k, f2bits(CF(CF(stp) * Q)));
+            const float stp = CF(CF(bits2f(stuv.b[k])) + payC[k]);
+            m.SetW(st_qw, k, f2bits(CF(stp * Q)));
         }
         for (int k = 0; k < 4; ++k) m.SetW(st_qw + 1, k, rgba[k]);
-        m.SetW(st_qw + 2, 0, Ftoi0(f2bits(CF(CF(bits2f(T.b[0])) * Q))));
-        m.SetW(st_qw + 2, 1, Ftoi0(f2bits(CF(CF(bits2f(T.b[1])) * Q))));
-        m.SetW(st_qw + 2, 2, Ftoi0(f2bits(CF(CF(bits2f(T.b[2])) * Q))));
+        m.SetW(st_qw + 2, 0, Ftoi0(f2bits(CF(T[0] * Q))));
+        m.SetW(st_qw + 2, 1, Ftoi0(f2bits(CF(T[1] * Q))));
+        m.SetW(st_qw + 2, 2, Ftoi0(f2bits(CF(T[2] * Q))));
         m.SetW(st_qw + 2, 3, nrm.b[3]);
     }
     return true;

@@ -1,6 +1,6 @@
 # settings_table.tsv -- the Config schema in machine form: one row per key, its peak and deterministic defaults; do not edit by hand
 # columns: key<TAB>type<TAB>peak<TAB>det<TAB>source_var<TAB>ledger  (det "=" = unchanged by the deterministic preset; "" = empty string)
-# rows=133
+# rows=134
 # deterministic_fingerprint=cdvd.latency_scale=0;cdvd.mc_latency_polls=0;engine.mtvu=off;engine.pacing=freerun;engine.time_regime_pin=1;game.rtc_fixed=on;hle.startup=retained;time.maint_eepaced=on;time.t0_tickpaced=on;time.tick_deterministic=on;time.tick_sync=on;ui.gui_open=off;video.fps_cap=0;video.interp=off;profile=deterministic
 key	type	peak	det	source_var	ledger
 audio.enabled	bool	on	=	PS2_SOUND	SETTING
@@ -16,6 +16,7 @@ dev.log_level	enum(quiet|error|warn|info|narrate)	quiet	=	PS2_LOG	SETTING
 diag.perf	bool	off	=	PS2_PERF	SETTING
 diag.tick_census	bool	off	=	-	-
 display.fps_counter	bool	off	=	-	-
+display.tick_lock	enum(auto|60|30)	auto	=	-	-
 engine.ee_runahead	int	2	=	PS2_EE_RUNAHEAD	SETTING
 engine.mtvu	bool	on	off	PS2_MTVU	NORM
 engine.mtvu_depth	int	2	=	PS2_MTVU_MAX_FRAMES	SETTING

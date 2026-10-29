@@ -5,7 +5,7 @@ width of the anamorphic frame (no pillar/letterbox, no stretch), the projection 
 culling frustum follow the ratio, the HUD fits are the owner's -- and 4:3 composes
 nothing (the deterministic lanes' identity).
 
-Two arms of the user's s3 recording (tests/app/root_shadow_level_entry.padlog: title ->
+Two arms of the tester's s3 recording (tests/app/root_shadow_level_entry.padlog: title ->
 New Game -> the first level -> the autosave dialog dismissed at tick 6477 -> Crash idle
 on the beach), headless on the RELEASE binary with the deterministic profile's fields
 stated one by one, `--frames N` (default 7000) and --dump-frames keeping only p<N>:

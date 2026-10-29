@@ -87,8 +87,6 @@ void ProcessRunner::handleText(const QString& text) {
         if (l.isEmpty()) continue;
         tail_ << l;
         while (tail_.size() > 200) tail_.removeFirst();
-        int done = 0, total = 0;
-        if (parseNinjaProgress(l, &done, &total)) emit progress(done, total);
         emit line(l);
     }
 }
@@ -105,15 +103,6 @@ void ProcessRunner::onFinished(int code, QProcess::ExitStatus status) {
 QString ProcessRunner::tail(int lines) const {
     const int n = qMin(lines, tail_.size());
     return QStringList(tail_.mid(tail_.size() - n)).join('\n');
-}
-
-bool ProcessRunner::parseNinjaProgress(const QString& line, int* done, int* total) {
-    static const QRegularExpression re("^\\[(\\d+)/(\\d+)\\]");
-    const QRegularExpressionMatch m = re.match(line);
-    if (!m.hasMatch()) return false;
-    *done = m.captured(1).toInt();
-    *total = m.captured(2).toInt();
-    return *total > 0;
 }
 
 }  // namespace ps2r::launcher

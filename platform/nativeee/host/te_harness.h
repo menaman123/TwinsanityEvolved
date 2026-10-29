@@ -1,7 +1,7 @@
 // te_harness.h -- the port's harness leg: the SAME hash streams the engine's title binary writes for a
 // `--harness-out` leg, through the engine's own writers (ps2r::verify::VerifyHost: frames.fhash / audio.ahash /
 // run.meta; the mem lane off), so tools/oracle/diff.py compares a port run with the recomp oracle's leg
-// mechanically (charter: "frames/audio hashes within tolerance of the oracle on the same padlogs").
+// mechanically (the goal: "frames/audio hashes within tolerance of the oracle on the same padlogs").
 //
 //   frames.fhash   one line per presented frame, "<key>,0x<fnv1a64>": key = the boundary the present precedes
 //                  (1-based, the clock's numbering = --trace-state / fixtures/padlogs), the hash the engine's

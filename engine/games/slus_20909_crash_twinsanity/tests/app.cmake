@@ -243,7 +243,7 @@ set_tests_properties(RootGatesPlayModeDevices PROPERTIES TIMEOUT 60 SKIP_RETURN_
 # RootTriageBundleOnFault (ALL-ON, NO EXCEPTIONS): the crash path on a real process.
 # A deterministic headless coldboot with the harness-only `--set harness.inject_fault_frame=1300`
 # throws at boundary 1300 (the title screen: the model still draws there -- the drawlist ring records
-# the GS model's DrawIR stream, and since tracks 2b/2c (wave 2) the boot screens' sprites, the screen
+# the GS model's DrawIR stream, and since tracks 2b/2c the boot screens' sprites, the screen
 # filter and the frame clears are all OWNED deliveries, so the ring is EMPTY for the first 400+ frames;
 # a fault at 100 read `faulting_draw: none`); the leg must end non-zero with run.meta park=exception /
 # finalized=1 / triage_bundle=<dir>, write <harness-out>/triage/<UTC>/ {census.txt,
@@ -356,7 +356,7 @@ set_tests_properties(RootScreenModeSwapSelftest PROPERTIES TIMEOUT 60)
 # ChunkStateCensus -- so load_tail_ticks=0 and chunk_cuts lists the cuts); judged: no long tick
 # outside a load window or the FMV window, NO tail (the first tick after a window is a play tick),
 # every cut inside a window. The frozen all-on 91dfdbe6 publishes none of the rows; baf15a38
-# publishes a 15-tick tail and no chunk_cuts (s9 = the user's level-entry session, the 32.5 ms
+# publishes a 15-tick tail and no chunk_cuts (s9 = the tester's level-entry session, the 32.5 ms
 # cut 1178 three ticks past its window: the red-before). Needs an IDLE machine (a loaded host
 # stretches ticks by scheduling alone). SKIP 77 without the title files or a display.
 foreach(_nlt_arm "S3;play_beach_session.padlog;3068;300" "S5;play_s5_session.padlog;4968;330"
@@ -514,7 +514,7 @@ set_tests_properties(RootTitleMusicPlaysSelftest PROPERTIES TIMEOUT 60)
 # images were scaled while the backend's strip-count pass is native); the judge's boxes are
 # stated on the 512x448 logical frame and scaled to each image, so both arms share one rule.
 # A headless coldboot `--frames 7600` on the RELEASE binary with the deterministic profile's
-# fields set one by one plus the arm's `video.scale` replays the user's s3 recording
+# fields set one by one plus the arm's `video.scale` replays the tester's s3 recording
 # (tests/app/root_shadow_level_entry.padlog: title -> New Game -> the first level -> the
 # autosave dialog dismissed at tick 6477 -> Crash idle on the beach) with --dump-frames (only
 # f7000/f7500 and the presented p7000/p7500 kept). run.meta must report `graphics_shadow_mesh calls>0 model_calls=0

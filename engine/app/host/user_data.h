@@ -20,6 +20,10 @@
 // the root SDL names is brand new (empty) and the sibling directory of the
 // former name (kLegacyAppName, "Ps2Recomp") exists, its contents are COPIED
 // in once, before the settings are read; the old directory is left in place.
+//
+// TwinsanityEvolved's runner does not use this root: its GAME FOLDER (ps2r.ini, memcards/ and mods/ beside the
+// executable -- portable -- with userdata/ and <home>/.twinsanityevolved as the earlier installs' fallbacks) is
+// app/host/game_folder.h, which the launcher shares.
 #include <cstdint>
 #include <functional>
 #include <string>

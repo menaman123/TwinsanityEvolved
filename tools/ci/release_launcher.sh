@@ -2,24 +2,34 @@
 # tools/ci/release_launcher.sh -- the launcher's macOS release: the engine's launcher (engine/app/launcher, Qt 6
 # Widgets) built from the vendored engine/ tree, wrapped in a bundle carrying this title's name and manifest, Qt
 # bundled DYNAMICALLY (LGPL) with the notices, signed (ad hoc unless CODESIGN_IDENTITY names a certificate), and put
-# in a .dmg. Extends tools/ci/release_dist.sh (the game's release) with the application a player downloads.
+# in a .dmg, and the same bundle zipped for the launcher's own update. Extends tools/ci/release_dist.sh (the game's
+# release) with the application a player downloads.
 #
 #   tools/ci/release_launcher.sh [--qt PREFIX] [--build-dir DIR] [--dist-dir DIR] [--engine DIR] [--skip-build]
-#                                [--source-url URL] [--no-dmg]
+#                                [--releases-url URL] [--version V] [--no-dmg] [--manifest FILE]
 #
 # What it does, in order:
 #   1. configure + build engine/app/launcher alone (cmake -S engine/app/launcher; PS2R_LAUNCHER_VERSION = this tree's
 #      describe), its unit tests (LauncherModels, LauncherScreens, LauncherOneClass);
 #   2. stage dist/launcher/<Product>.app from ps2r_launcher.app: Info.plist with the product's name and bundle id,
-#      Contents/Resources/titles/title.json (launcher/title.json, with --source-url's URL when given), BUILD-ID, THIRD_PARTY_NOTICES.md (the engine's + Qt), licenses/;
+#      Contents/Resources/titles/title.json (launcher/title.json, with --releases-url's URL when given) and its retail
+#      disc lists (titles/discs/*.json: names, sizes, sha256), BUILD-ID, THIRD_PARTY_NOTICES.md (the engine's + Qt), licenses/;
 #   3. macdeployqt: the Qt frameworks and plugins into the bundle (dynamic -- LGPL section 6 is met by relinking);
 #   4. codesign (ad hoc by default) and verify;
 #   5. the asset scan over the staged folder (zero findings);
-#   6. dist/<product>-launcher-macos-<arch>.dmg + .sha256, the size reported.
+#   6. dist/<product>-launcher-macos-<arch>.dmg + .sha256, the size reported;
+#   7. dist/<product>-launcher-<version>-macos-<arch>.zip + .sha256: the signed bundle zipped by ditto (modes and links
+#      kept, no resource forks, extended attributes, ACLs or quarantine) -- the file a running launcher downloads to
+#      replace itself (title.json release.launcher_assets); unzipped again and checked with
+#      codesign --verify --deep --strict before it is kept.
+# --version names the launcher (default: this tree's git describe; the self-update test makes two from one build).
+# --manifest packages another title manifest than launcher/title.json (the update judge's copy names its own launcher
+# data folder, so that a launcher it opens can never read a player's).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
-QT="${QT_PREFIX:-/opt/homebrew/opt/qt}"; BUILD="$ROOT/build-launcher"; DIST_ROOT="$ROOT/dist"; ENGINE="$ROOT/engine"; SKIP_BUILD=0; SOURCE_URL=""; DMG=1
+QT="${QT_PREFIX:-/opt/homebrew/opt/qt}"; BUILD="$ROOT/build-launcher"; DIST_ROOT="$ROOT/dist"; ENGINE="$ROOT/engine"; SKIP_BUILD=0; RELEASES_URL=""; DMG=1; VERSION=""
+MANIFEST="$ROOT/launcher/title.json"
 while [ $# -gt 0 ]; do
   case "$1" in
     --qt) QT="$2"; shift 2 ;;
@@ -27,23 +37,26 @@ while [ $# -gt 0 ]; do
     --dist-dir) DIST_ROOT="$2"; shift 2 ;;
     --engine) ENGINE="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
-    --source-url) SOURCE_URL="$2"; shift 2 ;;
+    --releases-url) RELEASES_URL="$2"; shift 2 ;;
+    --version) VERSION="$2"; shift 2 ;;
     --no-dmg) DMG=0; shift ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    --manifest) MANIFEST="$2"; shift 2 ;;
+    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "release_launcher: unknown argument $1" >&2; exit 2 ;;
   esac
 done
 case "$BUILD" in /*) ;; *) BUILD="$ROOT/$BUILD" ;; esac
 case "$DIST_ROOT" in /*) ;; *) DIST_ROOT="$ROOT/$DIST_ROOT" ;; esac
+case "$MANIFEST" in /*) ;; *) MANIFEST="$ROOT/$MANIFEST" ;; esac
 step() { echo; echo "=== $*"; }
 [ "$(uname -s)" = Darwin ] || { echo "release_launcher: macOS only (Windows: tools/ci/release_launcher.ps1)" >&2; exit 2; }
 [ -f "$ENGINE/app/launcher/CMakeLists.txt" ] || { echo "release_launcher: the engine at $ENGINE has no app/launcher (the engine/ tree carries it)" >&2; exit 2; }
 [ -x "$QT/bin/macdeployqt" ] || { echo "release_launcher: no macdeployqt under $QT/bin (brew install qt, or --qt PREFIX)" >&2; exit 2; }
-MANIFEST="$ROOT/launcher/title.json"
+[ -f "$MANIFEST" ] || { echo "release_launcher: no title manifest at $MANIFEST" >&2; exit 2; }
 PRODUCT="$(python3 -c "import json;print(json.load(open('$MANIFEST'))['product'])")"
 TITLE_ID="$(python3 -c "import json;print(json.load(open('$MANIFEST'))['id'])")"
 ARCH="$(uname -m)"
-VERSION="$(git -C "$ROOT" describe --tags --always 2>/dev/null || git -C "$ROOT" rev-parse --short HEAD)"
+[ -n "$VERSION" ] || VERSION="$(git -C "$ROOT" describe --tags --always 2>/dev/null || git -C "$ROOT" rev-parse --short HEAD)"
 free_gb=$(df -g "$ROOT" | awk 'NR==2{print $4}'); min_free_gb="${TE_MIN_FREE_GB:-15}"
 echo "free: ${free_gb} GB (floor ${min_free_gb} GB)"
 [ "$free_gb" -ge "$min_free_gb" ] || { echo "release_launcher: < ${min_free_gb} GB free -- prune first"; exit 3; }
@@ -73,15 +86,17 @@ PLIST="$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git -C "$ROOT" rev-list --count HEAD)" "$PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Delete :CFBundleIconFile" "$PLIST" 2>/dev/null || true
 RES="$APP/Contents/Resources"
-mkdir -p "$RES/titles" "$RES/licenses"
-# the manifest: the launcher always installs the latest commit of the source repository (--source-url overrides it)
-python3 - "$MANIFEST" "$RES/titles/title.json" "$SOURCE_URL" <<'EOF'
+mkdir -p "$RES/titles/discs" "$RES/licenses"
+# the manifest (the launcher installs the newest release it names; --releases-url points it elsewhere) and the retail
+# disc lists beside it
+python3 - "$MANIFEST" "$RES/titles/title.json" "$RELEASES_URL" <<'EOF'
 import json, sys
 m = json.load(open(sys.argv[1]))
 if sys.argv[3]:
-    m["source"]["url"] = sys.argv[3]
+    m["release"]["releases_url"] = sys.argv[3]
 json.dump(m, open(sys.argv[2], "w"), indent=2)
 EOF
+cp "$ROOT"/launcher/discs/*.json "$RES/titles/discs/"
 {
   echo "$PRODUCT launcher $VERSION ($ARCH)"
   echo "port    $(git -C "$ROOT" rev-parse HEAD)"
@@ -100,9 +115,10 @@ for f in LICENSE.LGPL3 LICENSE.GPL3-EXCEPT LICENSE.GPL3 LICENSE.FDL; do [ -f "$Q
 {
   echo "# $PRODUCT launcher -- third-party notices -- $(head -1 "$RES/BUILD-ID")"
   echo
-  echo "This application is the NativeEE engine's launcher (engine/app/launcher, MIT) carrying this title's manifest. It"
-  echo "contains NO game data and no code derived from the game: on its first run it downloads the port's source and the"
-  echo "pinned toolchain into your app-data folder and builds the game there from your own disc image."
+  echo "This application is the NativeEE engine's launcher (engine/app/launcher, MIT) carrying this title's manifest and"
+  echo "its retail disc lists (file names, sizes and sha256 -- no game data). It contains NO game data and no code derived"
+  echo "from the game: it recognises your own disc image, downloads the finished game from the project's releases (checked"
+  echo "against their SHA256SUMS) into the game folder you choose, and starts it."
   echo
   echo "| component | how it is linked | licence | text |"
   echo "|---|---|---|---|"
@@ -112,8 +128,8 @@ for f in LICENSE.LGPL3 LICENSE.GPL3-EXCEPT LICENSE.GPL3 LICENSE.FDL; do [ -f "$Q
   echo
   echo "Qt is used under the LGPL v3: it is linked dynamically and may be replaced by another build of the same major"
   echo "version (section 4(d)): the frameworks sit in Contents/Frameworks and are loaded by name. Qt's source is at"
-  echo "https://download.qt.io/official_releases/qt/ and the launcher's at the engine repository. The games built by this"
-  echo "launcher carry their own THIRD_PARTY_NOTICES.md (tools/ci/release_dist.sh)."
+  echo "https://download.qt.io/official_releases/qt/ and the launcher's at the engine repository. The game this launcher"
+  echo "installs carries its own THIRD_PARTY_NOTICES.md (tools/ci/release_dist.sh)."
 } > "$RES/THIRD_PARTY_NOTICES.md"
 
 step "macdeployqt (Qt frameworks and plugins into the bundle, dynamic)"
@@ -149,4 +165,17 @@ if [ "$DMG" = 1 ]; then
   (cd "$DIST_ROOT" && shasum -a 256 "$DMGNAME.dmg" > "$DMGNAME.dmg.sha256" && cat "$DMGNAME.dmg.sha256")
   echo "dmg: $DIST_ROOT/$DMGNAME.dmg ($(( $(stat -f %z "$DIST_ROOT/$DMGNAME.dmg") / 1048576 )) MB)"
 fi
+
+step "the launcher's own update: the bundle zipped"
+LOWER="$(echo "$PRODUCT" | tr '[:upper:]' '[:lower:]')"
+ZIPNAME="$LOWER-launcher-$VERSION-macos-$ARCH.zip"
+rm -f "$DIST_ROOT/$LOWER-launcher-"*"-macos-$ARCH.zip" "$DIST_ROOT/$LOWER-launcher-"*"-macos-$ARCH.zip.sha256"
+ditto -c -k --norsrc --noextattr --noacl --noqtn --keepParent "$APP" "$DIST_ROOT/$ZIPNAME"
+# the round trip a launcher makes: unzipped, the bundle's signature must still check
+CHECK="$(mktemp -d)"
+ditto -x -k "$DIST_ROOT/$ZIPNAME" "$CHECK"
+codesign --verify --deep --strict "$CHECK/$PRODUCT.app" || { echo "release_launcher: the zipped bundle does not verify once unzipped" >&2; rm -rf "$CHECK"; exit 1; }
+rm -rf "$CHECK"
+(cd "$DIST_ROOT" && shasum -a 256 "$ZIPNAME" > "$ZIPNAME.sha256" && cat "$ZIPNAME.sha256")
+echo "zip: $DIST_ROOT/$ZIPNAME ($(( $(stat -f %z "$DIST_ROOT/$ZIPNAME") / 1048576 )) MB; unzipped and verified)"
 echo; echo "release_launcher: OK -> $APP"

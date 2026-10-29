@@ -137,7 +137,7 @@ GOOD_META = {
     "pace_late": "2", "pace_late_fields": "8", "pace_work_max_ms": "19", "vu1_hle_worker": "812/770162/0",
 }
 
-# baf15a38's run.meta (the orchestrator's leg4): the park.
+# baf15a38's run.meta (a reference leg): the park.
 RED_META = {
     "frames": "1200", "finalized": "1", "video": "gl", "restored_vsync_frame": "37165",
     "gs_queue": "mode=thread,policy=pipelined,enqueued=5014432,consumed=5014432,frames=1200,syncs=0,frame_waits=0,max_depth=3630,frame_skip=1,"

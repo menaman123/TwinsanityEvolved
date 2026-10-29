@@ -1,0 +1,22 @@
+# Review a {{LANGUAGE}} translation for consistency and length
+
+These rows are translations of *Crash Twinsanity*'s on-screen texts into {{LANGUAGE}} that the tools flagged: a line wider than
+the room the game gives the text, more lines than the English, or tokens that differ from the English's. Each row is
+tab-separated: `id`, `sha1`, `context`, the room (`room R, lines N`: the widest line allowed in the game's glyph units and the
+most lines), the English (tokens as in the translation pass), the current translation.
+
+Rewrite each translation so that:
+
+1. it carries EXACTLY the English's tokens (`{CROSS}` ... `{SAVE}` `{KB}` `{PARA}`), each as many times;
+2. it is SHORTER: about 25% fewer letters than now when the row says a line is too wide; one line when the English has one
+   (menu rows: one or two words); the meaning kept, the playful tone kept;
+3. it uses the glossary's terms exactly, the same as everywhere else in the game;
+4. it obeys the translation pass's character rules (no diacritics for Arabic; ASCII digits).
+
+Answer with one row per input row: `id`, `sha1` (unchanged), the new translation, tab-separated. Nothing else.
+
+## Glossary ({{LANGUAGE}})
+
+```
+{{GLOSSARY}}
+```

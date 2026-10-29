@@ -22,6 +22,7 @@
 #include "te_host.h"
 #include "te_language.h"
 #include "te_services.h"
+#include "te_tick_lock.h"
 
 namespace te::display {
 
@@ -36,11 +37,16 @@ const char* const kAspectKeys[] = {"auto", "4:3", "16:9", "16:10", "21:9"};
 const char* const kFullscreenKeys[] = {"windowed", "fullscreen", "borderless"};
 const char* const kFilterKeys[] = {"title", "point", "bilinear", "trilinear"};
 
-// The language's name for MenuStrings ("English", "French", ...): the selected language (its TEXT's language), capitalised;
-// an unknown one (Portuguese) falls back to English inside MenuStrings.
+// The language's name for MenuStrings ("English", "French", ...): the TEXT language in force, capitalised; an unknown one
+// (Portuguese, a language pack's) falls back to English inside MenuStrings.
 std::string MenuLanguage() {
     const language::Table& t = language::Resolve();
-    std::string name = t.selected >= 0 && size_t(t.selected) < t.languages.size() ? t.languages[size_t(t.selected)].name : "english";
+    std::string name = "english";
+    if (t.raw_slot >= 0) {
+        for (const language::Bank& b : t.banks) if (int32_t(b.slot) == t.raw_slot) name = b.content;
+    } else if (t.text >= 0 && size_t(t.text) < t.texts.size()) {
+        name = t.texts[size_t(t.text)].name;
+    }
     if (!name.empty() && name[0] >= 'a' && name[0] <= 'z') name[0] = char(name[0] - 'a' + 'A');
     return name;
 }
@@ -72,8 +78,23 @@ void Configure(const Settings& settings) {
     g_settings.offset_x = std::clamp(g_settings.offset_x, -256, 256);
     g_settings.offset_y = std::clamp(g_settings.offset_y, -256, 256);
     g_settings.frame_rate = std::clamp(g_settings.frame_rate, 0, 5);
+    g_settings.tick_lock = std::clamp(g_settings.tick_lock, 0, 2);
+#if defined(__vita__)
+    // the Vita's FRAME RATE row is the tick lock (te_tick_lock.h): the presenter shows every picture (60) and the lock
+    // decides the game's picture cadence (auto 60/30, 60, 30)
+    g_settings.frame_rate = int(Pacer::Rate::Rate60);
+    tick_lock::Configure(g_settings.tick_lock);
+#endif
     if (g_settings.game_hz != 50) g_settings.game_hz = 60;
     if (g_settings.running_hz != 50) g_settings.running_hz = 60;
+#if defined(__vita__)
+    // the row's choices at this run's game rate (the menu's own word for auto in the menu's language, then the rates)
+    std::fprintf(stderr, "[twinsanityevolved] display: the FRAME RATE row (the tick lock) at the %d Hz game rate: %s | %s | %s, now %s; "
+                         "the GAME RATE row: %s (this run %d Hz)\n", g_settings.running_hz,
+                 g_settings.running_hz == 50 ? "auto (50/25)" : "auto (60/30)", g_settings.running_hz == 50 ? "50" : "60",
+                 g_settings.running_hz == 50 ? "25" : "30", FrameRateName(), g_settings.game_hz == 50 ? "50 hz (pal)" : "60",
+                 g_settings.running_hz);
+#endif
     Apply();
 }
 
@@ -132,7 +153,11 @@ uint32_t Choices(uint32_t row) {
     case RowScale: return 4;
     case RowTextureFilter: return 3;
     case RowVSync: return 2;
+#if defined(__vita__)
+    case RowFrameRate: return 3;   // auto (60/30), 60, 30: the tick lock (te_tick_lock.h)
+#else
     case RowFrameRate: return 6;
+#endif
     case RowDisplayMode: return 3;
     case RowFpsCounter: return 2;
     case RowGameRate: return 2;
@@ -143,7 +168,17 @@ uint32_t Choices(uint32_t row) {
 bool FpsCounter() { return g_settings.fps_counter; }
 void SetFpsCounter(bool on) { g_settings.fps_counter = on; }
 int FrameRate() { return g_settings.frame_rate; }
-const char* FrameRateName() { return Pacer::Name(static_cast<Pacer::Rate>(g_settings.frame_rate)); }
+const char* FrameRateName() {
+#if defined(__vita__)
+    // the row's rates are the game rate's: auto (60/30), 60, 30 -- or, at the PAL disc's 50 Hz (game.hz = 50),
+    // auto (50/25), 50, 25. display.tick_lock keeps its three values either way: auto, the full rate (`60`), the half (`30`)
+    static const char* const kLock[] = {"auto (60/30)", "60", "30"};
+    static const char* const kLock50[] = {"auto (50/25)", "50", "25"};
+    return (g_settings.running_hz == 50 ? kLock50 : kLock)[std::clamp(g_settings.tick_lock, 0, 2)];
+#else
+    return Pacer::Name(static_cast<Pacer::Rate>(g_settings.frame_rate));
+#endif
+}
 bool EffectiveVSync() { return g_settings.vsync && !Uncapped(); }
 std::string FrameRateHelp() { return MS(title::MenuStrings::Id::VSyncCapsRate); }
 bool GameRatePending() { return g_settings.game_hz != g_settings.running_hz; }
@@ -184,7 +219,14 @@ std::string ChoiceLabel(uint32_t row, uint32_t choice) {
         return choice < 3 ? MS(ids[choice]) : "";
     }
     case RowVSync: return choice == 0 ? (Uncapped() ? MS(Id::OffUncapped) : MS(Id::Aniso1) /* "off" */) : "on";
-    case RowFrameRate: {   // digits, as the brief spells them; the last one the engine's word
+    case RowFrameRate: {   // digits, as the row shows them; the last one the engine's word
+#if defined(__vita__)
+        // the tick lock: "auto (60/30)" (the aspect row's word for auto), "60", "30" -- "auto (50/25)", "50", "25" at the
+        // 50 Hz game rate (the PAL disc's own: game.hz = 50)
+        const bool pal = g_settings.running_hz == 50;
+        if (choice == 0) return MS(Id::AspectAuto) + (pal ? " (50/25)" : " (60/30)");
+        return choice == 1 ? (pal ? "50" : "60") : choice == 2 ? (pal ? "25" : "30") : "";
+#endif
         if (choice == 5) return MS(Id::Uncapped);
         return choice < 5 ? Pacer::Name(static_cast<Pacer::Rate>(choice)) : "";
     }
@@ -205,7 +247,11 @@ uint32_t Value(uint32_t row) {
     case RowScale: return uint32_t(g_settings.scale - 1);
     case RowTextureFilter: return uint32_t(std::min(g_settings.texture_filter, 2));
     case RowVSync: return EffectiveVSync() ? 1u : 0u;   // uncapped: off, and the row's label says why
+#if defined(__vita__)
+    case RowFrameRate: return uint32_t(g_settings.tick_lock);
+#else
     case RowFrameRate: return uint32_t(g_settings.frame_rate);
+#endif
     case RowDisplayMode: return uint32_t(g_settings.fullscreen);
     case RowFpsCounter: return g_settings.fps_counter ? 1u : 0u;
     case RowGameRate: return g_settings.game_hz == 50 ? 0u : 1u;
@@ -228,6 +274,17 @@ void Set(uint32_t row, uint32_t choice) {
         Persist("video.vsync", g_settings.vsync ? "on" : "off");
         break;
     case RowFrameRate:
+#if defined(__vita__)
+    {
+        // (the engine's key, video.frame_rate is the desktop presenter's; its values auto / 60 / 30 mean auto, the full game
+        // rate and the half at 50 Hz too -- 50 / 25 -- so an older build still reads the file)
+        static const char* const kLockKeys[] = {"auto", "60", "30"};
+        g_settings.tick_lock = int(choice);
+        Persist("display.tick_lock", kLockKeys[choice]);
+        tick_lock::Configure(g_settings.tick_lock);
+        break;
+    }
+#endif
         g_settings.frame_rate = int(choice);
         Persist("video.frame_rate", Pacer::Name(static_cast<Pacer::Rate>(choice)));
         break;

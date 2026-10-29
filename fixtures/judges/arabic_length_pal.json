@@ -1,0 +1,21 @@
+{
+  "judge": "tools/judges/arabic_length_judge.py",
+  "disc": "PAL SLES-52568 (the development image: its English text sits in the `Spanish` slot; 205 Code + 100 AgentLab texts; the bank adds the port's 2 row titles)",
+  "language": "arabic",
+  "tsv": "tools/text/arabic.tsv",
+  "bank": "mods/arabic/data/arabic.bank",
+  "font": "mods/arabic/data/arabic.font",
+  "texts": 307,
+  "max_unfitting": 0,
+  "shaper_tool": "platform/nativeee/tests/te_text_shape_test",
+  "runner_args": [
+    "--mods-dir",
+    "mods",
+    "--text-language",
+    "arabic"
+  ],
+  "stop_at": 300,
+  "engine_row": "[arabic: row 'arabic', 205 + 100 texts (made from this disc's English)",
+  "why": "A text's box is the widest English text the game draws in the same place, capped by the 512-pixel frame at the scale the game draws it there (tools/text/fit.py); a translation may not be wider, nor take more lines than its English. The tools measure with the shaping the game draws with (checked against the game's own shaper) and the real glyph widths (the disc font's, ours).",
+  "frozen": "2026-10-25: RED on the first translation pass (the batches' answers before the fitting pass: unfitting 26 -- the notices on one line, a bottom line wider than the screen) and on the base runner (no language mods: no row, no shaper beside it); GREEN on the shipped tools/text/arabic.tsv with the Arabic change's runner (305 ok, 0 unfitting, bank = build, 305/305 shaped alike, the arabic row offered). | 2026-10-27: 307 texts = the disc's 305 + the port's two row titles (text language, speech language: the bank's Port section); the pack is present (--mods-dir mods, chosen by --text-language arabic: no --mod) and its row is 'arabic'. GREEN on its change (unchanged rules)."
+}

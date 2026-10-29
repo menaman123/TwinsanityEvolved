@@ -470,6 +470,19 @@ void GameController::LoadTexts()
     const char* name = g_LanguageNames[language];
     for (u32 file = 0; file < TextFiles; file++)
     {
+        // TwinsanityEvolved: a language the disc does not carry (a language mod) gives its own text file, read the way
+        // the archive's is (in memory that stays, terminated)
+        u32 modSize = Platform::System::LanguageTextSize(file);
+        if (modSize != 0)
+        {
+            texts[file] = MemoryStream::ConstructAllocated(static_cast<MemoryStream*>(MemoryAllocate(sizeof(MemoryStream))),
+                                                           modSize + 1, 0, MemoryStream::FileAlignment);
+            Platform::System::LanguageText(file, texts[file]->begin, modSize);
+            texts[file]->begin[modSize] = 0;
+            ReadTextFile(file, language, reinterpret_cast<char*>(texts[file]->begin));
+            continue;
+        }
+
         String path;
         StringConstruct(&path, g_LanguageFolder);
         StringAppend(&path, TextFolders[file]);

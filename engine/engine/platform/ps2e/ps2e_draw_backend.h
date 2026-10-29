@@ -20,8 +20,9 @@ namespace ps2e {
 // The backend over `window`, initialised and ready to draw. An arm that needs a GL context creates it on the window
 // through `context` (left current on the calling thread, swap interval 0) and presents through the window's swap; an
 // arm that needs none leaves `context` uncreated (ps2e_draw then skips the swap-interval and thread-binding calls).
-// nullptr when the arm cannot be made (no GL on the host, the device's init failed).
-std::unique_ptr<render::Backend> CreateDrawBackend(platform::Window& window, platform::GlContext& context);
+// nullptr when the arm cannot be made (no GL on the host, the device's init failed). `gs_z24`: the producer's Z stays in
+// [0, 2^24] (ps2e_draw_config::depth_bits 24) -- the arm maps it onto window depth exactly.
+std::unique_ptr<render::Backend> CreateDrawBackend(platform::Window& window, platform::GlContext& context, bool gs_z24);
 
 }  // namespace ps2e
 }  // namespace ps2r

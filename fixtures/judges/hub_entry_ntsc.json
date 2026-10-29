@@ -1,0 +1,10 @@
+{
+  "padlog": "fixtures/padlogs/hub_entry_ntsc.padlog",
+  "disc": "NTSC-U SLUS-20909 v2.00 (the retail image, Redump 13689), played by the European code through the built-in address map (--deterministic --no-sdl-input --skip-movies --trace-state, an empty --mc-dir)",
+  "states": ["Title", "MainMenu", "NewGame", "Movie", "StartingPlay", "Playing", "Paused", "Waiting", "Playing"],
+  "final_state": "Playing",
+  "stop_at": 4200,
+  "min_free_pages": 40,
+  "measured": "2026-10-26: WaitingForLoader 69, Starting 70, WaitingForPad 244, CheckingCard 245, VivendiLogo 492, TravellersTalesLogo 535, LoadingTitle 548, Title 1280, MainMenu 1293, NewGame 2397, Movie 2431, StartingPlay 2474, Playing 2476, Paused 2478, Waiting 2630, Playing 2647 (the European disc's route 18 boundaries later from the title on: Title 1262 -> 1280); held to 4200; small pages free 233 of 963",
+  "frozen": "2026-10-26: the same shape as hub_entry_pal.json for the North American disc; RED on 59a161b (the disc is refused: 'needs this disc's address map', exit 3), GREEN on its change"
+}

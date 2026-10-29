@@ -1,0 +1,315 @@
+{
+ "font": "Startup\\Fonts\\Crash_Euro.psf",
+ "colour_scale": "GS (0x80 = full; the game's text is drawn MODULATE with the item's colour)",
+ "cell_height_px": 39,
+ "cap_top_row": 11,
+ "baseline_row": 31,
+ "cap_height_px": 21,
+ "below_baseline_px": 7,
+ "stroke_px": 3.0,
+ "outline_px": 1.0,
+ "outline_rgb": [
+  127,
+  127,
+  127
+ ],
+ "outline_rgb_median": [
+  127,
+  113,
+  105
+ ],
+ "shadow_offset_px": [
+  1,
+  3
+ ],
+ "shadow_blur_px": 0.75,
+ "shadow_strength": 0.901,
+ "shadow_fit_rms": 0.0759,
+ "shadow_offset_overlap_px": [
+  3,
+  4
+ ],
+ "shadow_rgb": [
+  0,
+  0,
+  0
+ ],
+ "shadow_alpha_max": 127,
+ "shadow_alpha_median": 57,
+ "fill_gradient": [
+  {
+   "t": 0.0,
+   "rgb": [
+    127,
+    79,
+    0
+   ]
+  },
+  {
+   "t": 0.5,
+   "rgb": [
+    127,
+    46,
+    0
+   ]
+  },
+  {
+   "t": 1.0,
+   "rgb": [
+    127,
+    6,
+    0
+   ]
+  }
+ ],
+ "fill_gradient_rows": [
+  {
+   "t": 0.0,
+   "rgb": [
+    127,
+    79,
+    0
+   ]
+  },
+  {
+   "t": 0.05,
+   "rgb": [
+    127,
+    79,
+    0
+   ]
+  },
+  {
+   "t": 0.1,
+   "rgb": [
+    127,
+    76,
+    0
+   ]
+  },
+  {
+   "t": 0.15,
+   "rgb": [
+    127,
+    71,
+    0
+   ]
+  },
+  {
+   "t": 0.2,
+   "rgb": [
+    127,
+    65,
+    0
+   ]
+  },
+  {
+   "t": 0.25,
+   "rgb": [
+    127,
+    65,
+    0
+   ]
+  },
+  {
+   "t": 0.3,
+   "rgb": [
+    127,
+    59,
+    0
+   ]
+  },
+  {
+   "t": 0.35,
+   "rgb": [
+    127,
+    55,
+    2
+   ]
+  },
+  {
+   "t": 0.4,
+   "rgb": [
+    127,
+    50,
+    2
+   ]
+  },
+  {
+   "t": 0.45,
+   "rgb": [
+    127,
+    46,
+    1
+   ]
+  },
+  {
+   "t": 0.5,
+   "rgb": [
+    127,
+    46,
+    0
+   ]
+  },
+  {
+   "t": 0.55,
+   "rgb": [
+    127,
+    42,
+    0
+   ]
+  },
+  {
+   "t": 0.6,
+   "rgb": [
+    127,
+    38,
+    0
+   ]
+  },
+  {
+   "t": 0.65,
+   "rgb": [
+    127,
+    31,
+    0
+   ]
+  },
+  {
+   "t": 0.7,
+   "rgb": [
+    127,
+    26,
+    0
+   ]
+  },
+  {
+   "t": 0.75,
+   "rgb": [
+    127,
+    22,
+    0
+   ]
+  },
+  {
+   "t": 0.8,
+   "rgb": [
+    127,
+    18,
+    0
+   ]
+  },
+  {
+   "t": 0.85,
+   "rgb": [
+    127,
+    14,
+    0
+   ]
+  },
+  {
+   "t": 0.9,
+   "rgb": [
+    127,
+    10,
+    0
+   ]
+  },
+  {
+   "t": 0.95,
+   "rgb": [
+    127,
+    6,
+    0
+   ]
+  },
+  {
+   "t": 1.0,
+   "rgb": [
+    127,
+    6,
+    0
+   ]
+  }
+ ],
+ "letters_measured": "ABDEFHIKLMNPRTUVWXZ0123456789",
+ "page_material": {
+  "shader_type": 13,
+  "settings": [
+   1,
+   0,
+   0,
+   0,
+   129,
+   2,
+   0,
+   1,
+   1,
+   6,
+   1,
+   1,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   1,
+   0,
+   0,
+   0,
+   1,
+   0,
+   0
+  ],
+  "settings_named": {
+   "blends": 1,
+   "preset": 0,
+   "alphaTest": 0,
+   "alphaMethod": 0,
+   "alphaReference": 129,
+   "alphaFail": 2,
+   "destinationTest": 0,
+   "destinationMode": 1,
+   "depthTest": 1,
+   "unused23": 6,
+   "gouraud": 1,
+   "textured": 1,
+   "stq": 0,
+   "fog": 0,
+   "secondContext": 0,
+   "uScroll": 0,
+   "vScroll": 0,
+   "ownAlpha": 0,
+   "alphaA": 0,
+   "alphaB": 0,
+   "alphaC": 0,
+   "alphaD": 0,
+   "alphaFix": 0,
+   "linear": 1,
+   "noFba": 0,
+   "unused57": 0,
+   "antiAliased": 0,
+   "noDepthWrites": 1,
+   "animatedColour": 0,
+   "hasAnimation": 0
+  },
+  "lod": [
+   -1,
+   0
+  ],
+  "colour": [
+   1.0,
+   1.0,
+   1.0,
+   64.0
+  ],
+  "bucket": 26,
+  "activated": 268435456
+ }
+}

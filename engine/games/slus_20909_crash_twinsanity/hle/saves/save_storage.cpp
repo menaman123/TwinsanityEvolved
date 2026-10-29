@@ -360,6 +360,13 @@ int32_t SaveStorage::AtomicWrite(const fs::path& file, const std::vector<uint8_t
 #else
     if (std::rename(temporary.c_str(), file.c_str()) != 0) { result = IoError(); remove_temporary(); return result; }
     committed = true;
+#if defined(__vita__)
+    // The Vita: no directory to sync. VitaSDK's open() of a directory is an sceIoDopen descriptor and its fsync() passes
+    // that to sceIoSyncByFd, which takes a FILE descriptor -- an error there would report this committed write as an I/O
+    // error to the game (the emulator, which does not implement sceIoSyncByFd, never shows it). The kernel's rename (its
+    // _rename_r: sceIoRemove of the old file, then sceIoRename) is the commit, as engine/platform/host's DirectorySync
+    // says for the Vita.
+#else
     const int directory = open(file.parent_path().c_str(), O_RDONLY);
     if (directory < 0) return kIoError;
     const int synced = fsync(directory);
@@ -367,6 +374,7 @@ int32_t SaveStorage::AtomicWrite(const fs::path& file, const std::vector<uint8_t
     // The complete file is already committed even if durability confirmation
     // fails. Report that fact; never replay or pretend the preceding file won.
     if (synced != 0) return kIoError;
+#endif
 #endif
     return 0;
 }

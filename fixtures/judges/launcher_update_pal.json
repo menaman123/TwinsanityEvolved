@@ -1,0 +1,19 @@
+{
+  "judge": "launcher_update_judge",
+  "description": "The launcher replacing itself on macOS: two launchers packaged by tools/ci/release_launcher.sh from one build directory (old_version, new_version), a local release server listing the new one first; the old one installed in a scratch home's Applications and opened by LaunchServices with --update-launcher must download, check, unpack, codesign-verify, swap and relaunch; the new one must open by itself, remove the copy set aside and carry no quarantine flag; a launcher in a folder this account cannot change must refuse with the sentence; the user's own launcher data is untouched.",
+  "old_version": "v0.2.0",
+  "new_version": "v0.2.1",
+  "timeout_s": 240,
+  "min_free_gb": 5,
+  "must_log": [
+    "check: {new} is newer than {old} ({new} is listed before {old}, newest first)",
+    "matches SHA256SUMS",
+    "codesign --verify --deep --strict: exit 0",
+    "swapped: ",
+    "relaunch: started; this launcher quits",
+    "after the relaunch: {new} (recorded {old} -> {new})",
+    "after the relaunch: the replaced copy was removed",
+    "check: nothing newer than {new}"
+  ],
+  "refusal_line": "The launcher is in {home_locked}, which this account cannot change."
+}

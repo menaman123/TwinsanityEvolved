@@ -5,9 +5,15 @@
 #include "engine/platform/host/platform.h"
 #include PS2R_GL_HEADER
 
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 
 #include "engine/platform/sdl/window.h"
+
+#if PS2R_HOST_VITA
+#include <psp2/kernel/sysmem.h>   // sceKernelGetFreeMemorySize (the memory left after the GPU's start)
+#endif
 
 namespace ps2r {
 namespace platform {
@@ -38,11 +44,61 @@ bool GlContext::Create(Window& window) {
     Destroy();
     if (!window.Handle()) return false;
 #if PS2R_HOST_VITA
+    // vitaGL's memory, configured before its init (vgl.c / buffers.c / gxm.c r1488). Each setting gives back RAM-pool
+    // memory the device's run4 showed exhausted (vitaGL free: ram 0.1 MB, phycont 0.1 MB; the device's RAM pool is the
+    // user RAM left at vglInitExtended minus its 32 MB threshold, ~55 MB) without changing what any draw reads:
+    //  - the temporary-data circular pool (CIRCULAR_POOL_SIZE_DEF 32 MB, split over the 3 display buffers and taken from
+    //    the RAM pool at init): its users are client-side vertex arrays, glDrawElements index copies, GL_QUADS / fan /
+    //    loop index conversions, transposed glUniformMatrix and read-back conversions -- none of which the GL backend
+    //    issues per frame (it draws GL_TRIANGLES from VBOs, uniforms through glUniform*v). A frame that outgrows its share
+    //    is still served (vgl_reserve_data_pool: gpu_alloc_mapped_for_cpu + the garbage collector), only slower. 3 MB.
+    //  - each vertex array object's constant-attribute pool (buffers.c reset_vao: 256 KB for the default VAO, 64 KB for
+    //    every other one, from the RAM pool): the backend makes a VAO per native mesh (hundreds), and a pool only ever
+    //    holds the 16 attributes' reset values (16 x 4 floats = 256 bytes; reserve_attrib_pool) since nothing calls
+    //    glVertexAttrib*. The default VAO's stays 256 KB; the others 1 KB (64 x 16-byte values).
+    //  - the garbage collector thread (gxm.c init_gxm: priority 0x10000100 = the process default 160, the lowest of the
+    //    busy threads): vglSwapBuffers waits on it (gc_mutex) when it is FRAME_PURGE_FREQ frames behind, so it runs just
+    //    below the game thread (96): it only frees one frame's list per swap.
+    vglSetCircularPoolSize(3u * 1024u * 1024u);
+    vglSetVertexAttribPoolSize(256u * 1024u, 1024u);
+    vglSetupGarbageCollector(100, 0);
+    //  - the framebuffers' render targets (gxm.c setup_render_target, gxm_fbo_rt_size 1): a render target made for one
+    //    scene per frame makes sceGxmBeginScene wait for the GPU to finish its previous scene; the frame target takes a
+    //    scene per screen copy (the crystal caves: 3 a frame), so 4 (the display's stays 1: one scene a frame). The order
+    //    the GPU draws the scenes in is the order they were ended either way.
+    int fbo_scenes = 4;
+    if (const char* e = std::getenv("TE_VITA_FBO_SCENES")) fbo_scenes = std::max(1, std::min(8, std::atoi(e)));
+    vglSetupRenderTargetScenesNum(1, uint8_t(fbo_scenes));
+    std::fprintf(stderr, "[gl] vitaGL pools: circular pool 3 MB (was 32 MB), VAO constant pools 1 KB (was 64 KB; default "
+                         "VAO 256 KB), garbage collector at priority 100 (was 160), framebuffer render targets %d scenes a "
+                         "frame (was 1; TE_VITA_FBO_SCENES)\n", fbo_scenes);
+    //  - GXM's PARAMETER BUFFER (the binned triangles and their vertices' outputs of every scene in flight;
+    //    vitaGL hands sceGxmInitialize SCE_GXM_DEFAULT_PARAMETER_BUFFER_SIZE, 16 MB): TE_VITA_PARAM_BUFFER_MB=N (8..64)
+    //    sizes it for an experiment -- unset, the default stands (a size the system cannot give fails the GPU's start:
+    //    no fallback). The memory left after the start is logged below.
+    if (const char* e = std::getenv("TE_VITA_PARAM_BUFFER_MB")) {
+        const int mb = std::max(8, std::min(64, std::atoi(e)));
+        vglSetParamBufferSize(uint32_t(mb) * 1024u * 1024u);
+        std::fprintf(stderr, "[gl] GXM parameter buffer: %d MB (TE_VITA_PARAM_BUFFER_MB; the default is 16)\n", mb);
+    }
     // The result is only whether the requested size fell back to the display's maximum (vitaGL vgl.c), not success.
     // No MSAA: the frame target and every PS2 target are plain single-sampled framebuffers.
+    std::fprintf(stderr, "[gl] start-up: vglInitExtended (GXM, the shader compiler module, the GPU memory pools)\n"); std::fflush(stderr);
     const GLboolean resolution_fallback = vglInitExtended(0, 960, 544, 32 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
-    std::fprintf(stderr, "[gl] vitaGL ready (resolution fallback: %s)\n", resolution_fallback ? "yes" : "no");
+    std::fprintf(stderr, "[gl] vitaGL ready (resolution fallback: %s); pools: vram %.1f MB, ram %.1f MB, phycont %.1f MB "
+                 "(free %.1f / %.1f / %.1f MB)\n", resolution_fallback ? "yes" : "no",
+                 vglMemTotal(VGL_MEM_VRAM) / 1048576.0, vglMemTotal(VGL_MEM_RAM) / 1048576.0,
+                 vglMemTotal(VGL_MEM_PHYCONT) / 1048576.0, vglMemFree(VGL_MEM_VRAM) / 1048576.0,
+                 vglMemFree(VGL_MEM_RAM) / 1048576.0, vglMemFree(VGL_MEM_PHYCONT) / 1048576.0);
     std::fflush(stderr);
+    {
+        // what the system has left once GXM and vitaGL took theirs (the room a bigger parameter buffer would need)
+        SceKernelFreeMemorySizeInfo mem{};
+        mem.size = sizeof mem;
+        if (sceKernelGetFreeMemorySize(&mem) >= 0)
+            std::fprintf(stderr, "[gl] free memory after the GPU's start: user %d KB, cdram %d KB, phycont %d KB\n",
+                         mem.size_user / 1024, mem.size_cdram / 1024, mem.size_phycont / 1024);
+    }
     // compile each shader in glCompileShader (a vertex shader then its fragment shader, as GlShaderLibrary builds them),
     // so a shader Sony's compiler refuses is reported there instead of failing inside glLinkProgram
     vglSetSemanticBindingMode(VGL_MODE_SHADER_PAIR);

@@ -39,5 +39,8 @@ struct Instance {
 bool FindInstance(const std::string& name, Instance& out);
 void DumpTextureTable(uint64_t boundary);
 void DumpHulls(const std::string& name, uint64_t boundary);   // the named instance's ObjectCollision and the hulls a rigid body would test (attribution)   // the texture/material tables: ids, references, and which shaders/materials hold each texture
+// --trace-bodies N: every N boundaries one [bodies] line per floating body of the physics world (buoyancy > 0; every body with
+// TE_TRACE_BODIES_ALL=1): its place, motion, rotation, water level, forces and its instance's box (the icebergs' depth)
+void InstallBodies(unsigned every);
 
 }  // namespace te::probe

@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "kind": "redump",
+  "title": "Crash Twinsanity",
+  "about": "The known retail dumps of the title: the whole image's sectors, size, CRC-32, MD5 and SHA-1 exactly as each redump.org disc page publishes them (Track 1; a DVD dump is the image of its 2048-byte sectors). An image is RETAIL only when its size, CRC-32 and SHA-1 match one of these (engine/app/host/disc_identity.h). Rows with game false are other discs (demos): refused by serial. Metadata only: no byte of any disc.",
+  "retrieved": "2026-10-25 from http://redump.org/discs/system/ps2/quicksearch/twinsanity/ and http://redump.org/discs/system/ps2/quicksearch/SLPM-65801/; the pages are kept in the stage's evidence (ntsc/redump/disc_*.html)",
+  "dumps": [
+    {
+      "id": 4514, "url": "http://redump.org/disc/4514/", "title": "Crash Twinsanity",
+      "serial": "SLES-52568", "region": "PAL", "region_words": "Europe, Australia",
+      "version": "1.01", "edition": "Original, Platinum: The Best of PlayStation 2, Crash Bandicoot Action Pack",
+      "exe_date": "2004-09-02", "languages": ["English", "French", "German", "Italian", "Spanish"], "volume_id": "CRASH",
+      "sectors": 1249152, "bytes": 2558263296, "crc32": "9055a7bc", "md5": "8340e0bf533815cff20668bfb2d5a871",
+      "sha1": "7cd787a8cb35d1bcde63ad742746d2222813145e"
+    },
+    {
+      "id": 42680, "url": "http://redump.org/disc/42680/", "title": "Crash Twinsanity",
+      "serial": "SLUS-20909", "region": "NTSC-U", "region_words": "USA",
+      "version": "1.00", "edition": "Original", "exe_date": "2004-08-05", "languages": ["English"], "volume_id": "",
+      "sectors": 1029344, "bytes": 2108096512, "crc32": "4a1487df", "md5": "6ba01870aa8ae3f735ec58298dbc813c",
+      "sha1": "0d0252b6656422b75c37f325cb0002705f13bada"
+    },
+    {
+      "id": 13689, "url": "http://redump.org/disc/13689/", "title": "Crash Twinsanity",
+      "serial": "SLUS-20909", "page_serial": "SLUS 20909P3", "region": "NTSC-U", "region_words": "USA",
+      "version": "2.00", "edition": "Action Pack", "exe_date": "2004-08-22", "languages": ["English"], "volume_id": "CRASH",
+      "sectors": 1029536, "bytes": 2108489728, "crc32": "06c5bb4a", "md5": "24588dbb3a0ec54fe7e2a7f813096849",
+      "sha1": "4f1a56f633c1b500bf3e39a0df1fdc8f101018ff"
+    },
+    {
+      "id": 26782, "url": "http://redump.org/disc/26782/", "title": "Crash Bandicoot 5: Eeee Crash to Cortex no Yabou?!?",
+      "serial": "SLPM-65801", "region": "NTSC-J", "region_words": "Japan",
+      "version": "1.00", "edition": "Original", "exe_date": "2004-09-02", "languages": ["Japanese"], "volume_id": "",
+      "sectors": 954384, "bytes": 1954578432, "crc32": "c563818b", "md5": "4f8833b4ff4a7749ce3a952c801331fb",
+      "sha1": "53fd7c66e14fb3f24896164e5861b5a27858df36"
+    },
+    {
+      "id": 35281, "url": "http://redump.org/disc/35281/", "title": "Crash Twinsanity / Spyro: A Hero's Tail",
+      "serial": "SLED-52574", "region": "PAL", "region_words": "Europe", "version": "1.01", "edition": "Demo",
+      "exe_date": "2004-04-21", "volume_id": "",
+      "sectors": 600016, "bytes": 1228832768, "crc32": "227f06f2", "md5": "7e2c03a0d41990f6477e906a37de287f",
+      "sha1": "ba24fe72f623ed16bb23155cb3b0fb1e8b1e5cf5",
+      "game": false, "why": "a demo disc (Crash Twinsanity / Spyro: A Hero's Tail)"
+    },
+    {
+      "id": 28365, "url": "http://redump.org/disc/28365/", "title": "Crash Twinsanity / Spyro: A Hero's Tail",
+      "serial": "SLUS-29101", "region": "NTSC-U", "region_words": "USA", "version": "1.00", "edition": "Demo",
+      "exe_date": "2002-02-01", "volume_id": "",
+      "sectors": 600016, "bytes": 1228832768, "crc32": "b2da83c7", "md5": "143eaefc32aa23910fbc3ca96c01b3bb",
+      "sha1": "1d2a05d871c867223885f0a3a52f1ab07bd52658",
+      "game": false, "why": "a demo disc (Crash Twinsanity / Spyro: A Hero's Tail)"
+    }
+  ],
+  "programs_about": "The known retail EXECUTABLES (the program SYSTEM.CNF boots), by their bytes. An image that is no known dump but carries one of these is a MODIFIED disc of that release; one whose program is none of these is 'unknown but plausible'. Which NTSC-U release (1.00 or 2.00) the NTSC-U row is, is not recorded where it comes from; the NTSC-J executable is not known here.",
+  "programs": [
+    {
+      "serial": "SLES-52568", "executable": "SLES_525.68", "version": "1.01", "bytes": 2152836,
+      "sha256": "7a609bb3ac32c4ef42129088902c4cf8aa05cf9cb62845e121764e32d2cedc1d",
+      "sha1": "d41b8d53f733f930cf03d8ea944bec24429fe57c", "md5": "242c89fc69b580bc81ec96c564890b99",
+      "source": "game/splat.yaml names this sha1: the executable the decompilation was made from (PAL 1.01); the sha256 and md5 measured on the same bytes"
+    },
+    {
+      "serial": "SLUS-20909", "executable": "SLUS_209.09", "version": "2.00", "bytes": 2151940,
+      "sha256": "8d114879fb704d328394771aec6276136bdb4ecf4c5f8de06139b7b42974038f",
+      "sha1": "9637769b520f137a2225eb1a24b35d602ca2c79d", "md5": "36583bd799a803cae7b8f2a7b2ca6592",
+      "source": "the SLUS_209.09 of Redump disc 13689 (v2.00 Action Pack), measured 2026-10-26 on the retail image (launcher/discs/ntsc_u.json); the same sha256 and md5 as engine/games/slus_20909_crash_twinsanity/TITLE_INPUTS.sha256 and hle/title_profile.cpp: the NTSC-U executable the engine was made from is v2.00"
+    }
+  ]
+}

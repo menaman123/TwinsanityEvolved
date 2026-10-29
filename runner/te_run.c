@@ -9,6 +9,29 @@
 
 #include <string.h>
 
+#if defined(TE_NATIVE)
+/* The Vita's native build (te_native.h): the game's entry is a native function -- no module instance, no runtime state,
+   no traps (a fault is the device's, as with the unchecked wasm2c module). */
+void entry(void);
+
+int te_run_entry(struct w2c_game* instance, int test_trap) {
+    (void)instance;
+    if (test_trap) return 1;   /* --test-trap: there is no wasm trap to unwind on this lane */
+    entry();
+    return -1;
+}
+
+const char* te_trap_name(int trap) {
+    (void)trap;
+    return "(no traps: the native build)";
+}
+
+size_t te_run_tls_size(void) { return 0; }
+void te_run_tls_save(void* out) { (void)out; }
+void te_run_tls_restore(const void* in) { (void)in; }
+uint32_t te_run_call_depth(void) { return 0; }
+#else
+
 #include "game.h"
 #include "wasm-rt.h"
 #include "wasm-rt-exceptions.h"
@@ -79,3 +102,12 @@ uint32_t te_run_call_depth(void) {
     return 0;
 #endif
 }
+
+#if defined(TE_W2C_COUNT)
+// The module's operation counters of a diagnosis build (CMake TE_VITA_W2C_COUNT; the generated header's hooks,
+// tools/w2c_unchecked.py): [0] function entries, [1] loads + stores, [2] their f32 part, [3] abs, [4] float->int,
+// [5] call_indirect, [6] sqrt. main.cpp reports them per boundary.
+uint32_t te_w2c_counts[8];
+void te_w2c_count_read(uint32_t out[8]) { memcpy(out, te_w2c_counts, sizeof te_w2c_counts); }
+#endif
+#endif   /* !TE_NATIVE */

@@ -1,135 +1,107 @@
 {
-  "schema": 1,
+  "schema": 2,
   "id": "SLES-52568",
   "name": "Crash Twinsanity",
   "product": "TwinsanityEvolved",
-  "description": "Crash Twinsanity running natively on the NativeEE engine, built from the game's own code. You need your own disc; nothing from it is in this application.",
+  "description": "Crash Twinsanity running natively on your computer, made from the game's own code. You need your own disc; nothing from it is in this application.",
   "app_data_folder": "TwinsanityEvolved",
   "binary_name": "twinsanityevolved",
   "disc": {
-    "fingerprint": {
-      "file": "SLES_525.68",
-      "region": "PAL",
-      "id": "SLES-52568"
-    },
-    "alternates": [
-      {
-        "file": "SLUS_209.09",
-        "region": "NTSC-U",
-        "id": "SLUS-20909"
-      }
-    ],
-    "extensions": [
-      ".iso"
-    ]
+    "manifests": ["discs/pal.json", "discs/ntsc_u.json", "discs/redump.json", "discs/region_map_SLUS-20909.json"],
+    "plays": ["SLES_525.68", "SLUS_209.09"],
+    "plays_note": "This version of the game plays the PAL disc (SLES-52568) and the North American disc (SLUS-20909).",
+    "extensions": [".iso", ".bin"]
   },
-  "source": {
-    "url": "https://github.com/menaman123/TwinsanityEvolved",
-    "toolchain": {
-      "script": "tools/fetch_toolchain.sh",
-      "windows_script": "tools/fetch_toolchain.ps1",
-      "pins": "tools/toolchain/PINS.sha256",
-      "folder": "tools/toolchain"
-    },
-    "ffmpeg_recipe": "engine/tools/ci/ffmpeg_static.sh",
-    "needs_python": true
+  "release": {
+    "releases_url": "https://api.github.com/repos/menaman123/TwinsanityEvolved/releases",
+    "page_url": "https://github.com/menaman123/TwinsanityEvolved",
+    "zip_asset": "twinsanityevolved-{tag}-{target}.zip",
+    "vita_asset": "twinsanityevolved-{tag}-vita.vpk",
+    "sums_asset": "SHA256SUMS",
+    "install_bytes": 52428800,
+    "launcher_assets": {
+      "macos-arm64": "twinsanityevolved-launcher-{tag}-macos-arm64.zip",
+      "macos-x86_64": "twinsanityevolved-launcher-{tag}-macos-x86_64.zip",
+      "windows-x64": "twinsanityevolved-launcher-windows-x64.zip",
+      "linux-x86_64": "twinsanityevolved-launcher-linux-x86_64.AppImage"
+    }
   },
   "targets": {
-    "macos": {
-      "label": "macOS",
-      "host": "macos",
-      "artifact": "binary",
-      "configure": [
-        "-G",
-        "Ninja",
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DTE_DIST=ON",
-        "-DCMAKE_PREFIX_PATH=${ffmpeg}"
-      ],
-      "build_target": "twinsanityevolved",
-      "binary": "twinsanityevolved"
-    },
-    "windows": {
-      "label": "Windows",
-      "host": "windows",
-      "artifact": "zip",
-      "preset": "windows-clang-cl-release",
-      "build_target": "twinsanityevolved",
-      "binary": "twinsanityevolved.exe",
-      "dist": {
-        "script": "tools/ci/release_dist.ps1",
-        "args": [
-          "-SkipBuild",
-          "-BuildDir",
-          "${build}"
-        ],
-        "artifact": "dist/twinsanityevolved-windows-x64.zip"
-      },
-      "cross_reason": "The Windows build needs clang-cl and the Windows SDK, which exist only on Windows. Open the launcher on a Windows machine and choose Windows there; it builds a portable .zip."
-    },
+    "computers": [
+      { "id": "windows-x64", "label": "Windows", "short": "Windows", "exe": "twinsanityevolved.exe" },
+      { "id": "macos-arm64", "label": "macOS (Apple silicon)", "short": "macOS", "exe": "twinsanityevolved" },
+      { "id": "macos-x86_64", "label": "macOS (Intel)", "short": "macOS", "exe": "twinsanityevolved" },
+      { "id": "linux-x86_64", "label": "Linux (x86-64)", "short": "Linux", "exe": "twinsanityevolved" },
+      { "id": "linux-aarch64", "label": "Linux (ARM)", "short": "Linux", "exe": "twinsanityevolved" }
+    ],
     "vita": {
       "label": "PS Vita",
-      "host": "any",
-      "artifact": "vpk",
-      "preset": "vita-release",
-      "build_target": "twinsanityevolved_vpk",
-      "artifact_path": "twinsanityevolved.vpk",
-      "needs": [
-        "vitasdk"
+      "file": "twinsanityevolved.vpk",
+      "note": [
+        "Copy {vpk} to the PS Vita and install it with VitaShell.",
+        "Copy the folder {data_dir} from the PS Vita folder to the PS Vita's memory card, so that it is {data} there: the settings, the mods and disc-image.txt.",
+        "Copy your own disc image to {data}/{disc} on the PS Vita. The launcher never copies the disc image.",
+        "The PS Vita needs its shader library ur0:data/libshacccg.suprx -- the usual homebrew step. The launcher never downloads or carries this file."
       ],
-      "install_text": "Install twinsanityevolved.vpk with VitaShell on the console (copy it to ux0:, open VitaShell, press X on the file), or open it in Vita3K on this computer (File > Install .vpk). The disc image goes to ux0:data/twinsanity/game.iso on the console, or to the same path under Vita3K's ux0 folder. The game is read from the image at run time; nothing of it is in the .vpk.",
-      "unavailable_reason": "The PlayStation Vita renderer is not part of this release yet: the engine this source pins has no Vita target folder (the Vita lane stays a branch until its renderer has drawn a frame). When it is merged, this card builds twinsanityevolved.vpk; VitaSDK is then installed into your app-data folder."
+      "discs_note": [
+        "{disc_file} names the disc the game starts: the launcher writes it for the disc you chose (Settings > Disc image), so copy that disc to {data} under the name it gives, {disc}.",
+        "The European and the North American discs can live side by side on the PS Vita, for example as game.iso and ntsc.iso: write the name of the one to play in {data}/{disc_file}. The North American disc runs at 60 Hz and keeps its own memory card."
+      ],
+      "mods_note": "On the PS Vita, mods are switched here and copied: after you add or switch a mod, press Make the PS Vita folder again (here or in Settings), then copy {data_dir} to the PS Vita's memory card.",
+      "about": [
+        "Choose PS Vita with Get the game for PS Vita or another computer on the Games page: the launcher puts the PS Vita version in a folder named vita inside your game folder.",
+        "Install {vpk} from that folder with VitaShell; the PS Vita also needs ur0:data/libshacccg.suprx, which the launcher never carries.",
+        "Copy the folder's {data_dir} to the PS Vita's memory card: it holds your settings, the language packs, the mods you switched on and {disc_file}.",
+        "Copy your own disc image to {data} under the name {disc_file} gives; the European and the North American discs can sit side by side, as game.iso and ntsc.iso, and {disc_file} chooses between them.",
+        "Mods are added and switched here on a computer, never on the PS Vita: after a change, press Make the PS Vita folder again and copy {data_dir} once more.",
+        "Your saves stay on the PS Vita, in {data}/memcards; the North American disc keeps its own card beside it."
+      ],
+      "folder": {
+        "name": "vita",
+        "data_dir": "ux0/data/twinsanity",
+        "readme": "README-vita.txt",
+        "default_disc": "game.iso",
+        "settings_left_out": ["paths.memcards", "paths.mods", "game.hz", "video.scale", "video.fullscreen", "video.vsync", "video.frame_rate"],
+        "why": "the PS Vita folder: <game folder>/vita holds the package, README-vita.txt and ux0/data/twinsanity (the console's data folder as its memory card has it) with the game folder's ps2r.ini without the computer's own keys (its folders, its picture size, window, vertical sync and frame rate, and its game rate: the PS Vita has its own default -- the PAL disc's 50 Hz), a copy of the language packs and of the mods switched on, and disc-image.txt naming the disc's file name (game.iso when it is not a plain name)"
+      }
     }
   },
   "run": {
     "iso_flag": "--iso",
     "config_flag": "--config",
-    "memory_cards_flag": "--mc-dir",
-    "args": [
-      "--trace-state"
-    ],
+    "args": ["--trace-state"],
     "title_state_line": "game state @ boundary",
     "title_state_name": "Title (7)"
   },
+  "game_folder": {
+    "default": "~/Games/Crash Twinsanity",
+    "settings": "ps2r.ini",
+    "memcards": "memcards",
+    "mods": "mods",
+    "disc_file": "disc-image.txt",
+    "protected": ["ps2r.ini", "memcards", "memcards-mods", "memcards-SLUS-20909", "memcards-SLUS-20909-mods", "mods", "userdata", "disc-image.txt"],
+    "settings_header": "# ps2r.ini -- Crash Twinsanity's settings. The launcher's Settings page and the game's Options menu both edit this file."
+  },
   "settings": {
-    "file": "~/.twinsanityevolved/ps2r.ini",
-    "note": "Written to ~/.twinsanityevolved/ps2r.ini as the game reads it; the game's own Options menu writes the same keys.",
+    "note": "These are the settings the game shows under Options, kept in ps2r.ini in the game folder. A change here is a change there.",
     "groups": [
       {
         "title": "Game",
         "rows": [
           {
-            "key": "game.language",
-            "label": "Language",
-            "kind": "choice",
-            "default": "english",
-            "help": "The text, the speech and the movie sound track. The game offers every language your disc carries.",
-            "choices": [
-              {
-                "value": "english",
-                "label": "English"
-              },
-              {
-                "value": "french",
-                "label": "French"
-              },
-              {
-                "value": "german",
-                "label": "German"
-              },
-              {
-                "value": "spanish",
-                "label": "Spanish"
-              },
-              {
-                "value": "italian",
-                "label": "Italian"
-              },
-              {
-                "value": "portuguese",
-                "label": "Portuguese"
-              }
-            ]
+            "key": "game.text_language", "label": "Text language", "kind": "choice", "default": "english", "write_default": true,
+            "choices_from": "text_languages",
+            "help": "The game's text: every language your disc has text in, and the translations in the game folder's mods folder."
+          },
+          {
+            "key": "game.speech_language", "label": "Speech language", "kind": "choice", "default": "english", "write_default": true,
+            "choices_from": "speech_languages",
+            "help": "The voices, the movies' sound and the title cards: every language your disc has speech in."
+          },
+          {
+            "key": "game.hz", "label": "Game rate", "kind": "choice", "default": "60", "write_default": true,
+            "help": "60 is the default. 50 is the speed of a PAL console. Takes effect the next time the game starts.",
+            "choices": [ { "value": "60", "label": "60" }, { "value": "50", "label": "50 (PAL)" } ]
           }
         ]
       },
@@ -137,203 +109,87 @@
         "title": "Picture",
         "rows": [
           {
-            "key": "video.aspect",
-            "label": "Aspect ratio",
-            "kind": "choice",
-            "default": "auto",
-            "help": "Auto is the TV's 4:3; the wide shapes stretch the picture the way the game's own widescreen option does.",
+            "key": "video.aspect", "label": "Aspect ratio", "kind": "choice", "default": "auto", "write_default": true,
+            "help": "Auto is the TV's 4:3; the wide shapes widen the picture the way the game's own widescreen option does.",
             "choices": [
-              {
-                "value": "auto",
-                "label": "Auto"
-              },
-              {
-                "value": "4:3",
-                "label": "4:3"
-              },
-              {
-                "value": "16:9",
-                "label": "16:9"
-              },
-              {
-                "value": "16:10",
-                "label": "16:10"
-              },
-              {
-                "value": "21:9",
-                "label": "21:9"
-              }
+              { "value": "auto", "label": "Auto" }, { "value": "4:3", "label": "4:3" }, { "value": "16:9", "label": "16:9" },
+              { "value": "16:10", "label": "16:10" }, { "value": "21:9", "label": "21:9" }
             ]
           },
           {
-            "key": "video.scale",
-            "label": "Internal scale",
-            "kind": "choice",
-            "default": "1",
+            "key": "video.scale", "label": "Internal scale", "kind": "choice", "default": "1", "write_default": true,
             "help": "How many times the PlayStation 2's resolution the game is drawn at.",
-            "choices": [
-              {
-                "value": "1",
-                "label": "1x"
-              },
-              {
-                "value": "2",
-                "label": "2x"
-              },
-              {
-                "value": "3",
-                "label": "3x"
-              },
-              {
-                "value": "4",
-                "label": "4x"
-              }
-            ]
+            "choices": [ { "value": "1", "label": "1x" }, { "value": "2", "label": "2x" }, { "value": "3", "label": "3x" }, { "value": "4", "label": "4x" } ]
           },
           {
-            "key": "video.texture_filter",
-            "label": "Texture filter",
-            "kind": "choice",
-            "default": "title",
+            "key": "video.texture_filter", "label": "Texture filter", "kind": "choice", "default": "title", "write_default": true,
             "help": "Original is what the game asked the console for.",
-            "choices": [
-              {
-                "value": "title",
-                "label": "Original"
-              },
-              {
-                "value": "point",
-                "label": "Point"
-              },
-              {
-                "value": "bilinear",
-                "label": "Bilinear"
-              }
-            ]
+            "choices": [ { "value": "title", "label": "Original" }, { "value": "point", "label": "Point" }, { "value": "bilinear", "label": "Bilinear" } ]
           },
           {
-            "key": "video.fullscreen",
-            "label": "Window",
-            "kind": "choice",
-            "default": "windowed",
-            "choices": [
-              {
-                "value": "windowed",
-                "label": "Windowed"
-              },
-              {
-                "value": "fullscreen",
-                "label": "Fullscreen"
-              },
-              {
-                "value": "borderless",
-                "label": "Borderless"
-              }
-            ]
+            "key": "video.fullscreen", "label": "Window", "kind": "choice", "default": "windowed", "write_default": true,
+            "choices": [ { "value": "windowed", "label": "Windowed" }, { "value": "fullscreen", "label": "Fullscreen" }, { "value": "borderless", "label": "Borderless" } ]
           },
           {
-            "key": "video.vsync",
-            "label": "Vertical sync",
-            "kind": "switch",
-            "default": "off",
+            "key": "video.vsync", "label": "Vertical sync", "kind": "switch", "default": "off", "write_default": true,
             "help": "Waits for the display between frames. With a frame rate above 60 the display's refresh is the effective cap."
           },
           {
-            "key": "video.frame_rate",
-            "label": "Frame rate",
-            "kind": "choice",
-            "default": "60",
-            "help": "The game always runs at its normal speed. 30 shows every other picture; 60 every picture; above 60 the frames between are interpolated. Uncapped presents every frame the renderer can make and turns vertical sync off.",
+            "key": "video.frame_rate", "label": "Frame rate", "kind": "choice", "default": "60", "write_default": true,
+            "help": "The game always runs at its normal speed. 30 shows every other picture; 60 every picture; above 60 the pictures in between are blended. Uncapped shows as many as your computer can and turns vertical sync off.",
             "choices": [
-              {
-                "value": "30",
-                "label": "30"
-              },
-              {
-                "value": "60",
-                "label": "60"
-              },
-              {
-                "value": "120",
-                "label": "120"
-              },
-              {
-                "value": "144",
-                "label": "144"
-              },
-              {
-                "value": "240",
-                "label": "240"
-              },
-              {
-                "value": "uncapped",
-                "label": "Uncapped"
-              }
+              { "value": "30", "label": "30" }, { "value": "60", "label": "60" }, { "value": "120", "label": "120" },
+              { "value": "144", "label": "144" }, { "value": "240", "label": "240" }, { "value": "uncapped", "label": "Uncapped" }
             ]
           },
           {
-            "key": "display.fps_counter",
-            "label": "FPS counter",
-            "kind": "switch",
-            "default": "off",
-            "help": "The frames shown per second, top right, in the game's own font."
+            "key": "display.fps_counter", "label": "FPS counter", "kind": "switch", "default": "off", "write_default": true,
+            "help": "The pictures shown per second, top right, in the game's own lettering."
           }
         ]
       },
       {
-        "title": "Mods",
+        "title": "PS Vita",
+        "target": "vita",
         "rows": [
           {
-            "key": "mods.level_select.enabled",
-            "label": "Level select",
-            "kind": "switch",
-            "default": "off",
-            "help": "A list of every level, boss and area under Options > Mods. Saves go to a separate memory card while any mod is on."
-          },
-          {
-            "key": "mods.speedrun.enabled",
-            "label": "Speedrun mode",
-            "kind": "switch",
-            "default": "off",
-            "help": "A real-time timer at the top of the screen and practice save states (F9 / F10 / F11)."
+            "key": "display.tick_lock", "label": "Frame rate on PS Vita", "kind": "choice", "default": "auto",
+            "help": "Used when this ps2r.ini is copied to ux0:data/twinsanity/ on the PS Vita. Auto runs at 60 while the PS Vita keeps up and holds a steady 30 when it cannot.",
+            "choices": [ { "value": "auto", "label": "Auto (60/30)" }, { "value": "60", "label": "60" }, { "value": "30", "label": "30" } ]
           }
+        ]
+      },
+      {
+        "title": "Folders",
+        "rows": [
+          { "key": "paths.memcards", "label": "Memory cards", "kind": "folder", "default": "memcards", "write_default": true,
+            "help": "Your saves. Inside the game folder unless you move them." },
+          { "key": "paths.mods", "label": "Mods", "kind": "folder", "default": "mods", "write_default": true,
+            "help": "One folder per mod." }
+        ]
+      },
+      {
+        "title": "Disc",
+        "rows": [
+          { "key": "disc-image.txt", "label": "Disc image", "kind": "disc",
+            "help": "The disc the game starts with when you open it without the launcher." }
         ]
       }
     ]
   },
-  "folders": {
-    "games": {
-      "label": "Games",
-      "default": "${app_data}/Games"
-    },
-    "mods": {
-      "label": "Mods",
-      "default": "${app_data}/Mods",
-      "seed_from_source": "mods"
-    },
-    "memory_cards": {
-      "label": "Memory cards",
-      "default": "~/.twinsanityevolved/memcards"
-    },
-    "game_output": {
-      "label": "Game folder",
-      "default": "~/Desktop/Crash Twinsanity"
-    }
+  "mods": {
+    "builtin": [
+      { "id": "level_select", "name": "Level select", "author": "TwinsanityEvolved", "switch": false, "help": "A list of every level, boss and area, started at once." },
+      { "id": "speedrun", "name": "Speedrun mode", "author": "TwinsanityEvolved", "help": "A real-time timer at the top of the screen and practice save states (F9 / F10 / F11)." }
+    ]
   },
   "scan": {
-    "folders": [
-      "~/Downloads",
-      "~/Desktop",
-      "~/Documents",
-      "${games}"
-    ],
+    "folders": ["~/Downloads", "~/Desktop", "~/Documents", "${launcher}"],
     "removable": true,
-    "max_depth": 2
+    "max_depth": 2,
+    "min_bytes": 33554432
   },
   "licences": [
-    {
-      "label": "MIT licence",
-      "path": "LICENSE"
-    }
+    { "label": "MIT licence", "path": "LICENSE" }
   ]
 }

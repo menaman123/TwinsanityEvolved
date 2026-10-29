@@ -4,7 +4,7 @@
 //
 // Everything here EMITS TEXT ONLY; instruction semantics stay in
 // recompiler.cpp's translate_instruction / translate_control_flow (reused
-// verbatim by both engines — the brief's no-new-semantics mandate).
+// verbatim by both engines — the no-new-semantics rule).
 //
 // Delta 1 (CONVENTIONS D3/D4) — the jr (rs != $ra) dispatch:
 //   * site classified as a jump table  => `switch (target)` over EXACTLY the

@@ -89,6 +89,7 @@ const char* const kRestoreModeNames[] = {"live", "relaunch"};
 const char* const kFullscreenNames[] = {"windowed", "fullscreen", "borderless"};
 const char* const kRenderRateNames[] = {"60", "display"};
 const char* const kFrameRateNames[] = {"30", "60", "120", "144", "240", "uncapped"};
+const char* const kTickLockNames[] = {"auto", "60", "30"};
 
 const EnumTable kBackend{kBackendNames, 2};
 const EnumTable kFit{kFitNames, 5};
@@ -108,6 +109,7 @@ const EnumTable kRestoreMode{kRestoreModeNames, 2};
 const EnumTable kFullscreen{kFullscreenNames, 3};
 const EnumTable kRenderRate{kRenderRateNames, 2};
 const EnumTable kFrameRate{kFrameRateNames, 6};
+const EnumTable kTickLock{kTickLockNames, 3};
 
 bool Fail(std::string* err, const char* key, const std::string& v, const char* what) {
     if (err) *err = std::string(key) + ": bad " + what + " value '" + v + "'";
@@ -169,6 +171,7 @@ const std::vector<Field>& Fields() {
         BOOL_FIELD("diag.perf", diag.perf),
         BOOL_FIELD("diag.tick_census", diag.tick_census),
         BOOL_FIELD("display.fps_counter", display.fps_counter),
+        ENUM_FIELD("display.tick_lock", display.tick_lock, kTickLock),
         INT_FIELD("engine.ee_runahead", engine.ee_runahead),
         BOOL_FIELD("engine.mtvu", engine.mtvu),
         INT_FIELD("engine.mtvu_depth", engine.mtvu_depth),
@@ -294,6 +297,22 @@ const std::vector<Field>& Fields() {
     return f;
 }
 
+// The title's game folder and its mods' overlay order (TwinsanityEvolved), and its two language settings
+// (game.text_language / game.speech_language): keys the ini reader and SettingsFile accept like any schema key, kept
+// OUT of Keys() / settings_table.tsv as the mods.<id>.enabled family is (the engine never resolves them: the port's runner
+// does), and out of the fingerprint (paths.* are excluded; mods.order only orders the mods whose mods.<id>.enabled the
+// fingerprint already carries; the languages are the title's own choice, as game.language's value is to the engine).
+const std::vector<Field>& TitleFields() {
+    static const std::vector<Field> f = {
+        STR_FIELD("game.speech_language", game.speech_language),
+        STR_FIELD("game.text_language", game.text_language),
+        STR_FIELD("mods.order", mods.order),
+        STR_FIELD("paths.memcards", paths.memcards),
+        STR_FIELD("paths.mods", paths.mods),
+    };
+    return f;
+}
+
 #undef BOOL_FIELD
 #undef INT_FIELD
 #undef DOUBLE_FIELD
@@ -324,6 +343,8 @@ const Field* ModField(const std::string& id) {
 const Field* FindField(const std::string& key) {
     for (const Field& f : Fields())
         if (key == f.key) return &f;
+    for (const Field& f : TitleFields())
+        if (key == f.key) return &f;
     std::string id;
     if (ModsConfig::ParseKey(key, &id)) return ModField(id);
     return nullptr;
@@ -346,7 +367,7 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // saved before that carries, so those states still restore).
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
            key == "meta.profile" || key == "meta.source_fingerprint" || key == "save.restore_mode" ||
-           key == "engine.mtvu_kick_drop" || key == "video.vsync" || key == "video.frame_rate";
+           key == "engine.mtvu_kick_drop" || key == "video.vsync" || key == "video.frame_rate" || key == "display.tick_lock";
 }
 
 }  // namespace

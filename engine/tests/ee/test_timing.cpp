@@ -496,6 +496,59 @@ static void ClocksPurity() {
           DerivedClocks::HeartbeatTicksFor(24000) == 1 && DerivedClocks::HeartbeatTicksFor(25001) == 2 &&
           DerivedClocks::HeartbeatTicksFor(1) == 1, "clocks: (7) heartbeat = round(usec/16667) ticks, minimum 1");
     CHECK(k.CdvdBudgetKbSince(k.CdvdEpochTick() - 3) == 3 * 256, "clocks: (8) CDVD refill budget 256 KB per epoch tick");
+    // THE FIELD RATE: an emu tick is one field of the video mode, and the hardware clocks count real time --
+    // a PAL console's 50 Hz field is 1/50 s: 11520 T0 counts (a PAL game's T0 >> 6 = 180 units a field, not 150)
+    CHECK(DerivedClocks::CountsPerField(0, 50) == 2949120ull && DerivedClocks::CountsPerField(1, 50) == 184320ull &&
+          DerivedClocks::CountsPerField(2, 50) == 11520ull && DerivedClocks::CountsPerField(3, 50) == 312ull &&
+          DerivedClocks::Cop0CountsPerField(50) == 5898240ull,
+          "clocks: counts per 50 Hz field = 2949120 / 184320 / 11520 / 312 (PAL 625 / 2 lines), COP0 5898240");
+    CHECK(DerivedClocks::CountsPerField(0, 60) == DerivedClocks::kCountsPerTick[0] &&
+          DerivedClocks::CountsPerField(1, 60) == DerivedClocks::kCountsPerTick[1] &&
+          DerivedClocks::CountsPerField(2, 60) == DerivedClocks::kCountsPerTick[2] &&
+          DerivedClocks::CountsPerField(3, 60) == DerivedClocks::kCountsPerTick[3] &&
+          DerivedClocks::Cop0CountsPerField(60) == DerivedClocks::kCop0CountsPerTick && k.FieldHz() == 60 &&
+          k.CountsPerTick(2) == 9600ull, "clocks: the default field rate is 60 and its counts are kCountsPerTick, unchanged");
+    {
+        EmuDomain d5;
+        DerivedClocks k5(d5);
+        TickSource s5;
+        d5.ReAnchor(0);
+        d5.SetBypass(true);
+        k5.SetFieldHz(50);
+        for (int i = 0; i < 50; ++i) d5.OnRawTick(s5.Tick());
+        CHECK(k5.T0Counts() == 576000ull && k5.TimerCounts(0) == 147456000ull && k5.TimerCounts(1) == 9216000ull &&
+              k5.TimerCounts(3) == 50ull * 312ull && k5.Cop0Count() == 294912000ull,
+              "clocks: 50 fields at 50 Hz = one second of BUSCLK, BUSCLK/16, T0 (576000) and the EE core");
+        k5.SetRtcFixed(false);
+        CHECK(k5.RtcEpochSeconds() == DerivedClocks::kRtcFixedEpochS + 1, "clocks: (6) the unpinned RTC: one second per 50 fields");
+        CHECK(k5.CdvdBudgetKbSince(k5.CdvdEpochTick() - 5) == 5ull * 256ull * 60ull / 50ull,
+              "clocks: (8) the CDVD budget keeps its KB a second at 50 Hz (307.2 KB a field)");
+        CHECK(k5.IopHeartbeatBeats(20000) == 50 && k5.IopHeartbeatBeats(40000) == 25, "clocks: (7) the heartbeat in 20 ms fields at 50 Hz");
+        // SetFieldHz re-anchors: every count continues from its value, at the new rate
+        k5.SetFieldHz(60);
+        CHECK(k5.T0Counts() == 576000ull && k5.Cop0Count() == 294912000ull, "clocks: SetFieldHz keeps every count where it was");
+        d5.OnRawTick(s5.Tick());
+        CHECK(k5.T0Counts() == 576000ull + 9600ull && k5.Cop0Count() == 294912000ull + 4915200ull,
+              "clocks: ... and counts at the new rate from there");
+        // an anchor (a save state's) reproduces the counts in another instance at the same tick, whatever its rate
+        const DerivedClocks::Anchor a = k5.AnchorAt(d5.DomainTick());
+        EmuDomain d6;
+        DerivedClocks k6(d6);
+        TickSource s6;
+        d6.ReAnchor(0);
+        d6.SetBypass(true);
+        for (uint64_t i = 0; i < d5.DomainTick(); ++i) d6.OnRawTick(s6.Tick());
+        k6.SetFieldHz(50);
+        k6.SetAnchor(a);
+        CHECK(k6.T0Counts() == k5.T0Counts() && k6.TimerCounts(0) == k5.TimerCounts(0) && k6.TimerCounts(3) == k5.TimerCounts(3) &&
+              k6.Cop0Count() == k5.Cop0Count(), "clocks: SetAnchor(AnchorAt(t)) reproduces every count at t");
+        d6.OnRawTick(s6.Tick());
+        CHECK(k6.T0Counts() == k5.T0Counts() + 11520ull, "clocks: ... then the loading instance's rate");
+    }
+    CHECK(DerivedClocks::HeartbeatTicksFor(20000, 50) == 1 && DerivedClocks::HeartbeatTicksFor(29999, 50) == 1 &&
+          DerivedClocks::HeartbeatTicksFor(30000, 50) == 2 && DerivedClocks::HeartbeatTicksFor(1, 50) == 1 &&
+          DerivedClocks::HeartbeatTicksFor(25000, 60) == DerivedClocks::HeartbeatTicksFor(25000),
+          "clocks: (7) heartbeat = round(usec / 20000) at 50 Hz; the 60 Hz rule unchanged");
     CHECK(DerivedClocks::AudioRateMasterIsDevice(), "clocks: (9) audio: the device clock is the rate master, not derived");
     // Kernel install: KernlTimer reads T0 counts, SyscallTable alarms read emu ticks.
     KernlTimer::ResetForTest();

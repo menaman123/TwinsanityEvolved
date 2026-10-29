@@ -5,6 +5,33 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#if defined(__vita__)
+#include <malloc.h>
+#include <cstdlib>
+#endif
+
+#if defined(__vita__)
+// The Vita: the 32 MB on a 4 KB boundary. newlib's malloc aligns to 8 bytes, which can put the game's 16- and 32-byte
+// aligned data (the PS2's quadword vectors and matrices) across the Cortex-A9's 32-byte cache lines; on a page every
+// guest alignment is the host's. Only the host address changes -- the game sees offsets into the block.
+template <class T>
+struct MainMemoryPageAllocator {
+    using value_type = T;
+    MainMemoryPageAllocator() = default;
+    template <class U>
+    MainMemoryPageAllocator(const MainMemoryPageAllocator<U>&) {}
+    T* allocate(size_t n) {
+        void* p = memalign(4096, n * sizeof(T));   // newlib's (the Vita's has no posix_memalign body)
+        if (!p) std::abort();
+        return static_cast<T*>(p);
+    }
+    void deallocate(T* p, size_t) { std::free(p); }
+    template <class U>
+    bool operator==(const MainMemoryPageAllocator<U>&) const { return true; }
+    template <class U>
+    bool operator!=(const MainMemoryPageAllocator<U>&) const { return false; }
+};
+#endif
 
 class MainMemory {
 public:
@@ -28,5 +55,9 @@ public:
     void Clear();
 
 private:
+#if defined(__vita__)
+    std::vector<uint8_t, MainMemoryPageAllocator<uint8_t>> bytes_;
+#else
     std::vector<uint8_t> bytes_;
+#endif
 };

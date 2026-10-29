@@ -2,7 +2,7 @@
 // the close took from the request to the last join, and each named stop/join
 // (the game thread's unwind, the guest workers' JoinAll, the savestate writer,
 // the MTVU worker, Graphics' quiescence, the GS consumer, the recorder) in
-// milliseconds. run.meta `shutdown=` / `shutdown_ms=` (the user's "shutdown
+// milliseconds. run.meta `shutdown=` / `shutdown_ms=` (the tester's "shutdown
 // exceeded 10 seconds" is attributed by the step that was IN PROGRESS when the
 // watchdog fired: `Current()` names it; the watchdog prints it). Thread-safe:
 // the steps run on the game worker, the watchdog reads on main.

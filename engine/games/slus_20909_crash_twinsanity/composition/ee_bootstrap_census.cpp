@@ -567,7 +567,7 @@ int EeBootstrap::CensusPresentation(LegState& s) {
             // process's window id -- a silent hotkey is a FAIL, never a mystery).
             if (session) {
                 // The shutdown's step census (the close request -> the worker's
-                // join; each stop/join named with its ms): the user's "shutdown
+                // join; each stop/join named with its ms): the tester's "shutdown
                 // exceeded 10 seconds" reads which step was in progress.
                 if (session->Shutdown().Begun()) {
                     meta->Set("shutdown", session->Shutdown().Render());

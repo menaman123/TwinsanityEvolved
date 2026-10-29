@@ -1,13 +1,13 @@
-// app/launcher/game_card.h -- a disc's card: the generated artwork, the title, the status line, the three facts (last
-// played, playtime, build), and the one action (Install / Build / Play); while a build runs the card shows the
-// progress bar with elapsed / remaining, Details and Cancel.
+// app/launcher/game_card.h -- a chosen disc's card on Games: the generated artwork, the title, the region and state
+// badges, the details line, the status line, the facts (last played, playtime, the version installed) and the actions
+// (Play; Update to <tag> when a newer release is out; Locate… and Remove when the image moved).
 #pragma once
 #include <QWidget>
 class QLabel;
 namespace ps2r::launcher {
+class Badge;
 class FlatButton;
 class LauncherApp;
-class ProgressPanel;
 
 class GameCard : public QWidget {
     Q_OBJECT
@@ -16,22 +16,22 @@ public:
     QString isoPath() const { return iso_; }
     void refresh();
     FlatButton* actionButton() const { return action_; }
-    FlatButton* detailsButton() const { return details_; }
-    FlatButton* cancelButton() const { return cancel_; }
-    ProgressPanel* progress() const { return progress_; }
+    FlatButton* updateButton() const { return update_; }
+    FlatButton* removeButton() const { return remove_; }
     QString statusText() const;
     QString factsText() const;
+    QString stateBadgeText() const;      // "Not playable in this version", else ""
+    QString identityBadgeText() const;   // "PAL · modified disc"
 
 signals:
-    void actionRequested();
-    void detailsRequested();
-    void cancelRequested();
+    void playRequested();
+    void installRequested();
+    void updateRequested();
+    void locateRequested();
     void removeRequested();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
-    void enterEvent(QEnterEvent* event) override;
-    void leaveEvent(QEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
@@ -39,15 +39,14 @@ private:
     LauncherApp* app_;
     QString iso_;
     QLabel* title_;
-    QLabel* subtitle_;
+    Badge* region_;
+    Badge* state_;
+    QLabel* details_;
     QLabel* status_;
     QLabel* facts_;
     FlatButton* action_;
-    FlatButton* details_;
-    FlatButton* cancel_;
-    ProgressPanel* progress_;
-    QWidget* actionRow_;
-    bool hover_ = false;
+    FlatButton* update_;
+    FlatButton* remove_;
 };
 
 }  // namespace ps2r::launcher

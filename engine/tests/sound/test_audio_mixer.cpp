@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 
 #include "engine/sound/audio_mixer.h"
@@ -100,6 +102,25 @@ int main() {
     switched.Pump(1);
     check(spu.MixCalls() == calls && switched.Output()[0] == 0 && switched.Output()[1] == 0,
           "selected output never enters retained mixer");
+    {
+        // The output stage's clamp by the bits (StoreUnitClamped) against std::clamp(x, -1, 1): every pattern whose low
+        // byte is one of six values (100 M patterns: every exponent and sign, the mantissa's top 15 bits all) and every
+        // pattern within 2^16 of the boundaries (+-1, the infinities, the NaNs, the zeros and the subnormals)
+        uint64_t compared = 0, wrong = 0;
+        const auto one = [&](uint32_t b) {
+            float x, want, got;
+            std::memcpy(&x, &b, 4);
+            want = std::clamp(x, -1.0f, 1.0f);
+            ps2r::sound::StoreUnitClamped(&got, x);
+            ++compared;
+            if (std::memcmp(&want, &got, 4) != 0) ++wrong;
+        };
+        for (uint32_t high = 0; high < (1u << 24); ++high)
+            for (const uint32_t low : {0x00u, 0x01u, 0x7fu, 0x80u, 0xfeu, 0xffu}) one(high << 8 | low);
+        for (const uint32_t edge : {0x3f800000u, 0xbf800000u, 0x7f800000u, 0xff800000u, 0x00000000u, 0x80000000u})
+            for (uint32_t d = 0; d < (1u << 16); ++d) { one(edge + d); one(edge - d); }
+        check(wrong == 0 && compared > 100000000ull, "the output clamp by the bits is std::clamp bit for bit");
+    }
     std::printf("AudioMixer %d checks %d failures; frames=%llu Movie=%llu\n", checks, failures,
         static_cast<unsigned long long>(audio.Count().frames),
         static_cast<unsigned long long>(audio.Count().movie_frames));

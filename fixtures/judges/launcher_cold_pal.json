@@ -1,0 +1,61 @@
+{
+  "judge": "launcher_cold_judge",
+  "description": "The launcher's cold run of the prebuilt-install flow: an empty home folder holding only the player's PAL disc image (in Downloads) and the launcher's settings file naming a local release server; the window's own buttons go through the four setup steps; the release zip is downloaded, checked against SHA256SUMS and placed; Play reaches the title state in the launcher's play log. Zero commands typed.",
+  "flow_functions": [
+    "whereIsYourGame",
+    "whereShouldTheGameLive",
+    "whereWillYouPlay",
+    "install",
+    "play",
+    "launcherUpdate"
+  ],
+  "release_tag": "v0.0.1",
+  "disc_region": "PAL",
+  "disc_state": "PAL · modified disc",
+  "game_folder": "Games/Crash Twinsanity",
+  "game_folder_must_hold": [
+    "twinsanityevolved",
+    "ps2r.ini",
+    "memcards",
+    "mods",
+    "disc-image.txt",
+    "README.md",
+    "LICENSE",
+    "BUILD-ID",
+    "mods/arabic/mod.json",
+    "mods/arabic/data/arabic.bank",
+    "mods/arabic/data/arabic.font"
+  ],
+  "bundled_mods_must_be_placed": [
+    "arabic"
+  ],
+  "ps2r_ini_must_set": {
+    "paths.memcards": "memcards",
+    "paths.mods": "mods",
+    "game.text_language": "english",
+    "game.speech_language": "english"
+  },
+  "play_arguments_must_include": [
+    "--iso",
+    "--config",
+    "--trace-state"
+  ],
+  "play_arguments_must_not_include": [
+    "--mc-dir"
+  ],
+  "title_state_name": "Title (7)",
+  "max_wall_seconds": 900,
+  "install_timeout_s": 600,
+  "title_timeout_s": 300,
+  "ps2r_ini_must_set_why": "2026-10-27: the new folder's ps2r.ini names the two language rows (game.text_language, game.speech_language) in place of game.language",
+  "launcher_update": {
+    "tag": "v9.9.9",
+    "games_line": "A new launcher is ready: v9.9.9. This copy of the launcher cannot replace itself. Download the new one from its page.",
+    "about_line": "A new launcher is ready: v9.9.9. This copy of the launcher cannot replace itself. Download the new one from its page.",
+    "games_update_button": false,
+    "games_download_button": true,
+    "download_page_suffix": "/releases/tag/v9.9.9",
+    "asset_downloaded": false
+  },
+  "launcher_update_why": "2026-10-28: the list also names a newer launcher (v9.9.9, published after the driver was made); the driver is no launcher installed from a release, so the offer says it cannot replace itself and gives the release's page, without downloading the file"
+}
