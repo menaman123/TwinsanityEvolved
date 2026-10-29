@@ -29,6 +29,7 @@
 #include "release_installer.h"
 #include "title_manifest.h"
 #include "vita_folder.h"
+#include "zip_unpack.h"
 using namespace ps2r::launcher;
 
 namespace {
@@ -108,6 +109,16 @@ QByteArray makeZip(const QString& root, const QHash<QString, QByteArray>& files,
     }
     zip.close();
     return buf.data();
+}
+
+// The zip as Windows' Compress-Archive writes it: every central directory entry made by MS-DOS, with no attributes (a
+// folder entry is then not marked as one)
+QByteArray dosZip(QByteArray zip) {
+    for (qsizetype at = zip.indexOf("PK\x01\x02"); at >= 0; at = zip.indexOf("PK\x01\x02", at + 4)) {
+        zip[at + 5] = 0;   // version made by: its host byte
+        for (int k = 0; k < 4; ++k) zip[at + 38 + k] = 0;   // external attributes
+    }
+    return zip;
 }
 
 bool writeFile(const QString& path, const QByteArray& bytes) {
@@ -319,6 +330,25 @@ private slots:
         QCOMPARE(ReleaseCatalogue::bytesText(18 * 1024 * 1024 + 100 * 1024), QStringLiteral("18.1 MB"));
         QCOMPARE(ReleaseCatalogue::rateText(3.2 * 1024 * 1024), QStringLiteral("3.2 MB/s"));
         QVERIFY(QStringList({"macos-arm64", "macos-x86_64", "windows-x64", "linux-x86_64", "linux-aarch64"}).contains(ReleaseCatalogue::hostTarget()));
+    }
+
+    // a release zip written on Windows: its folder entries carry no folder attribute, the files under them unpack
+    void unpacksAWindowsZip() {
+        QBuffer buf;
+        buf.open(QIODevice::WriteOnly);
+        QZipWriter zip(&buf);
+        zip.addDirectory("game/fixtures");
+        zip.addFile("game/twinsanityevolved.exe", QByteArray("exe"));
+        zip.addFile("game/fixtures/padlogs/a.padlog", QByteArray("pad"));
+        zip.close();
+        const QString path = home_.path() + "/windows.zip";
+        QVERIFY(writeFile(path, dosZip(buf.data())));
+        const QString into = home_.path() + "/windows-unpacked";
+        QString error;
+        QVERIFY2(unpackZip(path, into, &error), qPrintable(error));
+        QVERIFY(QFileInfo(into + "/game/fixtures").isDir());
+        QCOMPARE(readFile(into + "/game/fixtures/padlogs/a.padlog"), QByteArray("pad"));
+        QCOMPARE(readFile(into + "/game/twinsanityevolved.exe"), QByteArray("exe"));
     }
 
     void gameFolder() {

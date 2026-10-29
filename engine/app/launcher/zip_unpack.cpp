@@ -3,6 +3,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSet>
+#include <QVector>
 #if __has_include(<QtCore/private/qzipreader_p.h>)
 #include <QtCore/private/qzipreader_p.h>
 #else
@@ -27,9 +29,19 @@ bool unpackZip(const QString& zipPath, const QString& into, QString* error) {
         if (error) *error = QStringLiteral("%1 could not be made").arg(QDir::toNativeSeparators(into));
         return false;
     }
-    for (const QZipReader::FileInfo& fi : zip.fileInfoList()) {
+    // A zip written on Windows (PowerShell's Compress-Archive) gives its folder entries no directory attribute, and Qt's
+    // reader then names them files (their trailing '/' dropped): an entry that holds other entries is a folder
+    const QVector<QZipReader::FileInfo> entries = zip.fileInfoList();
+    QSet<QString> folders;
+    for (const QZipReader::FileInfo& fi : entries) {
         QString path = fi.filePath;
         path.replace('\\', '/');
+        for (qsizetype at = path.indexOf('/'); at > 0; at = path.indexOf('/', at + 1)) folders.insert(path.left(at));
+    }
+    for (const QZipReader::FileInfo& fi : entries) {
+        QString path = fi.filePath;
+        path.replace('\\', '/');
+        while (path.endsWith('/')) path.chop(1);
         if (!zipEntryIsSafe(path)) {
             if (error) *error = QStringLiteral("the download names a file outside its folder (%1)").arg(path);
             return false;
@@ -39,7 +51,7 @@ bool unpackZip(const QString& zipPath, const QString& into, QString* error) {
             if (error) *error = QStringLiteral("%1 could not be written").arg(QDir::toNativeSeparators(what));
             return false;
         };
-        if (fi.isDir) {
+        if (fi.isDir || folders.contains(path)) {
             if (!QDir().mkpath(dest)) return failed(dest);
             continue;
         }
