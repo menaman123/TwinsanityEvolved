@@ -3174,7 +3174,11 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                                 profCopy = te::prof::Register("rt frame copy"),
                                 profShadow = te::prof::Register("rt shadow clear / volumes / composite (+ the Vita's casters re-stamp)");
     const int profSlot = te::prof::ThreadSlot();   // (once: a thread_local read is the Vita's emulated TLS, per scope below)
+    // renderer.h's buckets: the blended materials' first, the shadows'
+    constexpr int kBlendedBucket = 6, kShadowsBucket = 21;
     for (int b = 0; b < TE_GFX_BUCKET_COUNT; ++b) {
+        // the casters as the opaque buckets left them, before the blended ones draw over them (ps2e_draw_mark_casters_early)
+        if (b == kBlendedBucket && buckets[kShadowsBucket].used) ps2e_draw_mark_casters_early(g.dev);
         {
             te::prof::Scope scope(profExpand, profSlot);
             ExpandBucket(buckets, b);   // its builds, when the picture came with them still running

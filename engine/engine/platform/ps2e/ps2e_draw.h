@@ -376,6 +376,11 @@ ps2e_draw_vertex* ps2e_draw_reserve_vertices(ps2e_draw* device, int count);
  * stencil set once), out[1] mesh casters' full draws, out[2] mesh casters' packet replays, out[3] skin casters' full draws,
  * out[4] skin casters' packet replays, out[5] vertex casters' draws */
 void ps2e_draw_restamp_census(const ps2e_draw* device, uint64_t out[6]);
+/* The frame's casters as its opaque draws left them: called between the opaque and the translucent draws, the pixels whose
+ * alpha is then a PS2 0x80 or more stay casters for the shadow bracket even where a later draw that writes no depth (the
+ * water over a sinking Crash) replaced their alpha -- the retail picture shows no shadow on them. The Vita's re-stamp keeps
+ * the same pixels already (a no-op there). Returns 1 when marked. */
+int ps2e_draw_mark_casters_early(ps2e_draw* device);
 /* 1 = the producer keeps every vertex array it hands to ps2e_draw_submit valid until the frame's ps2e_draw_present
  * (its frame's draw lists outlive their drawing): the device may then keep pointers to a frame's vertices instead of
  * copying them (the Vita's shadow casters, drawn again at the shadows' composite). 0 (the default) = copied. */

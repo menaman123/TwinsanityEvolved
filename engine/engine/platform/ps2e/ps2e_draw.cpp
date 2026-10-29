@@ -57,6 +57,7 @@ struct ps2e_draw {
     int last_out_x = 0, last_out_y = 0, last_out_w = 0, last_out_h = 0;        // the last present's output rectangle
     bool headless = false;
     bool stencil_diag = false;   // ps2e_draw_config.stencil_diag
+    bool early_casters = false;  // this frame's casters marked before its translucent draws (kEarlyCasterBit)
     bool in_frame = false;
     bool capture = false;
     bool present_ct16 = false;   // ps2e_draw_set_present_ct16
@@ -244,6 +245,7 @@ constexpr uint8_t kStencilOrigin = 15;
 constexpr uint8_t kCasterBit = 0x20;   // the stencil bit above the 5-bit counter: a caster pixel (SeedCasterMask)
 constexpr uint8_t kCounterMask = 0x1F; // the 5-bit counter, wrapping as the GS byte did
 constexpr uint8_t kInsideBit = 0x10;   // bit 4 set <=> the count is 1..16
+constexpr uint8_t kEarlyCasterBit = 0x40;   // a caster before the translucent draws (ps2e_draw_mark_casters_early)
 
 // The stencil test around one counting or composite draw (the GS tested the volumes' NEGATED z against the scene
 // depth's byte-NOT copy -- a fragment counts where the volume face is AT OR BEHIND the scene surface, i.e. where the
@@ -258,11 +260,11 @@ render::StencilState VolumeStencil(const ps2e_draw_state* st) {
         s.write_mask = 0;
         return s;
     }
-    // dest_alpha_test: the pixels the clear marked as casters fail the test and keep their count
+    // dest_alpha_test: the pixels the clear marked as casters (or the early mark did) fail the test and keep their count
     if (st->dest_alpha_test) {
         s.func = render::StencilState::kEqual;
         s.ref = 0;
-        s.cmp_mask = kCasterBit;
+        s.cmp_mask = kCasterBit | kEarlyCasterBit;
     } else {
         s.func = render::StencilState::kAlways;
         s.ref = 0;
@@ -774,6 +776,7 @@ void ps2e_draw_begin_frame(ps2e_draw* d, const ps2e_draw_clear* clear) {
     d->device->BeginFrame();
     d->in_frame = true;
     d->frame_copy_valid = false;
+    d->early_casters = false;
     {
         // the screen copies' scene breaks (Backend::KeepDepthAcrossCopies): this frame's announced copies, or copies the
         // frame before took without an announcement
@@ -1389,7 +1392,19 @@ int ps2e_draw_submit(ps2e_draw* d, const ps2e_draw_state* st, const ps2e_draw_ve
     if (st->stencil == PS2E_DRAW_STENCIL_CLEAR) {
         // The counter's origin (15: counts 1..16 set bit 4, as the GS byte 120 + 8n set bit 7 for n in 1..16)
         StencilProbe(d, "before-clear");
-        d->device->ClearStencil(d->depth, kStencilOrigin);
+        if (d->early_casters) {
+            // the counter and the caster bit to the origin, the early mark kept
+            render::StencilState origin;
+            origin.enabled = true;
+            origin.func = render::StencilState::kAlways;
+            origin.ref = kStencilOrigin;
+            origin.write_mask = kCounterMask | kCasterBit;
+            origin.pass_op = render::StencilState::kReplace;
+            const int w = d->frame_w * d->scale, h = d->frame_h * d->scale;
+            d->device->DrawConstQuad(render::SurfaceId{}, d->depth, render::Rect{0, 0, w, h}, 0, false, origin);
+        } else {
+            d->device->ClearStencil(d->depth, kStencilOrigin);
+        }
         // (the Vita's backend cannot read the frame here: its casters are re-stamped at the composite, ResetCasterCounts)
         SeedCasterMask(d);
 #if PS2R_HOST_VITA
@@ -2438,6 +2453,18 @@ void ResetCasterCounts(ps2e_draw* d) {
 }
 }  // namespace
 #endif
+
+int ps2e_draw_mark_casters_early(ps2e_draw* d) {
+    if (!d || !d->in_frame) return 0;
+#if PS2R_HOST_VITA
+    return 0;   // (the re-stamp keeps these casters already: drawn again where they are still the nearest surface)
+#else
+    d->mesh_run = false;
+    d->device->ClearStencil(d->depth, 0);
+    d->early_casters = d->device->MarkStencilWhereOpaque(d->color, d->depth, kEarlyCasterBit);
+    return d->early_casters ? 1 : 0;
+#endif
+}
 
 void ps2e_draw_restamp_census(const ps2e_draw* d, uint64_t out[6]) {
     if (!out) return;
