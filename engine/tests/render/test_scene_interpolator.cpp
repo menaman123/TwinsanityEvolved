@@ -225,6 +225,30 @@ int main() {
         CHECK(std::fabs(Cx(out[0]) - 0.5 * (Cx(q0) + Cx(q1))) < 0.05, "a camera pan: the static object lands midway");
     }
 
+    // a family: two standing instances named by their draw order (ids 21, 22); the first is culled, so the second is drawn
+    // under the first's id -- it pairs with its own previous instance (the nearer one of its family), it does not slide
+    {
+        InterpCamera cam;
+        Camera(cam, 0, 0, 0);
+        float wa[16], wb[16];
+        Translation(wa, 0, 0, 10); Translation(wb, 2, 0, 10);
+        Quad a0, b0, b1;
+        MakeQuad(a0, wa, cam, 21); MakeQuad(b0, wb, cam, 22); MakeQuad(b1, wb, cam, 21);
+        a0.item.tag.part = b0.item.tag.part = b1.item.tag.part = 7;
+        InterpItem prev_items[2] = {a0.item, b0.item};
+        InterpScene prev{prev_items, 2, cam, kOffX, kOffY, 1.f, false}, cur{&b1.item, 1, cam, kOffX, kOffY, 1.f, false};
+        SceneInterpolator si;
+        std::vector<InterpOutput> out;
+        si.Interpolate(prev, cur, 0.5, out);
+        CHECK(out.size() == 1 && std::fabs(Cx(out[0]) - Cx(b1)) < 0.05 && si.Stats().family_matches == 1,
+              "a family: the instance pairs with the nearer one of its family when the draw order shifted");
+        // without a family the order's pairing stands (the instance slides from the first one's place)
+        b1.item.tag.part = 0;
+        SceneInterpolator plain;
+        plain.Interpolate(prev, InterpScene{&b1.item, 1, cam, kOffX, kOffY, 1.f, false}, 0.5, out);
+        CHECK(std::fabs(Cx(out[0]) - Cx(b1)) > 0.5, "(and the order alone would not: the test discriminates)");
+    }
+
     // unmatched, untagged, a vertex run, the producer's cut, a cut by threshold, behind the camera
     {
         InterpCamera cam;

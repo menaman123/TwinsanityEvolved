@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "engine/platform/ps2e/ps2e_draw.h"
@@ -42,7 +43,10 @@ enum class InterpKind : uint8_t { Newest = 0, Rigid = 1, Vertices = 2 };
 
 struct InterpTag {
     uint64_t id = 0;        // the stable instance identity (0 = untagged: newest)
-    uint32_t part = 0;      // a draw's ordinal within the object (Vertices: the batch / block to pair)
+    uint32_t part = 0;      // a draw's ordinal within the object (Vertices: the batch / block to pair); Rigid: the FAMILY
+                            // (0 = none) -- instances one producer names by their draw order, the model they share: an
+                            // instance whose own previous instance is far is paired with a clearly nearer one of its family
+                            // (the order shifts when an earlier instance is culled; the instances do not move)
     InterpKind kind = InterpKind::Newest;
 };
 
@@ -92,6 +96,7 @@ struct InterpStats {
     uint64_t newest_items = 0;        // draws passed through as the newest picture's
     uint64_t object_snaps = 0;        // rigid draws left as they are: a step beyond the object thresholds
     uint64_t unmatched = 0;           // tagged draws without a counterpart in the previous picture
+    uint64_t family_matches = 0;      // rigid instances paired with a nearer instance of their family than their own previous one
     uint64_t unprojectable = 0;       // rigid draws left as they are: a singular matrix or a vertex behind the camera
     uint64_t vertex_count_mismatch = 0;   // vertex runs found by identity but with another count (newest as they are)
     uint64_t vertex_run_jumps = 0;        // vertex runs refused because a vertex moved more than vertex_run_max_step_px
@@ -166,6 +171,7 @@ private:
     std::unordered_map<uint64_t, size_t> prev_by_key_;    // (id, part) -> index into prev's items (vertex runs)
     struct PrevInstance { size_t item; uint64_t key; double t[3]; bool taken = false; };   // taken: matched this frame (1:1)
     std::unordered_map<uint64_t, std::vector<PrevInstance>> prev_rigid_;   // id -> prev's rigid instances (one per translation)
+    std::unordered_map<uint32_t, std::vector<std::pair<uint64_t, size_t>>> prev_family_;   // family -> (id, index in prev_rigid_[id])
     // sums until finished, then means; `carry` = the part of the pictures' step the shown frame had NOT yet travelled when
     // it was shown ((1 - fraction) * the pair's step): the next shown frame may legitimately move that far on top of its
     // own pair's step
@@ -190,6 +196,8 @@ private:
     // the nearest NOT YET TAKEN previous instance of `id` (one previous instance matches one newest instance per frame;
     // the newest are visited in draw order, the same in both frames of a pair, so the assignment is the same too)
     PrevInstance* NearestPrev(uint64_t id, const double t[3], double* distance);
+    // the nearest NOT YET TAKEN previous instance of any id of `family`, or null
+    PrevInstance* NearestInFamily(uint32_t family, const double t[3], double* distance);
     std::unordered_map<uint64_t, Centroid> shown_;         // the previous shown frame's object centroids (by id)
     std::unordered_map<uint64_t, Centroid> shown_next_;
     std::unordered_map<uint64_t, Centroid> picture_;       // the previous shown PICTURE's instance centroids (by instance key)

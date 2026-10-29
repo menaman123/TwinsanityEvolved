@@ -269,18 +269,22 @@ void TagDiag(uint64_t id, const Matrix& world, const Matrix& screen);
 // == screen under the current view (a placed model's screen matrix carries its chunk's matrix; a rigid model's equals
 // world . toScreen already). W = screen . (toCamera . cameraToScreen)^-1; nullopt when the view is missing or singular.
 std::optional<Matrix> WorldOfScreen(const Matrix& screen);
-void TagRigid(uint64_t id, const Matrix& world, const Matrix& screen) {
+// `family`: the model the instance shares with the others the producer names by draw order (OrdinalId), 0 for none -- the
+// interpolator pairs an instance with a clearly nearer one of its family when its own previous instance is far
+void TagRigid(uint64_t id, const Matrix& world, const Matrix& screen, uint32_t family = 0) {
     float w[16], sc[16];
     Flat(world, w);
     Flat(screen, sc);
-    te::gfx::SetDrawTag(ps2r::ps2e::InterpTag{id, 0, ps2r::ps2e::InterpKind::Rigid}, w, sc);
+    te::gfx::SetDrawTag(ps2r::ps2e::InterpTag{id, family, ps2r::ps2e::InterpKind::Rigid}, w, sc);
     TagDiag(id, world, screen);
 }
 uint64_t TagId(uint32_t a, uint32_t b) { return (uint64_t(a) << 32) | uint64_t(b); }
 // The k-th draw of `model` through `matrix` this frame: a producer that draws several instances of one model through ONE
-// matrix address (a stack local, a frame-arena slot: an OGI's jointed rigid pieces, a chunk's placements) names them by
-// their order within the picture -- the scene is traversed in the same order every frame, so the ordinal is a stable identity.
-// Reset at Present (the picture's end).
+// matrix address (a stack local: an OGI's jointed rigid pieces, the level's objects) names them by their order within the
+// picture. The order shifts when an earlier instance is culled or comes into view, so a rigid instance also names its
+// family (FamilyOf) and the interpolator pairs it with a clearly nearer instance of the family when its own previous one is
+// far. A chunk's placements take no ordinal (one identity per model and chunk view: paired by nearness). Reset at Present
+// (the picture's end).
 std::unordered_map<uint64_t, uint32_t> g_drawOrdinals;
 // The blended UV-scrolled passes as native meshes (te::gfx::SetNativeScrolled): ON by default; TE_GFX_NATIVE_SCROLLED=0
 // (read by graphics.cpp ReadOptions: a namespace-scope getenv here would run before the Vita's args.txt has set the
@@ -289,6 +293,11 @@ std::atomic<bool> g_nativeScrolled{true};
 uint64_t OrdinalId(uint64_t base) {
     const uint32_t k = g_drawOrdinals[base]++;
     return base ^ (uint64_t(k) * 0xD6E8FEB86659FD93ull);
+}
+// The family an ordinal-named instance belongs to (InterpTag::part of a rigid draw): never 0
+uint32_t FamilyOf(uint64_t base) {
+    const uint32_t f = uint32_t((base ^ (base >> 32)) * 0x9E3779B97F4A7C15ull >> 32);
+    return f ? f : 1u;
 }
 
 std::optional<Matrix> ReadMatrix(uint32_t address) {
@@ -2873,7 +2882,7 @@ void ps2e_graphics_draw_rigid_model(ps2e_u32 model, ps2e_u32 matrix, ps2e_u32 li
     if (rigid->needsEye) inst.eye = EyeIn(*world, view->toCamera);   // the env-map passes
     // the interpolator's identity: this model at this instance's matrix (a stable address while the instance lives)
     if (te::gfx::Interpolating())
-        if (const auto w = WorldOfScreen(v.screen)) TagRigid(OrdinalId(TagId(model, 0)), *w, v.screen);   // (the matrix is a stack local: the order names the instance)
+        if (const auto w = WorldOfScreen(v.screen)) TagRigid(OrdinalId(TagId(model, 0)), *w, v.screen, FamilyOf(TagId(model, 0)));   // (the matrix is a stack local: the order names the instance)
     if (g_diag.Logging()) {
         const auto* t = te::gfx::CurrentTarget();
         std::fprintf(stderr, "[te.gfx.diag] present %ld rigid view: toScreen row3 (%.1f %.1f %.1f %.1f) proj row0 (%.3f %.3f %.3f %.3f) clip (%.2f %.2f %.2f %.2f) world row3 (%.2f %.2f %.2f) target %s off (%d %d) size (%d %d) display (%d %d) xy (%d %d) c2s row3 (%.1f %.1f %.1f %.1f)\n",
@@ -2928,7 +2937,7 @@ void ps2e_graphics_draw_placed_model(ps2e_u32 model, ps2e_u32 viewAddress, ps2e_
     // (the matrices live in the frame arena, recycled per frame: the same offsets recur across chunks, so the chunk view is
     // part of the identity; within a chunk the array's order is the placement's)
     if (te::gfx::Interpolating())
-        if (const auto w = WorldOfScreen(v.screen)) TagRigid(OrdinalId(TagId(model, viewAddress)), *w, v.screen);   // (the world matrix is a frame-arena slot: the order within the chunk view names the placement)
+        if (const auto w = WorldOfScreen(v.screen)) TagRigid(TagId(model, viewAddress), *w, v.screen);   // (the chunk view's placements of the model one identity: paired by nearness, not draw order)
     DrawInstance(rigid, v, inst, te::gfx::Scene().placed_models);
     te::gfx::ClearDrawTag();
 }
@@ -3299,7 +3308,7 @@ void ps2e_graphics_draw_shadow_mesh(ps2e_u32 mesh, ps2e_u32 toScreen, ps2e_u32 t
     sv.offset = {te::gfx::GsOriginX(), te::gfx::GsOriginY()};
     // the interpolator's identity: this volume mesh at this instance's world matrix (a rigid object, re-projected with it)
     if (te::gfx::Interpolating())
-        if (const auto w = WorldOfScreen(*screen)) TagRigid(OrdinalId(TagId(mesh, 0)), *w, *screen);
+        if (const auto w = WorldOfScreen(*screen)) TagRigid(OrdinalId(TagId(mesh, 0)), *w, *screen, FamilyOf(TagId(mesh, 0)));
     if (Deferrable(logging)) {
         // the volumes built on a worker: each part's strips in their order, each its counting-up or counting-down draw
         bool posted = false;

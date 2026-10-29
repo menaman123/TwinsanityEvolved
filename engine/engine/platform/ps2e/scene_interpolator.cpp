@@ -276,6 +276,21 @@ SceneInterpolator::PrevInstance* SceneInterpolator::NearestPrev(uint64_t id, con
     return best;
 }
 
+SceneInterpolator::PrevInstance* SceneInterpolator::NearestInFamily(uint32_t family, const double t[3], double* distance) {
+    auto members = prev_family_.find(family);
+    if (members == prev_family_.end()) return nullptr;
+    PrevInstance* best = nullptr;
+    double best_d = 0;
+    for (const auto& [id, index] : members->second) {
+        PrevInstance& p = prev_rigid_[id][index];
+        if (p.taken) continue;
+        const double d = std::sqrt((p.t[0] - t[0]) * (p.t[0] - t[0]) + (p.t[1] - t[1]) * (p.t[1] - t[1]) + (p.t[2] - t[2]) * (p.t[2] - t[2]));
+        if (!best || d < best_d) { best = &p; best_d = d; }
+    }
+    if (distance) *distance = best_d;
+    return best;
+}
+
 bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& cur, double fraction, std::vector<InterpOutput>& out) {
     stats_.frames++;
     fraction = std::min(1.0, std::max(0.0, fraction));
@@ -312,6 +327,7 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
     // the previous picture's vertex runs by (id, part); its rigid instances by id (one per translation)
     prev_by_key_.clear();
     prev_rigid_.clear();
+    prev_family_.clear();
     for (size_t i = 0; i < prev.count; ++i) {
         const InterpItem& it = prev.items[i];
         if (it.tag.id == 0 || it.tag.kind == InterpKind::Newest) continue;
@@ -321,7 +337,10 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
             const uint64_t key = InstanceKey(it.tag, it.transform->world);
             bool seen = false;
             for (const PrevInstance& p : list) seen = seen || p.key == key;
-            if (!seen) list.push_back(PrevInstance{i, key, {double(it.transform->world[12]), double(it.transform->world[13]), double(it.transform->world[14])}});
+            if (!seen) {
+                list.push_back(PrevInstance{i, key, {double(it.transform->world[12]), double(it.transform->world[13]), double(it.transform->world[14])}});
+                if (it.tag.part != 0) prev_family_[it.tag.part].emplace_back(it.tag.id, list.size() - 1);
+            }
         }
     }
     // reserve the scratch for the whole frame once (the storage persists across frames: no steady-state allocation)
@@ -347,6 +366,17 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
                 const double tb[3] = {double(it.transform->world[12]), double(it.transform->world[13]), double(it.transform->world[14])};
                 double distance = 0;
                 PrevInstance* p = NearestPrev(it.tag.id, tb, &distance);
+                if (it.tag.part != 0) {
+                    // a family member clearly nearer than the instance's own previous one: the producer's order shifted (an
+                    // earlier instance culled or come into view), the instance itself did not move
+                    double family_distance = 0;
+                    PrevInstance* q = NearestInFamily(it.tag.part, tb, &family_distance);
+                    if (q && q != p && (!p || family_distance < 0.5 * distance)) {
+                        p = q;
+                        distance = family_distance;
+                        stats_.family_matches++;
+                    }
+                }
                 if (!p) {
                     stats_.unmatched++;
                 } else if (distance > options_.object_snap_travel) {
