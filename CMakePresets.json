@@ -60,9 +60,9 @@
     }
   ],
   "buildPresets": [
-    { "name": "windows-clang-cl-release",     "configurePreset": "windows-clang-cl-release",     "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved", "te_tests", "te_fiber_test", "te_graphics_selftest", "te_pdesc"] },
-    { "name": "windows-clang-cl-dev",         "configurePreset": "windows-clang-cl-dev",         "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved", "te_tests", "te_fiber_test", "te_graphics_selftest", "te_pdesc"] },
-    { "name": "windows-clang-cl-release-lto", "configurePreset": "windows-clang-cl-release-lto", "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved", "te_tests", "te_fiber_test", "te_graphics_selftest", "te_pdesc"] }
+    { "name": "windows-clang-cl-release",     "configurePreset": "windows-clang-cl-release",     "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved", "twinsanityevolved-modtool", "te_tests", "te_fiber_test", "te_graphics_selftest", "te_pdesc"] },
+    { "name": "windows-clang-cl-dev",         "configurePreset": "windows-clang-cl-dev",         "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved", "twinsanityevolved-modtool", "te_tests", "te_fiber_test", "te_graphics_selftest", "te_pdesc"] },
+    { "name": "windows-clang-cl-release-lto", "configurePreset": "windows-clang-cl-release-lto", "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved", "twinsanityevolved-modtool", "te_tests", "te_fiber_test", "te_graphics_selftest", "te_pdesc"] }
 ,
     { "name": "vita-release",                "configurePreset": "vita-release",                "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved_vpk"] },
     { "name": "vita-native-release",         "configurePreset": "vita-native-release",         "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "targets": ["twinsanityevolved_vpk"] }

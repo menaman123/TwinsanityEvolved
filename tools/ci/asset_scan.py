@@ -2,7 +2,7 @@
 """tools/ci/asset_scan.py -- NO GAME DATA IN THE TREE (a release gate). Zero findings or the gate fails.
 
 Scans every file of the port tree and the game/ tree by EXTENSION and by MAGIC: disc images (ISO9660 "CD001",
-raw .bin/.cue), executables (ELF/IRX), archives (zip, 7z, rar, gzip, xz, zstd, tar), textures/images (PNG, JPEG,
+raw .bin/.cue), executables (PS2 MIPS ELF/IRX), archives (zip, 7z, rar, gzip, xz, zstd, tar), textures/images (PNG, JPEG,
 GIF, BMP, DDS, TGA), audio (RIFF/WAVE, VAGp, Ogg, MP3/ID3), video (MPEG/PSS pack header, MP4 ftyp, AVI, MOV), PS2
 saves/savestates (.ps2st/.p2s/.psu/.mcd). Excluded: .git, build directories, the fetched toolchain, __pycache__.
 
@@ -61,7 +61,12 @@ def magic_of(path):
     head = read_at(path, 0, 16)
     h = head.hex()
     if h.startswith("7f454c46"):
-        return "ELF/IRX executable"
+        # a PS2 executable or IOP module is a MIPS ELF (e_machine 8); a host program or library (x86-64, AArch64, the
+        # Vita's ARM) is the release's own build output
+        machine = read_at(path, 18, 2)
+        if len(machine) == 2 and int.from_bytes(machine, "little" if head[5] == 1 else "big") == 8:
+            return "ELF/IRX executable"
+        return ""
     if h.startswith("89504e470d0a1a0a"):
         return "PNG image"
     if h.startswith("ffd8ff"):
