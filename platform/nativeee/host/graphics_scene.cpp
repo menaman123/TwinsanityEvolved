@@ -271,11 +271,13 @@ void TagDiag(uint64_t id, const Matrix& world, const Matrix& screen);
 std::optional<Matrix> WorldOfScreen(const Matrix& screen);
 // `family`: the model the instance shares with the others the producer names by draw order (OrdinalId), 0 for none -- the
 // interpolator pairs an instance with a clearly nearer one of its family when its own previous instance is far
-void TagRigid(uint64_t id, const Matrix& world, const Matrix& screen, uint32_t family = 0) {
+// `clipped`: the game cut the instance's geometry to its view (InterpTag::clipped: the frames between two pictures draw the
+// previous picture's copy of it too)
+void TagRigid(uint64_t id, const Matrix& world, const Matrix& screen, uint32_t family = 0, bool clipped = false) {
     float w[16], sc[16];
     Flat(world, w);
     Flat(screen, sc);
-    te::gfx::SetDrawTag(ps2r::ps2e::InterpTag{id, family, ps2r::ps2e::InterpKind::Rigid}, w, sc);
+    te::gfx::SetDrawTag(ps2r::ps2e::InterpTag{id, family, ps2r::ps2e::InterpKind::Rigid, clipped}, w, sc);
     TagDiag(id, world, screen);
 }
 uint64_t TagId(uint32_t a, uint32_t b) { return (uint64_t(a) << 32) | uint64_t(b); }
@@ -2882,7 +2884,7 @@ void ps2e_graphics_draw_rigid_model(ps2e_u32 model, ps2e_u32 matrix, ps2e_u32 li
     if (rigid->needsEye) inst.eye = EyeIn(*world, view->toCamera);   // the env-map passes
     // the interpolator's identity: this model at this instance's matrix (a stable address while the instance lives)
     if (te::gfx::Interpolating())
-        if (const auto w = WorldOfScreen(v.screen)) TagRigid(OrdinalId(TagId(model, 0)), *w, v.screen, FamilyOf(TagId(model, 0)));   // (the matrix is a stack local: the order names the instance)
+        if (const auto w = WorldOfScreen(v.screen)) TagRigid(OrdinalId(TagId(model, 0)), *w, v.screen, FamilyOf(TagId(model, 0)), v.clipped);   // (the matrix is a stack local: the order names the instance)
     if (g_diag.Logging()) {
         const auto* t = te::gfx::CurrentTarget();
         std::fprintf(stderr, "[te.gfx.diag] present %ld rigid view: toScreen row3 (%.1f %.1f %.1f %.1f) proj row0 (%.3f %.3f %.3f %.3f) clip (%.2f %.2f %.2f %.2f) world row3 (%.2f %.2f %.2f) target %s off (%d %d) size (%d %d) display (%d %d) xy (%d %d) c2s row3 (%.1f %.1f %.1f %.1f)\n",
@@ -2937,7 +2939,7 @@ void ps2e_graphics_draw_placed_model(ps2e_u32 model, ps2e_u32 viewAddress, ps2e_
     // (the matrices live in the frame arena, recycled per frame: the same offsets recur across chunks, so the chunk view is
     // part of the identity; within a chunk the array's order is the placement's)
     if (te::gfx::Interpolating())
-        if (const auto w = WorldOfScreen(v.screen)) TagRigid(TagId(model, viewAddress), *w, v.screen);   // (the chunk view's placements of the model one identity: paired by nearness, not draw order)
+        if (const auto w = WorldOfScreen(v.screen)) TagRigid(TagId(model, viewAddress), *w, v.screen, 0, v.clipped);   // (the chunk view's placements of the model one identity: paired by nearness, not draw order)
     DrawInstance(rigid, v, inst, te::gfx::Scene().placed_models);
     te::gfx::ClearDrawTag();
 }
@@ -3306,9 +3308,10 @@ void ps2e_graphics_draw_shadow_mesh(ps2e_u32 mesh, ps2e_u32 toScreen, ps2e_u32 t
     sv.clip = v.clip;
     sv.guard = v.guard;
     sv.offset = {te::gfx::GsOriginX(), te::gfx::GsOriginY()};
-    // the interpolator's identity: this volume mesh at this instance's world matrix (a rigid object, re-projected with it)
-    if (te::gfx::Interpolating())
-        if (const auto w = WorldOfScreen(*screen)) TagRigid(OrdinalId(TagId(mesh, 0)), *w, *screen, FamilyOf(TagId(mesh, 0)));
+    // the frames between two pictures draw the volumes as the newest picture has them (untagged): a volume is cut to the
+    // view by its builder, and re-projected through another camera its clipped sides no longer pair with each other in the
+    // stencil count (thin lines from the shadow to the frame's edge); as drawn, every volume balances its own count
+    te::gfx::ClearDrawTag();
     if (Deferrable(logging)) {
         // the volumes built on a worker: each part's strips in their order, each its counting-up or counting-down draw
         bool posted = false;

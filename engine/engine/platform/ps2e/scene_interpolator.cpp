@@ -328,6 +328,7 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
     prev_by_key_.clear();
     prev_rigid_.clear();
     prev_family_.clear();
+    prev_draws_.clear();
     for (size_t i = 0; i < prev.count; ++i) {
         const InterpItem& it = prev.items[i];
         if (it.tag.id == 0 || it.tag.kind == InterpKind::Newest) continue;
@@ -335,6 +336,7 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
         else if (it.transform) {
             auto& list = prev_rigid_[it.tag.id];
             const uint64_t key = InstanceKey(it.tag, it.transform->world);
+            prev_draws_[key].push_back(i);
             bool seen = false;
             for (const PrevInstance& p : list) seen = seen || p.key == key;
             if (!seen) {
@@ -344,12 +346,16 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
         }
     }
     // reserve the scratch for the whole frame once (the storage persists across frames: no steady-state allocation)
+    // (the previous picture's draws too: a clipped instance's are re-projected beside the newest's -- the outputs point into
+    // the scratch, so it must not grow past this)
     size_t total = 0;
     for (size_t i = 0; i < cur.count; ++i) total += cur.items[i].count;
+    for (size_t i = 0; i < prev.count; ++i) total += prev.items[i].count;
     if (scratch_.capacity() < total) scratch_.reserve(total);
 
     // per instance: the interpolated K (computed once per instance this frame) or the reason it has none
-    struct Object { bool ok = false; std::array<double, 16> k; uint64_t prev_key = 0; size_t prev_item = 0; bool have_prev = false; double rot_rad = 0; };
+    struct Object { bool ok = false; std::array<double, 16> k; uint64_t prev_key = 0; size_t prev_item = 0; bool have_prev = false; double rot_rad = 0;
+                    std::array<double, 16> mf{}; bool covered = false; };
     std::unordered_map<uint64_t, Object> objects;
     for (size_t i = 0; i < cur.count; ++i) {
         const InterpItem& it = cur.items[i];
@@ -423,6 +429,7 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
                             stats_.unprojectable++;
                         } else {
                             // K = screen^-1 . M_f . world->screen_f: a drawn vertex back to the object, forward to the new frame
+                            for (int c = 0; c < 16; ++c) ob.mf[size_t(c)] = mf[c];
                             Multiply4(screen_inv, mf, kmat);
                             Multiply4(kmat, world_to_screen, kmat);
                             for (int c = 0; c < 16; ++c) ob.k[size_t(c)] = kmat[c];
@@ -433,6 +440,29 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
                 found = objects.emplace(inst, ob).first;
             }
             object = &found->second;
+            if (object->ok && it.tag.clipped && object->have_prev && !found->second.covered) {
+                // a clipped instance: the previous picture's opaque draws of it first, re-projected to this frame (K from
+                // the previous draw's own screen matrix to the same interpolated world) -- they cover what the newest's
+                // cut left out where this frame's camera sees past it; the same surface where both are drawn
+                found->second.covered = true;
+                auto draws = prev_draws_.find(object->prev_key);
+                double mf[16];
+                for (int c = 0; c < 16; ++c) mf[c] = object->mf[size_t(c)];
+                for (size_t j = 0; draws != prev_draws_.end() && j < draws->second.size(); ++j) {
+                    const InterpItem& pi = prev.items[draws->second[j]];
+                    if (!pi.transform || pi.count < 3 || !pi.state || pi.state->blend || !pi.state->depth_write || pi.copy_frame) continue;
+                    double screen_d[16], screen_inv[16], kprev[16];
+                    ToDouble(pi.transform->screen, screen_d);
+                    if (!Invert4(screen_d, screen_inv)) continue;
+                    Multiply4(screen_inv, mf, kprev);
+                    Multiply4(kprev, world_to_screen, kprev);
+                    size_t begin = 0;
+                    if (ReprojectRigid(pi, kprev, cur.off_x, cur.off_y, cur.screen_scale, &begin)) {
+                        out.push_back(InterpOutput{pi.state, scratch_.data() + begin, pi.count, false});
+                        stats_.cover_items++;
+                    }
+                }
+            }
             if (object->ok) {
                 size_t begin = 0;
                 if (ReprojectRigid(it, object->k.data(), cur.off_x, cur.off_y, cur.screen_scale, &begin)) {

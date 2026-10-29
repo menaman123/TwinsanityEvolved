@@ -225,6 +225,31 @@ int main() {
         CHECK(std::fabs(Cx(out[0]) - 0.5 * (Cx(q0) + Cx(q1))) < 0.05, "a camera pan: the static object lands midway");
     }
 
+    // a clipped instance: the previous picture's opaque draw of it is drawn too, re-projected, before the newest's; a
+    // blended one is not (it would blend twice)
+    {
+        InterpCamera c0, c1;
+        Camera(c0, 0, 0, 0);
+        Camera(c1, 0, 0, 1);   // the camera moved forward
+        float w[16];
+        Translation(w, 0, 0, 10);
+        Quad q0, q1;
+        MakeQuad(q0, w, c0, 30); MakeQuad(q1, w, c1, 30);
+        q0.state.depth_write = q1.state.depth_write = 1;
+        q0.item.tag.clipped = q1.item.tag.clipped = true;
+        InterpScene prev{&q0.item, 1, c0, kOffX, kOffY, 1.f, false}, cur{&q1.item, 1, c1, kOffX, kOffY, 1.f, false};
+        SceneInterpolator si;
+        std::vector<InterpOutput> out;
+        si.Interpolate(prev, cur, 0.5, out);
+        CHECK(out.size() == 2 && out[0].state == &q0.state && out[1].state == &q1.state && si.Stats().cover_items == 1 &&
+                  std::fabs(Cx(out[0]) - Cx(out[1])) < 0.05,
+              "a clipped instance: its previous draw re-projected first, landing where the newest's does");
+        q0.state.blend = 1;
+        SceneInterpolator blended;
+        blended.Interpolate(prev, cur, 0.5, out);
+        CHECK(out.size() == 1 && blended.Stats().cover_items == 0, "a clipped instance's blended draw is not drawn twice");
+    }
+
     // a family: two standing instances named by their draw order (ids 21, 22); the first is culled, so the second is drawn
     // under the first's id -- it pairs with its own previous instance (the nearer one of its family), it does not slide
     {
