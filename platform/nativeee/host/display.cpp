@@ -123,6 +123,7 @@ void Apply() {
     p.window_scale = 0;   // the window keeps its size (2x the frame at creation, fitted to the screen; the player resizes it)
     p.texture_filter = g_settings.texture_filter == 0 ? 0 : g_settings.texture_filter == 1 ? 1 : 2;
     gfx::SetPresentation(p);
+    gfx::SetInterpolation(g_settings.interp);
     gfx::SetFrameRate(g_settings.frame_rate);
 }
 

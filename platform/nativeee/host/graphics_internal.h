@@ -473,5 +473,7 @@ bool Headless();
 // The presenter's cadence (te_display.h Settings::frame_rate: 0 = 30 .. 4 = 240, 5 = uncapped): the render thread's
 // PresentPacer takes it at its next picture. Deterministic / synchronous runs present every picture whatever the value.
 void SetFrameRate(int rate);
+// video.interp: the frames between two pictures interpolated (TE_GFX_INTERP, when set, wins)
+void SetInterpolation(bool on);
 
 }  // namespace te::gfx

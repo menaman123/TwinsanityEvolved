@@ -54,6 +54,10 @@ struct Clock::Impl {
     bool play = false;
     uint32_t field_hz = 60;
     uint64_t fields = 0;
+    // the game's field count less the pacer's tick count: 0 from a start (they advance together); a restore sets the
+    // game's to the state's while the pacer counts on from this run's start -- the edge of a field is the pacer's tick
+    // `fields - field_offset` (else every picture's edge after a load lies the state's age in the future)
+    int64_t field_offset = 0;
     // The RTC's epoch (seconds since 1970, in LOCAL civil time already) at construction.
     uint64_t rtc_epoch = DerivedClocks::kRtcFixedEpochS;
     // The pacer thread (Play only): the engine's FieldPacer (engine/ee/timing/field_pacer.h) -- the TickThread cadence
@@ -223,6 +227,7 @@ bool Clock::Restore(const savestate::Blob& blob, std::string* err) {
                      play ? "play" : "deterministic", hz, i.play ? "play" : "deterministic", i.field_hz,
                      (unsigned long long)anchor.counts[2], (unsigned long long)i.clocks.CountsPerTick(2));
     if (started_ && i.play) i.StartPacer();
+    i.field_offset = i.pacer ? int64_t(i.fields) - int64_t(i.pacer->Ticks()) : 0;
     return true;
 }
 
@@ -240,7 +245,8 @@ void Clock::Start() {
 bool Clock::LatestFieldEdge(int64_t* edge_ns, uint64_t* field) const {
     const Impl& i = *impl_;
     if (!i.play || !i.pacer || i.fields == 0) return false;
-    if (!i.pacer->EdgeOfTickNs(i.fields, edge_ns)) return false;
+    const int64_t tick = int64_t(i.fields) - i.field_offset;
+    if (tick <= 0 || !i.pacer->EdgeOfTickNs(uint64_t(tick), edge_ns)) return false;
     if (field) *field = i.fields;
     return true;
 }

@@ -4877,6 +4877,10 @@ void SetFrameRate(int rate) {
     g.frame_rate.store(std::clamp(rate, 0, 5), std::memory_order_relaxed);
     if (g.rt.started) g.rt.wake.notify_one();   // the render thread re-sets its pacer at its next pass
 }
+void SetInterpolation(bool on) {
+    if (std::getenv("TE_GFX_INTERP")) return;   // the variable wins (read at the device's start)
+    g.rt.interpolate = on;
+}
 
 }  // namespace te::gfx
 
