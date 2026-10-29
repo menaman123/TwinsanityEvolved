@@ -260,7 +260,7 @@ struct Gfx {
         // The presenter: the cadence (te_display's frame rate, taken at the next picture), the pacer, its census
         ps2r::ps2e::PresentPacer pacer;
         int pacer_rate = -1;                       // the rate the pacer is set to (-1: not yet)
-        bool interpolate = true;                   // TE_GFX_INTERP (the frames between two pictures; off = the newest repeated)
+        bool interpolate = false;                  // video.interp / TE_GFX_INTERP (the frames between two pictures; off = the newest repeated)
         bool dump_interp = false;                  // TE_GFX_DUMP_INTERP
         bool probe_half = false;                   // TE_GFX_INTERP_PROBE: at every picture's arrival the half-way frame of (previous,
                                                    // newest) is built and dumped as frame_<picture>_i500.ppm (the quality judge's

@@ -375,7 +375,8 @@ int main(int argc, char** argv) {
                     if (cfg.Get("display.tick_lock", &v)) display.tick_lock = v == "60" ? 1 : v == "30" ? 2 : 0;
 #else
                     if (cfg.Get("video.frame_rate", &v) && ps2r::ps2e::PresentPacer::Parse(v.c_str(), &rate)) display.frame_rate = int(rate);
-                    if (cfg.Get("video.interp", &v)) display.interp = !(v == "off" || v == "0" || v == "false");
+                    // video.interp only as the file sets it (the engine's own default for the key is on; the port's is off)
+                    if (ps2r::SettingsFile::GetFromText(text, "video.interp", &v)) display.interp = !(v == "off" || v == "0" || v == "false");
 #endif
                     (void)rate;
                     // mods.<id>.enabled for every built-in (the ids the framework knows; read by name). Registration only:

@@ -26,9 +26,10 @@ struct Settings {
     int tick_lock = 0;          // the Vita: display.tick_lock = auto | 60 | 30 -- the FRAME RATE row is the TICK LOCK there
                                 // (te_tick_lock.h): 0 auto (60/30, the default), 1 60, 2 30; the presenter stays at 60 (every
                                 // picture shown) and frame_rate is 1
-    bool interp = true;         // video.interp: at 120 / 144 / 240 / uncapped, the frames between two pictures interpolated (on,
-                                // the default) or the newest picture shown until the next (off: every frame a picture as drawn;
-                                // TE_GFX_INTERP overrides it)
+    bool interp = false;        // video.interp: at 120 / 144 / 240 / uncapped, the frames between two pictures interpolated (on)
+                                // or the newest picture shown until the next (off, the default: every frame a picture as the
+                                // game drew it -- an interpolated frame re-projects the newest picture's geometry, cut to its
+                                // camera, and a fast camera turn shows its gaps); TE_GFX_INTERP overrides it
     int game_hz = 60;           // game.hz as chosen: 50 (the PAL console's rate) or 60; takes effect at the next start
     int running_hz = 60;        // the game rate this run started with (te::Settings::field_hz)
 };
