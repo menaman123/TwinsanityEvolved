@@ -37,6 +37,7 @@
 #include "game/widgets.h"
 #include "platform/graphics.h"
 #include "platform/stream.h"
+#include "platform/system.h"
 #include "retail/libc.h"
 
 #include <cstddef>
@@ -54,6 +55,8 @@ constexpr u32 GameOverCrashAndCortex = OLEG::TilesGameOver + 2;
 constexpr u32 GameOverMecha = OLEG::TilesGameOver + 3;
 constexpr u32 GameOverNina = OLEG::TilesGameOver + 4;
 constexpr u32 LoadingPictures = 3;
+// TwinsanityEvolved: the cross button pressed in the cutscene playing (CutsceneSkipped), from its start
+u32 g_CutsceneSkipped = 0;
 // The start-up's files: the language's voices' folder (the language's name after it), the music, the icons, the font, the front
 // end's sounds and the default chunk; the text files' folders (in the language folder) and extension
 constexpr const char* SoundFolder = "Crash6\\";
@@ -1040,6 +1043,7 @@ u32 GameController::HideBottomText(s32 duration)
 u32 GameController::StartCutscene(s32 duration)
 {
     u32 state = State();
+    g_CutsceneSkipped = 0;
     if (state == StatePlaying)
     {
         SetNextState(StateWatching);
@@ -1350,7 +1354,20 @@ u32 GameController::Watching(TimeClock* clock)
         G_VideoController->Skip();
     }
 
+    // TwinsanityEvolved: a scripted cutscene's own end taken (its scripts asking whether it was skipped); one without it
+    // run ahead by the platform until it is over
+    if (skip)
+    {
+        g_CutsceneSkipped = 1;
+        Platform::System::FastForwardCutscene();
+    }
+
     return NoState;
+}
+
+u32 CutsceneSkipped()
+{
+    return g_CutsceneSkipped != 0 && G_GameController != nullptr && G_GameController->State() == GameController::StateWatching;
 }
 
 u32 GameController::FadingOut(TimeClock*)

@@ -475,5 +475,7 @@ bool Headless();
 void SetFrameRate(int rate);
 // video.interp: the frames between two pictures interpolated (TE_GFX_INTERP, when set, wins)
 void SetInterpolation(bool on);
+// A skipped cutscene running ahead of the screen (System::FastForwardCutscene): few of its pictures drawn (game thread)
+void SetFastForward(bool on);
 
 }  // namespace te::gfx

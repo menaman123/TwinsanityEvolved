@@ -424,6 +424,8 @@ void ps2e_system_mod_page_row_label(ps2e_s32 mod, ps2e_s32 row, ps2e_u32 out, ps
 ps2e_s32 ps2e_system_mod_page_row_chosen(ps2e_s32 mod, ps2e_s32 row);
 // Platform::System::void ModWarpTarget(char* chunk, u32 size, u32* character);
 void ps2e_system_mod_warp_target(ps2e_u32 chunk, ps2e_s32 size, ps2e_u32 character);
+// Platform::System::void FastForwardCutscene();
+void ps2e_system_fast_forward_cutscene(void);
 // Platform::System::DateTime LocalTime();
 void ps2e_system_local_time(ps2e_u32 out);
 // ---- time.h  (group: services) ----

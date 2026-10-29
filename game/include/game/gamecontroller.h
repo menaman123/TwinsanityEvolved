@@ -425,6 +425,10 @@ struct GameMovie
     GameMovieBits bits;
 };
 
+// TwinsanityEvolved: the cross button pressed while a scripted cutscene plays (GameController::Watching, until the cutscene ends)
+// -- what the scripts' condition 572 (the cutscene skipped, always no in the retail game) answers
+u32 CutsceneSkipped();
+
 extern "C"
 {
     // The chunk the game starts in (the start-up's) and the one after the credits

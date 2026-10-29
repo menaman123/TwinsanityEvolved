@@ -74,6 +74,10 @@ public:
     // is one field). Pace park (Play: the pacer's 60 Hz edge), the field tick(s), the EmuDomain settle, then the
     // boundary hooks in registration order (input sample, movie present callback, scheduler drain, ...).
     void Boundary();
+    // The skipped cutscene's fast-forward (System::FastForwardCutscene): every boundary fires `fields` fields at once and
+    // parks for no pacer edge, the game running ahead of the wall; 0 = off, the pacing taken up again from where it is.
+    void SetFastForward(uint32_t fields);
+    uint32_t FastForward() const { return fast_forward_; }
     using Hook = std::function<void(uint64_t boundary)>;
     // Hooks run on the game thread after the settle. Returns an id for Remove.
     int AddBoundaryHook(const std::string& name, Hook hook);
@@ -119,6 +123,7 @@ private:
     uint64_t start_counts_ = 0;
     uint64_t boundaries_ = 0;
     uint64_t in_frame_ = 0;
+    uint32_t fast_forward_ = 0;
     struct Entry { int id; std::string name; Hook hook; };
     std::vector<Entry> hooks_;
     int next_hook_ = 1;

@@ -143,9 +143,9 @@ u32 StartReadCutscene(VideoController* controller, TimeClock* clock)
     PlayPreparedMusic(1.0f, 1.0f, 0.0f, ContextMusicSlot);
     controller->state = VideoController::StatePlaying;
     ReadNextPart(controller);
-    u32 seen = CutsceneSeen(controller);
     controller->waitedFrames = 0;
-    controller->bits.skippable = seen & 1;
+    // The retail game let CROSS skip only a cutscene seen before (CutsceneSeen); every one is skippable here
+    controller->bits.skippable = 1;
     return 1;
 }
 
@@ -472,6 +472,10 @@ void VideoController::Skip()
 
     PlayCameraTrackFrame(0.0f, &cameraTrack, &cutscene->camera, Cutscene::EndFrame, place);
     GiveBackInstances(this);
+    // Marked seen as its end marks it (a cutscene skipped the first time leaves the game as one watched to its end)
+    Agent* agent = static_cast<ObjectNodeBase*>(GetGameNode(&instance->nodes, NodeObject))->agent;
+    ChunkEntry* chunk = ChunkOfIndex(g_ChunkManager, agent->chunkIndex);
+    SetPersistentFlag(chunk->savedFlags, agent->id, 1);
     StopCutscene(this);
     state = StateFinished;
 }

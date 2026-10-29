@@ -767,9 +767,10 @@ f32 NoOp571Condition::Check(GameNode*, BehaviourLevel*, const u32*)
     return 0.0f;
 }
 
+// Always no in the retail game; here the cross button pressed in the cutscene playing (CutsceneSkipped): the scripts' skip
 f32 NoOpCutsceneSkippedCondition::Check(GameNode*, BehaviourLevel*, const u32*)
 {
-    return 0.0f;
+    return YesNo(CutsceneSkipped() != 0);
 }
 
 // The character agent's vehicle (whether the instance has a character node isn't checked)

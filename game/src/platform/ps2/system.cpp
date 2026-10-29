@@ -389,6 +389,10 @@ void Platform::System::ModWarpTarget(char* chunk, u32 size, u32* character)
     }
 }
 
+void Platform::System::FastForwardCutscene()
+{
+}
+
 Platform::System::DateTime Platform::System::LocalTime()
 {
     sceCdCLOCK clock;
