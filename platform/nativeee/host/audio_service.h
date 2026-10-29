@@ -212,7 +212,7 @@ private:
     std::array<Window, 256> windows_{};         // ReadMusic's window per file number (files are small ints)
     std::array<Stream, kStreams> streams_{};
     // A parent's window still landing (te::io: the Vita's music reads off the game thread); reset with the stream
-    std::array<te::io::Handle<MusicRead>, kStreams> music_jobs_{};
+    std::array<te::io::Handle<MusicRead>, kStreams> music_jobs_;   // (no braces: their init would need MusicRead here)
     uint64_t generation_ = 0;
     Counters count_;
     static constexpr uint32_t kSoundMemoryBase = 0x5010;   // past the SPU2's reserved low 20 KB, as libsd leaves it
