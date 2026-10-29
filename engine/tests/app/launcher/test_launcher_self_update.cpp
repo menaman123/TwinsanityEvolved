@@ -55,7 +55,7 @@ QByteArray readFile(const QString& path) {
     QFile f(path);
     return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
 }
-QByteArray infoPlist(const QString& id, const QString& program, const QString& version) {
+[[maybe_unused]] QByteArray infoPlist(const QString& id, const QString& program, const QString& version) {
     return QStringLiteral("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n"
                           "\t<key>CFBundleExecutable</key>\n\t<string>%2</string>\n"
                           "\t<key>CFBundleIdentifier</key>\n\t<string>%1</string>\n"
