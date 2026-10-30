@@ -1,7 +1,24 @@
-# TwinsanityEvolved -- what's new since v0.1.8
+# TwinsanityEvolved 0.9.1 -- what's new
 
 Crash Twinsanity as a native game for Windows, macOS, Linux and the PS Vita: the twinsanity-reversed decompilation running
 on the NativeEE engine. **No game data is included: you play with your own disc image.**
+
+## New in 0.9.1
+
+- **Skip in-game cutscenes with X.** A cutscene played from its cutscene file can now be skipped the first time you see
+  it, not only on a second viewing (a skipped cutscene counts as seen). Scripted scenes that have a skip of their own
+  in the game's level scripts (switched off in the original release) now end when you press X; scripted scenes without
+  one still play to their end.
+- **Drowning in 10th Dimension:** a dark Crash-shaped shadow no longer shows under the water while he sinks (the real
+  game shows none there).
+- **High and uncapped frame rates:** objects are no longer briefly paired with their neighbours between pictures, no
+  gap opens at the bottom of the screen while running and the shadows no longer draw thin lines.
+- **Frames between pictures are off by default.** The smoothing frames the game adds between its own pictures at high
+  frame rates are now off unless you turn them on (`video.interp = on` in `ps2r.ini`); they also resume correctly
+  after loading a save state.
+
+Save states made with 0.9.0 do not load in 0.9.1 (a save state belongs to the build that made it); memory card saves
+are not affected.
 
 ## Install
 
