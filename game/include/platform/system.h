@@ -94,10 +94,6 @@ u32 ModPageRowChosen(u32 mod, u32 row);
 // (GameProgress's; NoCharacter leaves it to the chunk's start script)
 void ModWarpTarget(char* chunk, u32 size, u32* character);
 
-// TwinsanityEvolved: the cutscene the player skipped (the cross button while watching) run ahead of the screen and the
-// speakers until it is over -- the platform ends it once the game stops watching. The PS2: nothing
-void FastForwardCutscene();
-
 struct DateTime
 {
     u16 year;

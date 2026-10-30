@@ -251,17 +251,6 @@ bool Clock::LatestFieldEdge(int64_t* edge_ns, uint64_t* field) const {
     return true;
 }
 
-void Clock::SetFastForward(uint32_t fields) {
-    Impl& i = *impl_;
-    if (fields == fast_forward_) return;
-    fast_forward_ = fields;
-    if (fields == 0 && i.pacer) {
-        // the pacer counted the wall on: the game's fields ran ahead of it (the edges as after a restore)
-        i.ticks.DropPending(i.ticks.Pending());
-        i.field_offset = int64_t(i.fields) - int64_t(i.pacer->Ticks());
-    }
-}
-
 double Clock::MsSinceRelease() const {
     const Impl& i = *impl_;
     if (!i.have_release) return 0.0;
@@ -321,13 +310,7 @@ void Clock::Boundary() {
     i.domain.SetBypass(i.source.Bypass());
     i.domain.NoteArrival(i.source.RawCount());
     uint32_t fired = 1;
-    if (i.play && fast_forward_) {
-        // the skipped cutscene: its fields at once as the pacer's would be (never absorbed), no park; the wall's edges
-        // meanwhile are not played back
-        for (uint32_t k = 0; k < fast_forward_; ++k) i.ticks.FireInline(TickSync::Cause::Deferred);
-        i.ticks.DropPending(i.ticks.Pending());
-        fired = fast_forward_;
-    } else if (i.play) {
+    if (i.play) {
         // Wall-locked: park for the pacer's edge (an early frame), then fire every noted tick as one elapsed field; a
         // late frame finds its tick(s) noted and does not park. A stopped pacer (timeout) still gets its one field.
         // A picture tick of the tick lock (planned 2 / 3: the Vita's 30 / 20 Hz) parks until that many edges are noted

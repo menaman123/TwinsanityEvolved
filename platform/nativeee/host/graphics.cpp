@@ -367,8 +367,6 @@ struct Gfx {
     std::atomic<uint64_t> ll_build_wait_us{0};   // the game thread's waits for a replaced picture's builds
 #endif
     bool movie_picture = false;          // the frame being recorded holds the movie quad (te_graphics_record_movie_quad)
-    bool fast_forward = false;           // a skipped cutscene runs ahead (SetFastForward): one picture in kFastForwardShown shown
-    uint32_t fast_forward_pictures = 0;
     double last_present_call_ms = 0;     // the drawing thread's last ps2e_draw_present call (the tick lock's census)
     long diag_delay_from = 0, diag_delay_to = 0;   // TE_VITA_DIAG_RENDER_DELAY_FROM / _TO: the delay's presents (0: all)
     long diag_delay_every = 0;                     // TE_VITA_DIAG_RENDER_DELAY_EVERY: one picture in N delayed (0 / 1: every one)
@@ -4208,20 +4206,6 @@ void PresentFrame(bool send) {
         TE_PROF_SCOPE("present: FlushNativeMeshes");
         te::gfx::FlushNativeMeshes();   // the meshes this picture's models asked for, ready for the next picture's draws
     }
-    // A skipped cutscene running ahead: most of its pictures are not drawn -- their builds finished or cancelled (their
-    // storage reused by the next picture), their draws let go of; the retired meshes wait for the next picture shown
-    constexpr uint32_t kFastForwardShown = 8;
-    if (g.fast_forward && ++g.fast_forward_pictures % kFastForwardShown != 0) {
-#if defined(__vita__)
-        for (size_t i = 0; i < g.deferred_used; ++i) CancelBuild(*g.deferred[i]);
-#endif
-        for (size_t i = 0; i < g.deferred_used; ++i) Builds().Wait(*g.deferred[i]);
-        ClearBuckets();
-        te::gfx::ResetDrawOrdinals();
-        te::tick_lock::CommitPlan(lock_fields);
-        VBlank();
-        return;
-    }
     if (rt.started) {
         TE_PROF_SCOPE("present: hand-over");
         const auto t0 = Steady::now();
@@ -4900,11 +4884,6 @@ void SetFrameRate(int rate) {
 void SetInterpolation(bool on) {
     if (std::getenv("TE_GFX_INTERP")) return;   // the variable wins (read at the device's start)
     g.rt.interpolate = on;
-}
-
-void SetFastForward(bool on) {
-    g.fast_forward = on;
-    g.fast_forward_pictures = 0;
 }
 
 }  // namespace te::gfx

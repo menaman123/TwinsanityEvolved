@@ -94,8 +94,6 @@ public:
     void Reset();
     void PauseAll();
     void ResumeAll();
-    // A skipped cutscene running ahead of the speakers (System::FastForwardCutscene): the mix silent meanwhile
-    void SetSilenced(bool on) { silenced_.store(on, std::memory_order_relaxed); }
     int32_t LendToMovie();
     int32_t ReclaimFromMovie();
     void CompactSoundMemory();
@@ -224,7 +222,6 @@ private:
     mutable std::mutex mutex_;
     bool realtime_ = false;          // the device thread produces (decided at the device's open)
     bool movie_live_ = false;        // a movie's sound track plays: the boundary produces meanwhile
-    std::atomic<bool> silenced_{false};   // SetSilenced
     ps2r::sound::PcmSource* movie_source_ = nullptr;
     std::vector<float> device_tick_;   // the device thread's tick
     uint64_t owned_mask_ = 0;          // the channels title::Audio owns during the current MixInto (BeginMixTick)

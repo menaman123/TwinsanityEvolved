@@ -381,7 +381,6 @@ void AudioService::MixLocked(std::vector<float>& out, bool with_movie) {
         te::prof::Scope scope(prof_mixer_, prof_slot_);   // the voices' runs (StepVoices) are their own section inside
         mixer_.MixInto(out.data(), static_cast<int>(frames));
     }
-    if (silenced_.load(std::memory_order_relaxed)) std::fill(out.begin(), out.end(), 0.0f);
     if (!with_movie) mixer_.SetMovieSource(movie_source_);
     ++count_.ticks;
     count_.frames += frames;

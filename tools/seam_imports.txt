@@ -199,7 +199,6 @@ ps2e_system_mod_page_label
 ps2e_system_mod_page_row_label
 ps2e_system_mod_page_row_chosen
 ps2e_system_mod_warp_target
-ps2e_system_fast_forward_cutscene
 ps2e_system_local_time
 ps2e_time_initialise
 ps2e_time_ticks

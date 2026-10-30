@@ -37,7 +37,6 @@
 #include "game/widgets.h"
 #include "platform/graphics.h"
 #include "platform/stream.h"
-#include "platform/system.h"
 #include "retail/libc.h"
 
 #include <cstddef>
@@ -1354,12 +1353,10 @@ u32 GameController::Watching(TimeClock* clock)
         G_VideoController->Skip();
     }
 
-    // TwinsanityEvolved: a scripted cutscene's own end taken (its scripts asking whether it was skipped); one without it
-    // run ahead by the platform until it is over
+    // TwinsanityEvolved: a scripted cutscene's own end taken (its scripts asking whether it was skipped)
     if (skip)
     {
         g_CutsceneSkipped = 1;
-        Platform::System::FastForwardCutscene();
     }
 
     return NoState;
