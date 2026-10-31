@@ -17,6 +17,7 @@
 #include "ps2e_seam.h"
 #include "graphics_internal.h"
 #include "te_host.h"
+#include "te_prof.h"
 #include "te_math_diag.h"
 
 namespace {
@@ -359,6 +360,7 @@ void ps2e_vu0_init_identity_matrix(ps2e_u32 matrix) {
 
 // VuTransformPoint (MultiplyMatrixByVector): the translation row added once (vf0.w = 1), whatever the point's w
 void ps2e_vu0_transform_point(ps2e_u32 matrix, ps2e_u32 point, ps2e_u32 out) {
+    TE_SEAM(kSeamMatrices);
     const M4* m = Mat(matrix);
     const V4* p = Vec(point);
     V4* o = VecW(out);
@@ -370,6 +372,7 @@ void ps2e_vu0_transform_point(ps2e_u32 matrix, ps2e_u32 point, ps2e_u32 out) {
 
 // VuTransformByRows: the point's own w scales the fourth row
 void ps2e_vu0_transform_by_rows(ps2e_u32 rows, ps2e_u32 point, ps2e_u32 out) {
+    TE_SEAM(kSeamMatrices);
     const M4* m = Mat(rows);
     const V4* p = Vec(point);
     V4* o = VecW(out);
@@ -380,6 +383,7 @@ void ps2e_vu0_transform_by_rows(ps2e_u32 rows, ps2e_u32 point, ps2e_u32 out) {
 
 // VuRotateVector (TransformVector_): xyz through the three rotation rows; w stays the vector's
 void ps2e_vu0_rotate_vector(ps2e_u32 matrix, ps2e_u32 vector, ps2e_u32 out) {
+    TE_SEAM(kSeamMatrices);
     const M4* m = Mat(matrix);
     const V4* v = Vec(vector);
     V4* o = VecW(out);
@@ -394,6 +398,7 @@ void ps2e_vu0_rotate_vector(ps2e_u32 matrix, ps2e_u32 vector, ps2e_u32 out) {
 
 // VuMultiplyMatrices(a, b, out): out = a × b (each row of a through b)
 void ps2e_vu0_multiply_matrices(ps2e_u32 a, ps2e_u32 b, ps2e_u32 out) {
+    TE_SEAM(kSeamMatrices);
     te::gfx::CountCall(te::gfx::kCallMultiplyMatrices);
     const M4* ma = Mat(a);
     const M4* mb = Mat(b);
@@ -407,6 +412,7 @@ void ps2e_vu0_multiply_matrices(ps2e_u32 a, ps2e_u32 b, ps2e_u32 out) {
 
 // MultiplyRotations (RotateVecByVec): the quaternion product -- a.w·b + b.w·a + a × b; w = a.w·b.w − a·b
 void ps2e_vu0_multiply_rotations(ps2e_u32 out, ps2e_u32 a, ps2e_u32 b) {
+    TE_SEAM(kSeamMatrices);
     const V4* qa = Vec(a);
     const V4* qb = Vec(b);
     V4* o = VecW(out);
@@ -422,6 +428,7 @@ void ps2e_vu0_multiply_rotations(ps2e_u32 out, ps2e_u32 a, ps2e_u32 b) {
 
 // MatrixFromRotation (Rotate_): a unit quaternion's three rotation rows (w 0); the fourth row is left as it was
 void ps2e_vu0_matrix_from_rotation(ps2e_u32 matrix, ps2e_u32 rotation) {
+    TE_SEAM(kSeamMatrices);
     M4* m = MatW(matrix);
     const V4* q = Vec(rotation);
     if (!m || !q) return;
@@ -435,6 +442,7 @@ void ps2e_vu0_matrix_from_rotation(ps2e_u32 matrix, ps2e_u32 rotation) {
 
 // VuInvertRigid: the rotation transposed, the translation turned by it and negated, w 1
 void ps2e_vu0_invert_rigid(ps2e_u32 out, ps2e_u32 matrix) {
+    TE_SEAM(kSeamMatrices);
     const M4* m = Mat(matrix);
     M4* o = MatW(out);
     if (!m || !o) return;
@@ -456,6 +464,7 @@ void ps2e_vu0_invert_rigid_in_place(ps2e_u32 matrix) { ps2e_vu0_invert_rigid(mat
 // PlaneThroughTriangle: the unit normal of the edges' cross product, w minus the first vertex's distance along it;
 // whether the cross product was longer than 5e-05
 ps2e_u32 ps2e_vu0_plane_through_triangle(ps2e_u32 plane, ps2e_u32 first, ps2e_u32 second, ps2e_u32 third) {
+    TE_SEAM(kSeamMatrices);
     V4* o = VecW(plane);
     const V4* a = Vec(first);
     const V4* b = Vec(second);

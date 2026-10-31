@@ -233,6 +233,57 @@ RayMath::Result FastTest(const RayMath::Ray& ray, const RayMath::Triangle& t, co
     out.nearer = out.flags == RayMath::kNearer;
     return out;
 }
+
+// FastTest's answer to the seam's question alone (RayMath::Nearer). kNearer is exactly one end's distance negative (the
+// sides 0x80), the share's difference from the nearest negative (0x10) and no edge distance negative: the plane's normal,
+// the plane and the ends' distances first; the share when the ends are on the two sides; the edge normals and the hit
+// when the share is the nearer. The Academy hub's walk (316114 tests from its start view on): 67.4 % end at the sides,
+// 1.7 % at the share, 30.8 % reach the edges, 0.2 % are nearer.
+bool NearerFast(const RayMath::Ray& ray, const RayMath::Triangle& t, const Vector& nearest, Vector& hit) {
+    const auto cross = [](const float* a, const float* b, float* out) {
+        out[0] = a[1] * b[2] - b[1] * a[2];
+        out[1] = a[2] * b[0] - b[2] * a[0];
+        out[2] = a[0] * b[1] - b[0] * a[1];
+    };
+    const auto dot = [](const float* a, const float* b) { return (a[0] * b[0] + a[1] * b[1]) + a[2] * b[2]; };
+    const auto rsqrt = [](float den) { return den == 0.f ? Float(kMaxFloat) : 1.f / std::sqrt(std::fabs(den)); };
+    const float* v0 = t[0].data();
+    const float* v1 = t[1].data();
+    const float* v2 = t[2].data();
+    const float e01[3] = {v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]};
+    const float e02[3] = {v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]};
+    float n[3];
+    cross(e01, e02, n);
+    const float q1 = rsqrt(dot(n, n));
+    float nn[3];
+    for (int k = 0; k < 3; ++k) nn[k] = n[k] * q1;
+    const float plane = 0.f - dot(nn, v0);
+    const float ds = dot(ray.start.data(), nn) + plane, de = dot(ray.end.data(), nn) + plane;
+    if (((Bits(ds) ^ Bits(de)) & kSign) == 0) return false;   // the ends on one side (sides 0 or 0x100)
+    const float sum = std::fabs(ds) + std::fabs(de);
+    const float share = sum == 0.f ? 0.f : std::fabs(ds) / sum;
+    if (!(Bits(share - nearest[3]) & kSign)) return false;   // not below the nearest so far
+    const float e12[3] = {v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]};
+    const float e20[3] = {v0[0] - v2[0], v0[1] - v2[1], v0[2] - v2[2]};
+    float c12[3], c01[3], c20[3];
+    cross(n, e12, c12);
+    cross(n, e01, c01);
+    cross(n, e20, c20);
+    const float q2 = rsqrt(dot(c12, c12)), q3 = rsqrt(dot(c01, c01)), q4 = rsqrt(dot(c20, c20));
+    float n12[3], n01[3], n20[3];
+    for (int k = 0; k < 3; ++k) { n12[k] = c12[k] * q2; n01[k] = c01[k] * q3; n20[k] = c20[k] * q4; }
+    Vector at;
+    for (int k = 0; k < 3; ++k) at[size_t(k)] = (ray.start[size_t(k)] - ray.start[size_t(k)] * share) + ray.end[size_t(k)] * share;
+    at[3] = share;
+    const float offset[3] = {0.f - dot(n01, v0), 0.f - dot(n12, v2), 0.f - dot(n20, v0)};
+    const float* normal[3] = {n01, n12, n20};
+    for (int k = 0; k < 3; ++k) {
+        const float d = (((offset[k] + normal[k][0] * at[0]) + normal[k][1] * at[1]) + normal[k][2] * at[2]) + 0.1f;
+        if (Bits(d) & kSign) return false;   // past an edge by more than the margin
+    }
+    hit = at;
+    return true;
+}
 #endif
 
 }  // namespace
@@ -390,6 +441,16 @@ RayMath::Result RayMath::Test(const Ray& ray, const Triangle& t, const Vector& n
     out.nearer = u.vi2 == kNearer;
     out.hit = u.vf[31];
     return out;
+}
+
+bool RayMath::Nearer(const Ray& ray, const Triangle& t, const Vector& nearest, Vector& hit) {
+#if defined(__vita__)
+    return NearerFast(ray, t, nearest, hit);
+#else
+    const Result r = Test(ray, t, nearest);
+    if (r.nearer) hit = r.hit;
+    return r.nearer;
+#endif
 }
 
 }  // namespace title

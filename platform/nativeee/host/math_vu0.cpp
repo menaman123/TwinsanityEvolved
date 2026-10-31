@@ -35,6 +35,7 @@
 #include "graphics_internal.h"
 #include "ps2e_seam.h"
 #include "te_host.h"
+#include "te_prof.h"
 #include "te_unclamped.h"
 
 namespace {
@@ -105,7 +106,11 @@ Vector TransformPlane(const Vector& plane, const Matrix& place) {
 struct RayState {
     Vector start{}, end{};
     bool haveRay = false;
-    std::optional<title::CollisionMath::EdgeSetup> pending;
+    bool pending = false;   // a triangle loaded by StartRayTriangle and not finished yet
+    // its edges' set-up: made only for the provisional body (TE_MATH_RAY=legacy) or the retail micro's diagnosis -- the
+    // default body tests the triangle itself, and the 296-byte set-up zeroed, assigned and copied out again was most of a
+    // test's memory traffic (833 tests a picture at the Academy hub's start)
+    std::optional<title::CollisionMath::EdgeSetup> edges;
     title::CollisionMath::Triangle triangle{};
     Vector nearest{};
 } g_ray;
@@ -236,6 +241,7 @@ ps2e_f32 ps2e_math_max(ps2e_f32 first, ps2e_f32 second) { return FpuKey(first) >
 ps2e_f32 ps2e_math_min(ps2e_f32 first, ps2e_f32 second) { return FpuKey(first) <= FpuKey(second) ? first : second; }
 
 void ps2e_math_slerp_rotations(ps2e_u32 from, ps2e_u32 to, ps2e_f32 share, ps2e_u32 out) {
+    TE_SEAM(kSeamJoints);
     if (Stubbed("joints")) return;
     const auto f = ReadVector(from), t = ReadVector(to);
     if (!f || !t) return;
@@ -244,6 +250,7 @@ void ps2e_math_slerp_rotations(ps2e_u32 from, ps2e_u32 to, ps2e_f32 share, ps2e_
 
 void ps2e_math_euler_rotation(ps2e_u32 anglesNow, ps2e_u32 anglesNext, ps2e_u32 moveNow, ps2e_u32 moveNext, ps2e_u32 rotation,
                               ps2e_u32 move) {
+    TE_SEAM(kSeamJoints);
     te::gfx::CountCall(te::gfx::kCallEuler);
     if (Stubbed("joints")) return;
 #if defined(__vita__)
@@ -267,6 +274,7 @@ void ps2e_math_euler_rotation(ps2e_u32 anglesNow, ps2e_u32 anglesNext, ps2e_u32 
 }
 
 void ps2e_math_turn_rotation(ps2e_u32 by, ps2e_u32 rotation) {
+    TE_SEAM(kSeamJoints);
     if (Stubbed("joints")) return;
     const auto b = ReadVector(by), r = ReadVector(rotation);
     if (!b || !r) return;
@@ -274,6 +282,7 @@ void ps2e_math_turn_rotation(ps2e_u32 by, ps2e_u32 rotation) {
 }
 
 void ps2e_math_lerp(ps2e_u32 from, ps2e_u32 to, ps2e_f32 share, ps2e_u32 out) {
+    TE_SEAM(kSeamJoints);
     te::gfx::CountCall(te::gfx::kCallLerp);
     if (Stubbed("joints")) return;
     const auto f = ReadVector(from), t = ReadVector(to);
@@ -286,6 +295,7 @@ void ps2e_math_lerp(ps2e_u32 from, ps2e_u32 to, ps2e_f32 share, ps2e_u32 out) {
 // when they are given, the translation (none: 0 0 0 1) as the last row, times the parent when there is one
 void ps2e_math_joint_matrix(ps2e_u32 rotation, ps2e_u32 parentScale, ps2e_u32 scale, ps2e_u32 translation, ps2e_u32 parent,
                             ps2e_u32 out) {
+    TE_SEAM(kSeamJoints);
     te::gfx::CountCall(te::gfx::kCallJointMatrix);
     if (Stubbed("joints")) return;
     if (te::gfx::g_repeatCensus) {
@@ -357,6 +367,7 @@ void ps2e_math_joint_matrix(ps2e_u32 rotation, ps2e_u32 parentScale, ps2e_u32 sc
 }
 
 void ps2e_math_multiply_by_parent(ps2e_u32 matrix, ps2e_u32 parent, ps2e_u32 out) {
+    TE_SEAM(kSeamJoints);
     te::gfx::CountCall(te::gfx::kCallMultiplyByParent);
     if (Stubbed("joints")) return;
 #if defined(__vita__)
@@ -374,6 +385,7 @@ void ps2e_math_multiply_by_parent(ps2e_u32 matrix, ps2e_u32 parent, ps2e_u32 out
 // The view for the frame's particles (graphics.h LoadParticleView): the chunk's matrix (its camera's place in row 3) and its
 // matrix to the screen, kept by index; the frustum's side planes taken into the chunk's space for the block tests
 ps2e_s32 ps2e_graphics_load_particle_view(ps2e_u32 matrices, ps2e_s32 index) {
+    TE_SEAM_PART(kSeamParticles);
     if (index < 0 || index >= kParticleViews) return index;
     const auto chunk = ReadMatrix(matrices), toScreen = ReadMatrix(matrices + 0x40);
     if (!chunk || !toScreen) return index;
@@ -404,6 +416,7 @@ ps2e_s32 ps2e_graphics_load_particle_view(ps2e_u32 matrices, ps2e_s32 index) {
 
 // The distance between a point and the camera's place in a view (0xCB0)
 ps2e_f32 ps2e_math_view_distance(ps2e_s32 view, ps2e_u32 point) {
+    TE_SEAM_PART(kSeamParticles);
     const float* p = Floats(point, 3);
     if (!p || view < 0 || view >= kParticleViews || !g_particleViews[view].valid) return 0x1.312D00p+23f;
     const Vector& c = g_particleViews[view].camera;
@@ -421,6 +434,7 @@ ps2e_f32 ps2e_math_view_distance(ps2e_s32 view, ps2e_u32 point) {
 // whole frame -- the cryscave dark flicker).
 ps2e_s32 ps2e_math_particle_block_view(ps2e_s32 view, ps2e_s32 keepsTranslation, ps2e_u32 extents, ps2e_u32 gravity, ps2e_u32 place,
                                        ps2e_f32 scale, ps2e_u32 matrix, ps2e_u32 distance) {
+    TE_SEAM(kSeamParticles);
     te::gfx::CountCall(te::gfx::kCallParticleView);
     const float* e = Floats(extents, 3);
     const auto g = ReadMatrix(gravity);
@@ -521,27 +535,29 @@ ps2e_s32 ps2e_math_particle_block_view(ps2e_s32 view, ps2e_s32 keepsTranslation,
 // The fast ray casts (0xAB8), by the game's own slow path: the ray's ends on the plane's two sides, both ends not on the same
 // side of any edge, then the plane's intersection; the hit (its w the share along the ray) when nearer than the nearest so far
 void ps2e_math_set_ray(ps2e_u32 start, ps2e_u32 end) {
+    TE_SEAM_PART(kSeamRays);
     if (Stubbed("rays")) return;
     const auto s = ReadVector(start), e = ReadVector(end);
     if (!s || !e) return;
     g_ray.start = *s;
     g_ray.end = *e;
     g_ray.haveRay = true;
-    g_ray.pending.reset();
+    g_ray.pending = false;
 }
 
 void ps2e_math_start_ray_triangle(ps2e_u32 vertices, ps2e_u32 nearest) {
+    TE_SEAM_PART(kSeamRays);
     te::gfx::CountCall(te::gfx::kCallStartRay);
     if (Stubbed("rays")) return;
     const float* v = Floats(vertices, 12);
     const auto n = ReadVector(nearest);
-    if (!v || !n || !g_ray.haveRay) { g_ray.pending.reset(); return; }
+    if (!v || !n || !g_ray.haveRay) { g_ray.pending = false; return; }
     for (int i = 0; i < 3; ++i) g_ray.triangle[i] = {v[i * 4], v[i * 4 + 1], v[i * 4 + 2], v[i * 4 + 3]};
     g_ray.nearest = *n;
+    g_ray.pending = true;
     // the edges' set-up only feeds the provisional body; the retail one (the default) tests the triangle itself
     g_rayMicro.Read();
-    g_ray.pending = RetailRays() && !g_rayMicro.ready ? title::CollisionMath::EdgeSetup{}
-                                                      : title::CollisionMath::EvaluateStartEdges(g_ray.start, g_ray.end, g_ray.triangle);
+    if (!RetailRays() || g_rayMicro.ready) g_ray.edges = title::CollisionMath::EvaluateStartEdges(g_ray.start, g_ray.end, g_ray.triangle);
 }
 
 namespace {
@@ -567,20 +583,17 @@ bool PortRayTest(const title::CollisionMath::EdgeSetup& setup, Vector& out) {
 }  // namespace
 
 ps2e_s32 ps2e_math_finish_ray_triangle(ps2e_u32 hit) {
+    TE_SEAM(kSeamRays);
     te::gfx::CountCall(te::gfx::kCallFinishRay);
     if (Stubbed("rays")) return 0;
     if (!g_ray.pending) return 0;
-    const auto setup = *g_ray.pending;
-    g_ray.pending.reset();
+    g_ray.pending = false;
     Vector portHit{};
     bool port;
     if (RetailRays()) {
-        const title::RayMath::Result r = title::RayMath::Test(title::RayMath::Ray{g_ray.start, g_ray.end}, {g_ray.triangle[0], g_ray.triangle[1], g_ray.triangle[2]}, g_ray.nearest);
-        port = r.nearer;
-        if (port) portHit = r.hit;
-    } else
-    {
-        port = PortRayTest(setup, portHit);
+        port = title::RayMath::Nearer(title::RayMath::Ray{g_ray.start, g_ray.end}, g_ray.triangle, g_ray.nearest, portHit);
+    } else {
+        port = PortRayTest(*g_ray.edges, portHit);   // (made by StartRayTriangle whenever the body is the provisional one)
     }
     g_rayMicro.Read();
     if (g_rayMicro.ready) {
@@ -619,6 +632,7 @@ std::atomic<uint32_t> g_unclamped_fast{0}, g_unclamped_clamped{0};
 
 // ---- the second seam's collision maths (collisionmaths.cpp) over title::CollisionMath ---------------------------------------
 void ps2e_vu0_start_triangle_edge_tests(ps2e_u32 start, ps2e_u32 end, ps2e_u32 triangle, ps2e_u32 values) {
+    TE_SEAM(kSeamCollision);
     if (Stubbed("collision")) return;
     const auto s = ReadVector(start), e = ReadVector(end);
     const float* t = Floats(triangle, 12);   // CollisionHit: its three vertices first
@@ -643,6 +657,7 @@ void ps2e_vu0_start_triangle_edge_tests(ps2e_u32 start, ps2e_u32 end, ps2e_u32 t
 }
 
 void ps2e_vu0_finish_triangle_edge_tests(ps2e_u32 values) {
+    TE_SEAM_PART(kSeamCollision);
     if (Stubbed("collision")) return;
     float* out = Floats(values, 6);
     if (!out || !g_edges) return;
@@ -660,6 +675,7 @@ void ps2e_vu0_finish_triangle_edge_tests(ps2e_u32 values) {
 // differences, moved}): every vertex of both hulls through its matrix into moved (the first's, then the other's), then every
 // vertex of the first less every vertex of the other into differences
 void ps2e_vu0_make_vertex_differences(ps2e_u32 request) {
+    TE_SEAM(kSeamCollision);
     if (Stubbed("collision")) return;
     const uint32_t* r = reinterpret_cast<const uint32_t*>(te::GuestPointer(request, 32));
     if (!r) return;
@@ -693,6 +709,7 @@ void ps2e_vu0_make_vertex_differences(ps2e_u32 request) {
 // GroupPoints: each group of four points (four quadwords) packed as four x, four y, four z (THREE quadwords), in place: the
 // output is denser than the input (48 bytes a group against 64), so every group is read before the first is written
 void ps2e_vu0_group_points(ps2e_u32 points, ps2e_s32 groups) {
+    TE_SEAM(kSeamCollision);
     if (Stubbed("collision")) return;
     if (groups <= 0 || groups > 1024) return;
     float* p = Floats(points, size_t(groups) * 16);
@@ -709,6 +726,7 @@ void ps2e_vu0_group_points(ps2e_u32 points, ps2e_s32 groups) {
 
 // The range (least, greatest) of the groups' points along an axis
 void ps2e_vu0_groups_range(ps2e_u32 groups, ps2e_s32 count, ps2e_u32 axis, ps2e_u32 range) {
+    TE_SEAM(kSeamCollision);
     if (Stubbed("collision")) return;
     if (count <= 0 || count > 1024) return;
     const float* g = Floats(groups, size_t(count) * 12);
@@ -750,6 +768,7 @@ void te_unclamped_counts(uint32_t* fast, uint32_t* clamped) {
 
 // LoadTriangleHullSupport: a triangle's three vertices against eight hull vertices, kept for the range tests
 void ps2e_vu0_load_triangle_hull_support(ps2e_u32 triangle, ps2e_u32 hullVertices) {
+    TE_SEAM(kSeamCollision);
     if (Stubbed("collision")) return;
     const float* t = Floats(triangle, 12);
     const float* h = Floats(hullVertices, 32);
@@ -762,6 +781,7 @@ void ps2e_vu0_load_triangle_hull_support(ps2e_u32 triangle, ps2e_u32 hullVertice
 }
 
 void ps2e_vu0_triangle_hull_support_range(ps2e_u32 axis, ps2e_u32 range) {
+    TE_SEAM(kSeamCollision);
     if (Stubbed("collision")) return;
     const auto a = ReadVector(axis);
     float* out = Floats(range, 2);

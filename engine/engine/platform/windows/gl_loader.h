@@ -21,10 +21,11 @@
 #endif
 #include <GL/glcorearb.h>
 
-// X(type, gl name) for every entry point the engine requires (96).
+// X(type, gl name) for every entry point the engine requires (104).
 #define PS2R_GLWIN_FUNCS(X) \
     X(PFNGLACTIVETEXTUREPROC, glActiveTexture) \
     X(PFNGLATTACHSHADERPROC, glAttachShader) \
+    X(PFNGLBEGINQUERYPROC, glBeginQuery) \
     X(PFNGLBINDATTRIBLOCATIONPROC, glBindAttribLocation) \
     X(PFNGLBINDBUFFERPROC, glBindBuffer) \
     X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer) \
@@ -64,8 +65,10 @@
     X(PFNGLDRAWARRAYSPROC, glDrawArrays) \
     X(PFNGLDRAWBUFFERPROC, glDrawBuffer) \
     X(PFNGLDRAWBUFFERSPROC, glDrawBuffers) \
+    X(PFNGLDRAWELEMENTSPROC, glDrawElements) \
     X(PFNGLENABLEPROC, glEnable) \
     X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray) \
+    X(PFNGLENDQUERYPROC, glEndQuery) \
     X(PFNGLFENCESYNCPROC, glFenceSync) \
     X(PFNGLFINISHPROC, glFinish) \
     X(PFNGLFLUSHMAPPEDBUFFERRANGEPROC, glFlushMappedBufferRange) \
@@ -73,6 +76,7 @@
     X(PFNGLFRAMEBUFFERTEXTURE2DPROC, glFramebufferTexture2D) \
     X(PFNGLGENBUFFERSPROC, glGenBuffers) \
     X(PFNGLGENFRAMEBUFFERSPROC, glGenFramebuffers) \
+    X(PFNGLGENQUERIESPROC, glGenQueries) \
     X(PFNGLGENRENDERBUFFERSPROC, glGenRenderbuffers) \
     X(PFNGLGENSAMPLERSPROC, glGenSamplers) \
     X(PFNGLGENTEXTURESPROC, glGenTextures) \
@@ -81,8 +85,11 @@
     X(PFNGLGETERRORPROC, glGetError) \
     X(PFNGLGETFLOATVPROC, glGetFloatv) \
     X(PFNGLGETINTEGERVPROC, glGetIntegerv) \
+    X(PFNGLGETPROGRAMBINARYPROC, glGetProgramBinary) \
     X(PFNGLGETPROGRAMINFOLOGPROC, glGetProgramInfoLog) \
     X(PFNGLGETPROGRAMIVPROC, glGetProgramiv) \
+    X(PFNGLGETQUERYOBJECTIVPROC, glGetQueryObjectiv) \
+    X(PFNGLGETQUERYOBJECTUI64VPROC, glGetQueryObjectui64v) \
     X(PFNGLGETSHADERINFOLOGPROC, glGetShaderInfoLog) \
     X(PFNGLGETSHADERIVPROC, glGetShaderiv) \
     X(PFNGLGETSTRINGPROC, glGetString) \
@@ -99,6 +106,7 @@
     X(PFNGLRENDERBUFFERSTORAGEPROC, glRenderbufferStorage) \
     X(PFNGLSAMPLERPARAMETERIPROC, glSamplerParameteri) \
     X(PFNGLSCISSORPROC, glScissor) \
+    X(PFNGLSHADERBINARYPROC, glShaderBinary) \
     X(PFNGLSHADERSOURCEPROC, glShaderSource) \
     X(PFNGLSTENCILFUNCPROC, glStencilFunc) \
     X(PFNGLSTENCILMASKPROC, glStencilMask) \
@@ -129,6 +137,7 @@ extern "C" {
 #endif
 extern PFNGLACTIVETEXTUREPROC ps2r_glwin_glActiveTexture;
 extern PFNGLATTACHSHADERPROC ps2r_glwin_glAttachShader;
+extern PFNGLBEGINQUERYPROC ps2r_glwin_glBeginQuery;
 extern PFNGLBINDATTRIBLOCATIONPROC ps2r_glwin_glBindAttribLocation;
 extern PFNGLBINDBUFFERPROC ps2r_glwin_glBindBuffer;
 extern PFNGLBINDFRAMEBUFFERPROC ps2r_glwin_glBindFramebuffer;
@@ -169,8 +178,10 @@ extern PFNGLDISABLEPROC ps2r_glwin_glDisable;
 extern PFNGLDRAWARRAYSPROC ps2r_glwin_glDrawArrays;
 extern PFNGLDRAWBUFFERPROC ps2r_glwin_glDrawBuffer;
 extern PFNGLDRAWBUFFERSPROC ps2r_glwin_glDrawBuffers;
+extern PFNGLDRAWELEMENTSPROC ps2r_glwin_glDrawElements;
 extern PFNGLENABLEPROC ps2r_glwin_glEnable;
 extern PFNGLENABLEVERTEXATTRIBARRAYPROC ps2r_glwin_glEnableVertexAttribArray;
+extern PFNGLENDQUERYPROC ps2r_glwin_glEndQuery;
 extern PFNGLFENCESYNCPROC ps2r_glwin_glFenceSync;
 extern PFNGLFINISHPROC ps2r_glwin_glFinish;
 extern PFNGLFLUSHMAPPEDBUFFERRANGEPROC ps2r_glwin_glFlushMappedBufferRange;
@@ -178,6 +189,7 @@ extern PFNGLFRAMEBUFFERRENDERBUFFERPROC ps2r_glwin_glFramebufferRenderbuffer;
 extern PFNGLFRAMEBUFFERTEXTURE2DPROC ps2r_glwin_glFramebufferTexture2D;
 extern PFNGLGENBUFFERSPROC ps2r_glwin_glGenBuffers;
 extern PFNGLGENFRAMEBUFFERSPROC ps2r_glwin_glGenFramebuffers;
+extern PFNGLGENQUERIESPROC ps2r_glwin_glGenQueries;
 extern PFNGLGENRENDERBUFFERSPROC ps2r_glwin_glGenRenderbuffers;
 extern PFNGLGENSAMPLERSPROC ps2r_glwin_glGenSamplers;
 extern PFNGLGENTEXTURESPROC ps2r_glwin_glGenTextures;
@@ -186,8 +198,11 @@ extern PFNGLGETBOOLEANVPROC ps2r_glwin_glGetBooleanv;
 extern PFNGLGETERRORPROC ps2r_glwin_glGetError;
 extern PFNGLGETFLOATVPROC ps2r_glwin_glGetFloatv;
 extern PFNGLGETINTEGERVPROC ps2r_glwin_glGetIntegerv;
+extern PFNGLGETPROGRAMBINARYPROC ps2r_glwin_glGetProgramBinary;
 extern PFNGLGETPROGRAMINFOLOGPROC ps2r_glwin_glGetProgramInfoLog;
 extern PFNGLGETPROGRAMIVPROC ps2r_glwin_glGetProgramiv;
+extern PFNGLGETQUERYOBJECTIVPROC ps2r_glwin_glGetQueryObjectiv;
+extern PFNGLGETQUERYOBJECTUI64VPROC ps2r_glwin_glGetQueryObjectui64v;
 extern PFNGLGETSHADERINFOLOGPROC ps2r_glwin_glGetShaderInfoLog;
 extern PFNGLGETSHADERIVPROC ps2r_glwin_glGetShaderiv;
 extern PFNGLGETSTRINGPROC ps2r_glwin_glGetString;
@@ -204,6 +219,7 @@ extern PFNGLREADPIXELSPROC ps2r_glwin_glReadPixels;
 extern PFNGLRENDERBUFFERSTORAGEPROC ps2r_glwin_glRenderbufferStorage;
 extern PFNGLSAMPLERPARAMETERIPROC ps2r_glwin_glSamplerParameteri;
 extern PFNGLSCISSORPROC ps2r_glwin_glScissor;
+extern PFNGLSHADERBINARYPROC ps2r_glwin_glShaderBinary;
 extern PFNGLSHADERSOURCEPROC ps2r_glwin_glShaderSource;
 extern PFNGLSTENCILFUNCPROC ps2r_glwin_glStencilFunc;
 extern PFNGLSTENCILMASKPROC ps2r_glwin_glStencilMask;
@@ -231,6 +247,7 @@ extern PFNGLVIEWPORTPROC ps2r_glwin_glViewport;
 // The GL names resolve to the pointers.
 #define glActiveTexture ps2r_glwin_glActiveTexture
 #define glAttachShader ps2r_glwin_glAttachShader
+#define glBeginQuery ps2r_glwin_glBeginQuery
 #define glBindAttribLocation ps2r_glwin_glBindAttribLocation
 #define glBindBuffer ps2r_glwin_glBindBuffer
 #define glBindFramebuffer ps2r_glwin_glBindFramebuffer
@@ -271,8 +288,10 @@ extern PFNGLVIEWPORTPROC ps2r_glwin_glViewport;
 #define glDrawArrays ps2r_glwin_glDrawArrays
 #define glDrawBuffer ps2r_glwin_glDrawBuffer
 #define glDrawBuffers ps2r_glwin_glDrawBuffers
+#define glDrawElements ps2r_glwin_glDrawElements
 #define glEnable ps2r_glwin_glEnable
 #define glEnableVertexAttribArray ps2r_glwin_glEnableVertexAttribArray
+#define glEndQuery ps2r_glwin_glEndQuery
 #define glFenceSync ps2r_glwin_glFenceSync
 #define glFinish ps2r_glwin_glFinish
 #define glFlushMappedBufferRange ps2r_glwin_glFlushMappedBufferRange
@@ -280,6 +299,7 @@ extern PFNGLVIEWPORTPROC ps2r_glwin_glViewport;
 #define glFramebufferTexture2D ps2r_glwin_glFramebufferTexture2D
 #define glGenBuffers ps2r_glwin_glGenBuffers
 #define glGenFramebuffers ps2r_glwin_glGenFramebuffers
+#define glGenQueries ps2r_glwin_glGenQueries
 #define glGenRenderbuffers ps2r_glwin_glGenRenderbuffers
 #define glGenSamplers ps2r_glwin_glGenSamplers
 #define glGenTextures ps2r_glwin_glGenTextures
@@ -288,8 +308,11 @@ extern PFNGLVIEWPORTPROC ps2r_glwin_glViewport;
 #define glGetError ps2r_glwin_glGetError
 #define glGetFloatv ps2r_glwin_glGetFloatv
 #define glGetIntegerv ps2r_glwin_glGetIntegerv
+#define glGetProgramBinary ps2r_glwin_glGetProgramBinary
 #define glGetProgramInfoLog ps2r_glwin_glGetProgramInfoLog
 #define glGetProgramiv ps2r_glwin_glGetProgramiv
+#define glGetQueryObjectiv ps2r_glwin_glGetQueryObjectiv
+#define glGetQueryObjectui64v ps2r_glwin_glGetQueryObjectui64v
 #define glGetShaderInfoLog ps2r_glwin_glGetShaderInfoLog
 #define glGetShaderiv ps2r_glwin_glGetShaderiv
 #define glGetString ps2r_glwin_glGetString
@@ -306,6 +329,7 @@ extern PFNGLVIEWPORTPROC ps2r_glwin_glViewport;
 #define glRenderbufferStorage ps2r_glwin_glRenderbufferStorage
 #define glSamplerParameteri ps2r_glwin_glSamplerParameteri
 #define glScissor ps2r_glwin_glScissor
+#define glShaderBinary ps2r_glwin_glShaderBinary
 #define glShaderSource ps2r_glwin_glShaderSource
 #define glStencilFunc ps2r_glwin_glStencilFunc
 #define glStencilMask ps2r_glwin_glStencilMask

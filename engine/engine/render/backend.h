@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "engine/render/surface_format.h"
@@ -376,6 +377,12 @@ public:
     // stencil bit and every colour texel are left as they are. A backend without a stencil
     // attachment returns false and marks nothing.
     virtual bool MarkStencilWhereOpaque(SurfaceId, SurfaceId, uint8_t) { return false; }
+    // The same two over `n` rectangles of the target only (physical texels; the shadow bracket's region: ps2e_draw
+    // ps2e_draw_shadow_region). A backend that cannot restrict them clears / marks the whole target -- the same picture.
+    virtual void ClearStencilIn(SurfaceId stencil, uint8_t value, const Rect*, int) { ClearStencil(stencil, value); }
+    virtual bool MarkStencilWhereOpaqueIn(SurfaceId color, SurfaceId stencil, uint8_t bits, const Rect*, int) {
+        return MarkStencilWhereOpaque(color, stencil, bits);
+    }
     // Diagnostics only: the stencil bytes of `rect` (physical texels, rows bottom-up as the
     // attachment stores them, one byte per texel) of a DepthStencil24_8 surface. A backend
     // that cannot read its stencil returns false and writes nothing.
@@ -420,7 +427,17 @@ public:
     // A backend's own tuning switch by name (a diagnosis A/B; an unknown name is ignored). The GL backend on the Vita:
     // "draw_legacy" 1 = its per-draw call sequence as before the drawing thread's rework (both PS2 programs
     // bound per draw, every uniform sent to both at once, the masks reset after every draw), 0 = the current one.
+    // "gpu_timers" (the desktop GL backend): the GPU phase timer's mode (render/backends/gl/gl_gpu_timers.h; 0 off).
     virtual void SetOption(const char*, int) {}
+    // The GPU phase timer (a diagnosis; a backend without one ignores these): the phase the next work belongs to (the
+    // timer's phase numbers: ps2e_draw.h ps2e_draw_phase), the area a phase rasterises where the caller knows it (physical
+    // pixels) with the passes / draws it made, and the census window's lines ("" when off or nothing was read).
+    virtual void MarkGpuPhase(int) {}
+    virtual void NoteGpuFill(int, double, uint32_t) {}
+    virtual std::string GpuTimerLines(double) { return std::string(); }
+    virtual bool GpuTimersOn() const { return false; }
+    // The GPU and driver the backend draws with ("" when not known): the start-up line names it.
+    virtual std::string DeviceName() const { return std::string(); }
 };
 
 }  // namespace render

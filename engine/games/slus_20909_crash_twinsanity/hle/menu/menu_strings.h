@@ -26,7 +26,7 @@ public:
         Fullscreen,         // "fullscreen"
         KeyboardMouse,      // "keyboard and mouse"
         // The Display page's A2/A3 rows: labels and choice names.
-        Scale,              // "internal scale" (video.scale)
+        Scale,              // "resolution" (video.scale)
         Scale1x, Scale2x, Scale3x, Scale4x, ScaleNative,   // "1x".."4x", "window size"
         VSync,              // "vsync" (video.vsync)
         DisplayMode,        // "display mode" (video.fullscreen)
@@ -57,6 +57,8 @@ public:
         GameRatePal,        // "50 hz (pal)"
         GameRateSixty,      // "60 hz"
         GameRateNextStart,  // "the game rate changes the next time the game starts"
+        // The PS Vita's RESOLUTION row at its maximum, 2x: the help line says what it costs.
+        ScaleVitaMaximum,   // "2x is the ps vita's maximum:~half the frame rate or less" (two lines)
         Count,
     };
     static constexpr uint32_t kCount = static_cast<uint32_t>(Id::Count);

@@ -132,6 +132,21 @@ void InstallFpsCounter() {
         l.text = display::GameRateHelp();
         out.push_back(l);
     });
+#if defined(__vita__)
+    // The resolution row's help line on the PS Vita: at 2x, the console's maximum, the page says what it costs -- two
+    // lines in the band between the page's ring and its SELECT / BACK prompts (from 0.90 down)
+    Register("scale_help", [](std::vector<Line>& out) {
+        if (!display::GraphicsPageOpen() || !display::ScaleAtMaximum()) return;
+        Line l;
+        l.x = 0.5f;
+        l.y = 0.80f;
+        l.scale = 0.5f;
+        l.colour = 0x80C0C0C0u;
+        l.alignment = Top | Middle;
+        l.text = display::ScaleHelp();
+        out.push_back(l);
+    });
+#endif
 }
 
 }  // namespace te::texts

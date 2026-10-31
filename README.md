@@ -111,7 +111,8 @@ starts with (a file name beside `game.iso`, or a full `ux0:` / `uma0:` path). Th
 computer -- at 60 Hz (the PS Vita's 50 Hz default is the PAL disc's), with its own memory card
 (`ux0:data/twinsanity/memcards-SLUS-20909`) and English only in the two language rows; the mods in
 `ux0:data/twinsanity/mods` and the Arabic language pack work as they do on a computer. Importing a mod is the launcher's
-job, on a computer.
+job, on a computer. The PS Vita's resolution row offers 1x or 2x: 2x, the console's maximum, runs at half the frame rate or
+less, and a `ps2r.ini` that names 3x or 4x is read as 2x.
 
 ![The Mods page's PS Vita panel](docs/launcher/screenshots/launcher-mods-vita.png)
 
@@ -267,7 +268,7 @@ Release zips (`twinsanityevolved-<platform>.zip`, one per platform) contain the 
 Closing the window quits.
 
 **Display.** The title's OPTIONS > GRAPHIC OPTIONS page carries the port's display rows beside retail's centre screen and
-widescreen: aspect ratio (auto = the TV's 4:3 / normal / wide / 16:10 / ultra-wide), internal scale (1x..4x), texture filter
+widescreen: aspect ratio (auto = the TV's 4:3 / normal / wide / 16:10 / ultra-wide), resolution (1x..4x: the PS2's own size and its multiples), texture filter
 (original / point / bilinear), vsync, display mode (windowed / fullscreen / borderless) — applied at once and written to
 `~/.twinsanityevolved/ps2r.ini` (`video.aspect`, `video.scale`, `video.texture_filter`, `video.vsync`, `video.fullscreen`;
 the centre-screen move as `video.custom_offset_x/y`). The page's last row is the FPS COUNTER (labelled "fps overlay", off by
@@ -499,6 +500,9 @@ The runner opens a window at `Platform::Graphics::StartRenderer` and presents th
 Environment knobs of `platform/nativeee/host/graphics.cpp`: `TE_GFX_HEADLESS=1` (hidden window), `TE_GFX_UNPACED=1` (no
 vertical-blank pacing), `TE_GFX_DUMP_DIR=dir` + `TE_GFX_DUMP_EVERY=n` / `TE_GFX_DUMP_AT=k` (presented frames as PPM),
 `TE_GFX_LOG=1`, `TE_GFX_SUMMARY_EVERY=n` (the counters line the judges read), `TE_GFX_DUMP_TEXTURES=dir`,
+`TE_GFX_DIAG_MIP_TINT=1` (every texture's levels below the first given in magenta: the surfaces drawn from them show it),
+`TE_GFX_VITA_LEVELS=authored|gpu|none` (the PS Vita: the levels below the first sampled from the PS2's own levels -- the
+default, as on a computer -- from the GL library's levels made from level 0 on the GPU, as earlier releases did, or none),
 `TE_GFX_RENDER_THREAD=0/1` (the frame's GL work on a render thread — on by default in play mode with a window),
 `TE_TICK_LOG_MS=ms` (the clock logs every tick slower than that with its phases: draw submit / present / pump / game),
 `TE_NO_QOS=1` (the game, render and pacer threads at the default QoS instead of interactive), `TE_GFX_DEPTH_Z32=1` (the GS
@@ -518,6 +522,16 @@ over the logged vertices), `TE_MATH_RAY=retail|legacy` (the fast ray casts by th
 engine's `title::RayMath` — the retail VU0 program as values, the default — or the earlier slow-path form),
 `TE_MATH_RAY_COMPARE=1` / `TE_MATH_RAY_MICRO=1` (the retail 0xAB8 micro on the engine's VU interpreter counted against /
 answering every cast), `TE_PARTICLE_VIEW=legacy` (the earlier particle block view for A/B).
+
+At the high resolutions (the RESOLUTION row's 2x..4x): `TE_GFX_GPU_TIMERS=1|phases|breaks` (the GPU phase timer: after every pace line, the GPU's
+milliseconds, the pixels drawn and the drawing thread's time per phase of a frame -- the clear, the sky, the opaque scene,
+the blended draws, the shadow volumes and their composite, the screen copies, the HUD, the present; `1` cuts at every phase,
+or only where the frame's render pass ends on a tile-based GPU such as Apple's; not free there: the hub at 4x on an Apple
+M4 presents 56 frames a second with it, 60 without), `TE_GFX_SKY_LAST=0|abN` (the sky's layers drawn first, as before,
+instead of after the opaque scene / switched on and off every N presents), `TE_GFX_SHADOW_REGION=0|abN` (the shadow
+passes over the whole frame, as before, instead of the volumes' tiles only / switched), `TE_GFX_SCALE_AB=N` (the internal
+scale switched between the setting and 1x every N presents), `TE_GFX_DUMP_TARGET=1` (the dumps at the frame target's own
+size, 2048x2048 at 4x, instead of the presented picture).
 
 Judges: `tools/ci/judges.sh --iso IMAGE` runs every regression judge (`tools/judges/*.py` with `fixtures/judges/*.json`:
 skins, shadows, particles, decals, dust, the crystals, Ice Climb's cave passes against the exact GS depth test, the orb,

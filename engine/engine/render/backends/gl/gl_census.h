@@ -106,6 +106,16 @@ struct GlCensus {
     // the pixels the copy passes covered (the whole target, or the region asked: ps2e_draw_copy_frame_region)
     uint64_t copies = 0, copies_continued = 0, copies_restored = 0, copy_pixels = 0, copy_whole = 0;
     uint64_t copies_restated = 0;   // quiet copies whose copy texture's vitaGL record was re-stated (the zero-area draw)
+    // the Vita's sampled textures made (GlDevice::CreateTextureWithData), the textures vitaGL left without storage there
+    // or at a whole image's re-specification (Upload; its allocator refused every pool and the newlib heap: the draw then
+    // samples whatever the texture's GXM record held), the level chains it placed off GXM's 16-byte texture alignment (its
+    // realloc of level 0 into the chain), and the textures given the levels the PS2 authored (FinishMipChain: written over
+    // vitaGL's chain), their bytes and the drawing thread's time waiting for vitaGL's level transfers before the write
+    // (only when the platform does not skip them: the transfers skipped are counted), and the authored levels past the
+    // chain vitaGL holds (none expected: the PS2's chains stop where an axis reaches 1, as vitaGL's)
+    uint64_t tex_made = 0, tex_no_storage = 0, tex_chains = 0, tex_chain_misaligned = 0;
+    uint64_t tex_levels_authored = 0, tex_level_bytes = 0, tex_level_wait_us = 0, tex_levels_dropped = 0;
+    uint64_t tex_level_transfers_skipped = 0, tex_levels_beyond_chain = 0;
 };
 
 // One census, a plain global (constant-initialised): a function-local static's guard was a load + a DMB barrier at every

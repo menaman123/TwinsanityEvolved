@@ -77,7 +77,56 @@ private:
     unsigned short saved_ = 0;
 };
 
+// ---- the game thread's costly seams, by group (the "[te.prof] ... game seams" line) ---------------------------------------
+// The device's game-thread profile has one "(own code)" bucket for the game's code AND the host seam bodies it calls (the
+// seam thunks mark their sections only in a TE_PROF_SEAM build). The seams below mark their group's section while they run
+// when TE_PROF is on, and count their calls; every TE_PROF_EVERY presents the report gives each group's calls and its
+// milliseconds a present (its share of the game thread's samples times the window's wall time). With TE_PROF off a group's
+// id is 0: the scope is one load and one predicted branch, nothing written.
+enum SeamGroup : uint8_t {
+    kSeamRays,        // SetRay / StartRayTriangle / FinishRayTriangle (calls = the ray / triangle tests)
+    kSeamCollision,   // the second seam's collision maths: edge tests, vertex differences, point groups, hull supports
+    kSeamBoxes,       // the culling: views, links, model loads, cell and box tests, results, clip boxes (calls = box tests)
+    kSeamPlace,       // DrawPlacedModel / DrawRigidModel: the instances' draws recorded (calls = instances)
+    kSeamSkins,       // DrawSkin / DrawBlendSkin
+    kSeamJoints,      // the animations' joint maths: joint matrix, Euler blend, parent product, lerp, slerp, turn
+    kSeamMatrices,    // the VU0 matrix seams: products, transforms, rotations, rigid inverses, planes
+    kSeamBounds,      // GetBbox / PointsBox / TriangleBounds
+    kSeamShadows,     // DrawShadowMesh
+    kSeamParticles,   // the particle views and block views
+    kSeamDecals,      // the decals' views, ageing and draws
+    kSeamSky,         // DrawSky
+    kSeamGroups
+};
+// the groups' section ids (0 while TE_PROF is off) and their calls (the game thread writes, the report reads)
+extern unsigned short g_seam_id[kSeamGroups];
+void CountSeam(SeamGroup group);
+
+class SeamScope {
+public:
+    SeamScope(SeamGroup group, bool counted) : id_(g_seam_id[group]) {
+        if (__builtin_expect(id_ != 0, 0)) {
+            saved_ = te_prof_section[kGame];
+            te_prof_section[kGame] = id_;
+            if (counted) CountSeam(group);
+        }
+    }
+    ~SeamScope() {
+        if (__builtin_expect(id_ != 0, 0)) te_prof_section[kGame] = saved_;
+    }
+    SeamScope(const SeamScope&) = delete;
+    SeamScope& operator=(const SeamScope&) = delete;
+private:
+    unsigned short id_;
+    unsigned short saved_ = 0;
+};
+
 }  // namespace te::prof
+
+// TE_SEAM(kSeamRays): the rest of the enclosing seam body is its group's section on the game thread, one call counted;
+// TE_SEAM_PART(kSeamRays): the same, not counted (a seam that is part of a counted one's work, e.g. StartRayTriangle)
+#define TE_SEAM(group) ::te::prof::SeamScope te_seam_scope_(::te::prof::group, true)
+#define TE_SEAM_PART(group) ::te::prof::SeamScope te_seam_scope_(::te::prof::group, false)
 
 #define TE_PROF_CAT2(a, b) a##b
 #define TE_PROF_CAT(a, b) TE_PROF_CAT2(a, b)

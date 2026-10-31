@@ -15,6 +15,7 @@ add_library(ps2r_render_gl STATIC
     blend_ff_map.cpp
     cd_copy_policy.cpp
     gl_fill_census.cpp
+    gl_gpu_timers.cpp
     gl_draw_executor.cpp
     gl_movie.cpp)
 target_include_directories(ps2r_render_gl PUBLIC ${CMAKE_SOURCE_DIR})

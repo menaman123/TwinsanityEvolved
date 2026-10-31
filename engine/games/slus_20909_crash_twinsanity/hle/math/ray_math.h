@@ -26,6 +26,11 @@ public:
     };
     static Ray SetRay(const Vector& start, const Vector& end) { return Ray{start, end}; }
     static Result Test(const Ray& ray, const Triangle& triangle, const Vector& nearest);
+    // What the fast ray cast's seam reads of Test: whether the triangle is hit nearer (`nearer`) and then the hit, written to
+    // `hit` only when it is. On the desktop Test itself; the Vita's form stops at the first test that rules the hit out --
+    // the ray's ends on one side of the plane, the share not below the nearest, an edge's distance -- each value it does
+    // compute made by the same expressions in the same order as the Vita's Test.
+    static bool Nearer(const Ray& ray, const Triangle& triangle, const Vector& nearest, Vector& hit);
 };
 
 }  // namespace title

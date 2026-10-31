@@ -32,6 +32,11 @@ extern void* in_use_framebuffer __attribute__((weak));
 extern void* old_framebuffer __attribute__((weak));
 extern GLboolean scissor_test_state __attribute__((weak));
 extern GLboolean dirty_scissor_state __attribute__((weak));
+// the platform's sceGxmTransferDownscale wrapper (platform/nativeee/host/vita_gpu_census.cpp): while nonzero, vitaGL's
+// level transfers are not made (FinishMipChain writes every level itself) and counted. Weak: without the wrapper the
+// transfers run and are waited for.
+extern int te_gxm_skip_downscale __attribute__((weak));
+extern unsigned te_gxm_downscales_skipped __attribute__((weak));
 }
 #endif
 
@@ -63,6 +68,13 @@ bool GlDevice::Init(std::function<void()> swap) {
         }
     }
 #endif
+    {
+        // the GPU and the driver (the start-up line: a user's log names the machine's GPU)
+        const GLubyte* r = glGetString(GL_RENDERER);
+        const GLubyte* v = glGetString(GL_VERSION);
+        device_name_ = std::string(r ? reinterpret_cast<const char*>(r) : "?") + " / OpenGL " +
+                       (v ? reinterpret_cast<const char*>(v) : "?");
+    }
     shaders_.SetZeroToOneDepth(zero_to_one);
     shaders_.SetGsZ24Depth(settings_.gs_z24);
     if (!shaders_.Build(uniforms_)) return false;
@@ -480,7 +492,10 @@ void GlDevice::Clear(SurfaceId color, SurfaceId depth, uint32_t rgba, float z, u
 #if PS2R_HOST_VITA
     if (bits) FillCensusForeign();   // (vitaGL's clear is a full-screen quad of its own: the fill census counts it apart)
 #endif
-    if (bits) glClear(bits);
+    if (bits) {
+        ++timer_work_;
+        glClear(bits);
+    }
 }
 
 void GlDevice::Upload(SurfaceId id, const Rect& rect, const void* bytes, size_t stride) {
@@ -516,6 +531,7 @@ void GlDevice::Upload(SurfaceId id, const Rect& rect, const void* bytes, size_t 
     if (full && !depth && !s.desc.renderable && s.desc.format == SurfaceFormat::Rgba8 && s.levels == 0 &&
         s.synth_levels == 0 && (stride == 0 || stride == size_t(rect.w) * 4)) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rect.w, rect.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, bytes);
+        CheckVitaStorage(uint32_t(rect.w), uint32_t(rect.h), 0);
         s.respecify = false;
         Census().tex_respecified++;
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
@@ -536,6 +552,26 @@ void GlDevice::Upload(SurfaceId id, const Rect& rect, const void* bytes, size_t 
     state_.BindTex2D(0);
 }
 
+#if PS2R_HOST_VITA
+namespace {
+// TE_GFX_VITA_LEVELS: the levels below the first a texture is sampled from on the Vita -- unset / authored = the levels the
+// PS2 authored (the computer's), gpu = vitaGL's own made from level 0 on the GPU (the earlier builds), none = no levels at
+// all (level 0 only: the port gives none; graphics.cpp reads it)
+bool VitaLevelsAuthored() {
+    static const bool authored = [] {
+        const char* v = std::getenv("TE_GFX_VITA_LEVELS");
+        const bool a = !(v && std::strcmp(v, "gpu") == 0);
+        std::fprintf(stderr, "[gl] texture levels below the first (TE_GFX_VITA_LEVELS): %s\n",
+                     v && std::strcmp(v, "none") == 0 ? "none (level 0 only)"
+                     : a ? "the PS2's authored levels, written over vitaGL's chain"
+                         : "vitaGL's, made from level 0 by GPU transfers (gpu)");
+        return a;
+    }();
+    return authored;
+}
+}  // namespace
+#endif
+
 // A sampled RGBA8 texture made with its first level. The Vita (TE_GFX_POOL, on by default): a texture not taken from the
 // pool is specified ONCE, with its texels -- CreateSurface's glTexImage2D(NULL) allocated the storage and zero-filled it
 // (vitaGL gpu_alloc_texture), and Upload's glTexImage2D(texels) then freed that storage (to the garbage collector) and
@@ -550,6 +586,7 @@ SurfaceId GlDevice::CreateTextureWithData(const SurfaceDesc& desc, const void* b
     }();
     const bool plain = desc.format == SurfaceFormat::Rgba8 && !desc.renderable && !desc.cpu_writable && desc.width && desc.height;
     if (one_step && bytes && plain) {
+        (void)VitaLevelsAuthored();   // (its start-up line at the first texture, whichever arm runs)
         GlSurface s;
         s.desc = desc;
         if (s.desc.scale == 0) s.desc.scale = settings_.scale;
@@ -564,6 +601,8 @@ SurfaceId GlDevice::CreateTextureWithData(const SurfaceDesc& desc, const void* b
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(desc.width), static_cast<GLsizei>(desc.height), 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, bytes);
+        CheckVitaStorage(desc.width, desc.height, 0);
+        Census().tex_made++;
         s.respecify = false;
         state_.TexParami(GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         state_.TexParami(GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -581,9 +620,40 @@ SurfaceId GlDevice::CreateTextureWithData(const SurfaceDesc& desc, const void* b
     return Backend::CreateTextureWithData(desc, bytes);
 }
 
+#if PS2R_HOST_VITA
+void GlDevice::CheckVitaStorage(uint32_t width, uint32_t height, int level) {
+    if (vglGetTexDataPointer(GL_TEXTURE_2D)) return;
+    // vitaGL's allocator found no room in any pool nor in the newlib heap (after its own retries: a GPU drain and up to four
+    // one-second sleeps on this thread, gpu_utils.c gpu_alloc_mapped_aligned_unsafe_for_gpu) and left the texture without
+    // storage: its GXM record is what the texture slot last held, so its draws sample that
+    const uint64_t n = ++Census().tex_no_storage;
+    if (n <= 16 || n % 100 == 0)
+        std::fprintf(stderr, "[gl] texture %ux%u level %d: vitaGL gave it no storage (%u KB asked; vitaGL free: vram %.1f MB, "
+                     "ram %.1f MB, phycont %.1f MB) -- %llu so far\n", width, height, level, width * height * 4 / 1024,
+                     vglMemFree(VGL_MEM_VRAM) / 1048576.0, vglMemFree(VGL_MEM_RAM) / 1048576.0,
+                     vglMemFree(VGL_MEM_PHYCONT) / 1048576.0, (unsigned long long)n);
+}
+#endif
+
 void GlDevice::UploadLevel(SurfaceId id, int level, int w, int h, const void* rgba) {
     auto it = surfaces_.find(id.id);
     if (it == surfaces_.end() || level <= 0 || w <= 0 || h <= 0) return;
+#if PS2R_HOST_VITA
+    // vitaGL takes no texels below level 0: its glTexImage2D(level >= 1) (textures.c _glTexImage2D_FlatIMPL ->
+    // gpu_utils.c gpu_alloc_mipmaps) ignores the data, grows the storage to the whole chain and makes levels 1..level
+    // from level 0 with GPU transfers (sceGxmTransferDownscale, nothing to wait on). The levels are held here and
+    // FinishMipChain writes them over that chain.
+    if (VitaLevelsAuthored() && rgba) {
+        HeldLevel held;
+        held.surface = id.id;
+        held.level = level;
+        held.w = w;
+        held.h = h;
+        held.rgba.assign(static_cast<const uint8_t*>(rgba), static_cast<const uint8_t*>(rgba) + size_t(w) * size_t(h) * 4);
+        held_levels_.push_back(std::move(held));
+        return;
+    }
+#endif
     state_.ActiveTexture(GL_TEXTURE0);
     state_.BindTex2D(it->second.tex);
     glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
@@ -599,6 +669,67 @@ void GlDevice::FinishMipChain(SurfaceId id, int authored_levels, bool synthesize
     GlSurface& s = it->second;
 #if PS2R_HOST_VITA
     (void)synthesize_tail;
+    // the levels UploadLevel held for this texture (others' are a caller that never finished its chain: dropped)
+    std::vector<HeldLevel> held;
+    for (HeldLevel& l : held_levels_) {
+        if (l.surface == id.id) held.push_back(std::move(l));
+        else Census().tex_levels_dropped++;
+    }
+    held_levels_.clear();
+    if (!held.empty()) {
+        // vitaGL makes the chain once -- the glTexImage2D of the deepest level grows the storage to the whole chain
+        // (gpu_alloc_mipmaps; one call per level made it 1+2+..+n times) and would make levels 1..deepest from level 0 with
+        // GPU transfers nothing waits on. Those transfers are not made (the platform's sceGxmTransferDownscale wrapper,
+        // while te_gxm_skip_downscale is set; without it they are waited for), then each level the PS2 authored is written
+        // at vitaGL's own level layout (glTexSubImage2D: the CPU writes the uncached GPU memory), every level the chain has.
+        const HeldLevel* deepest = &held[0];
+        for (const HeldLevel& l : held)
+            if (l.level > deepest->level) deepest = &l;
+        // the levels vitaGL's chain holds: halving the power-of-two size while both axes exceed 1 (gpu_alloc_mipmaps)
+        uint32_t pw = 1, ph = 1;
+        while (pw < s.desc.width) pw <<= 1;
+        while (ph < s.desc.height) ph <<= 1;
+        int chain_levels = 0;
+        for (; pw > 1 && ph > 1; pw /= 2, ph /= 2) ++chain_levels;
+        const int top = std::min(deepest->level, chain_levels);
+        state_.ActiveTexture(GL_TEXTURE0);
+        state_.BindTex2D(s.tex);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        if (top > 0) {
+            const bool skip = &te_gxm_skip_downscale != nullptr;
+            const unsigned skipped0 = skip && &te_gxm_downscales_skipped ? te_gxm_downscales_skipped : 0;
+            if (skip) te_gxm_skip_downscale = 1;
+            glTexImage2D(GL_TEXTURE_2D, top, GL_RGBA8, std::max(int(s.desc.width) >> top, 1), std::max(int(s.desc.height) >> top, 1),
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            if (skip) te_gxm_skip_downscale = 0;
+            const void* chain = vglGetTexDataPointer(GL_TEXTURE_2D);
+            if (chain) {
+                Census().tex_chains++;
+                if (reinterpret_cast<uintptr_t>(chain) & (SCE_GXM_TEXTURE_ALIGNMENT - 1)) Census().tex_chain_misaligned++;
+                if (skip) {
+                    Census().tex_level_transfers_skipped += (&te_gxm_downscales_skipped ? te_gxm_downscales_skipped : 0) - skipped0;
+                } else {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    sceGxmTransferFinish();
+                    Census().tex_level_wait_us += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - t0).count());
+                }
+                for (const HeldLevel& l : held) {
+                    if (l.level > top) {
+                        Census().tex_levels_beyond_chain++;
+                        continue;
+                    }
+                    glTexSubImage2D(GL_TEXTURE_2D, l.level, 0, 0, l.w, l.h, GL_RGBA, GL_UNSIGNED_BYTE, l.rgba.data());
+                    Census().tex_level_bytes += l.rgba.size();
+                }
+                Census().tex_levels_authored++;
+            } else {
+                CheckVitaStorage(uint32_t(deepest->w), uint32_t(deepest->h), top);
+            }
+        } else {
+            Census().tex_levels_beyond_chain += held.size();
+        }
+    }
     s.levels = static_cast<uint8_t>(authored_levels);
     s.synth_levels = 0;
     state_.BindTex2D(0);
@@ -768,7 +899,28 @@ void GlDevice::ClearStencil(SurfaceId stencil, uint8_t value) {
     state_.Disable(GL_SCISSOR_TEST);
     glStencilMask(0xFF);
     glClearStencil(value);
+    ++timer_work_;
     glClear(GL_STENCIL_BUFFER_BIT);
+}
+
+void GlDevice::ClearStencilIn(SurfaceId stencil, uint8_t value, const Rect* rects, int n) {
+#if PS2R_HOST_VITA
+    (void)rects;
+    (void)n;
+    ClearStencil(stencil, value);   // (vitaGL clears by drawing a quad of its own: the whole target, as before)
+#else
+    if (!rects || n <= 0 || !BindStencilTarget(SurfaceId{}, stencil)) return;
+    state_.Enable(GL_SCISSOR_TEST);
+    glStencilMask(0xFF);
+    glClearStencil(value);
+    for (int i = 0; i < n; ++i) {
+        if (rects[i].w <= 0 || rects[i].h <= 0) continue;
+        state_.Scissor(rects[i].x, rects[i].y, rects[i].w, rects[i].h);
+        ++timer_work_;
+        glClear(GL_STENCIL_BUFFER_BIT);
+    }
+    state_.Disable(GL_SCISSOR_TEST);
+#endif
 }
 
 // Constant colour over `scissor` under the stencil test: viewport = the stencil
@@ -795,6 +947,7 @@ void GlDevice::DrawConstQuad(SurfaceId color, SurfaceId stencil, const Rect& sci
                 ((rgba >> 24) & 0xFF) / 255.0f);
     state_.BindVertexArray(const_vao_);
     ApplyStencil(st);
+    ++timer_work_;
     glDrawArrays(GL_TRIANGLES, 0, 3);
     ResetStencil();
     state_.BindVertexArray(0);
@@ -805,6 +958,16 @@ void GlDevice::DrawConstQuad(SurfaceId color, SurfaceId stencil, const Rect& sci
 }
 
 bool GlDevice::MarkStencilWhereOpaque(SurfaceId color, SurfaceId stencil, uint8_t bits) {
+    return MarkOpaque(color, stencil, bits, nullptr, 0);
+}
+
+bool GlDevice::MarkStencilWhereOpaqueIn(SurfaceId color, SurfaceId stencil, uint8_t bits, const Rect* rects, int n) {
+    if (!rects || n <= 0) return true;   // (nothing to mark: the region is empty)
+    return MarkOpaque(color, stencil, bits, rects, n);
+}
+
+// The opaque-alpha program over the NDC triangle -- the whole target (rects null) or each rectangle scissored
+bool GlDevice::MarkOpaque(SurfaceId color, SurfaceId stencil, uint8_t bits, const Rect* rects, int n) {
 #if PS2R_HOST_VITA
     // In the frame's scene its colour is still in the GPU's tiles: sampling the frame target's texture here reads the
     // memory the last scene stored (the previous picture, with everything drawn after its shadows), and the stencil-only
@@ -817,7 +980,8 @@ bool GlDevice::MarkStencilWhereOpaque(SurfaceId color, SurfaceId stencil, uint8_
     if (!BindStencilTarget(SurfaceId{}, stencil)) return false;
     EndDrawRun();
     state_.Viewport(0, 0, static_cast<int>(ss->desc.width), static_cast<int>(ss->desc.height));
-    state_.Disable(GL_SCISSOR_TEST);
+    if (rects) state_.Enable(GL_SCISSOR_TEST);
+    else state_.Disable(GL_SCISSOR_TEST);
     state_.Disable(GL_BLEND);
     state_.Enable(GL_DEPTH_TEST);
     state_.DepthFunc(GL_ALWAYS);
@@ -834,7 +998,18 @@ bool GlDevice::MarkStencilWhereOpaque(SurfaceId color, SurfaceId stencil, uint8_
 #if PS2R_HOST_VITA
     state_.ApplyVitaSamplerSizes();
 #endif
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    if (!rects) {
+        ++timer_work_;
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    } else {
+        for (int i = 0; i < n; ++i) {
+            if (rects[i].w <= 0 || rects[i].h <= 0) continue;
+            state_.Scissor(rects[i].x, rects[i].y, rects[i].w, rects[i].h);
+            ++timer_work_;
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+        state_.Disable(GL_SCISSOR_TEST);
+    }
     ResetStencil();
     state_.BindVertexArray(0);
     state_.UseProgram(0);
@@ -1298,8 +1473,12 @@ void GlDevice::CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, cons
     state_.BindFb(GL_READ_FRAMEBUFFER, s->fbo);
     state_.ActiveTexture(GL_TEXTURE0);
     state_.BindTex2D(d->tex);
+    // (a copy of the frame ends a tile-based GPU's render pass: the phase timer's segments end on both sides of it)
+    gpu_timers_.Break(TimerWork());
+    ++timer_work_;
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, dst_rect.x, dst_rect.y, src_rect.x, src_rect.y, src_rect.w,
                         src_rect.h);
+    gpu_timers_.Break(TimerWork());
     state_.BindTex2D(0);
 }
 
@@ -1671,6 +1850,7 @@ bool GlDevice::PollReadback(FenceId fence, void* out, size_t stride) {
 // Textured quad of the source into the default framebuffer, then swap.
 void GlDevice::Present(const ScanoutDesc& desc) {
     const auto present_t0 = std::chrono::steady_clock::now();
+    gpu_timers_.Mark(GlGpuTimers::kPresent, TimerWork());
     if (desc.filter != PresentationFilter::Surface && desc.filter != PresentationFilter::Nearest &&
         desc.filter != PresentationFilter::Linear)
         throw std::invalid_argument("Graphics presentation filter is unsupported");
@@ -1733,7 +1913,10 @@ void GlDevice::Present(const ScanoutDesc& desc) {
     const int capture_w = window_w_ > 0 ? window_w_ : desc.dst.w;
     const int capture_h = window_h_ > 0 ? window_h_ : desc.dst.h;
     const bool capture = present_capture_ && capture_w > 0 && capture_h > 0 && CaptureTarget(capture_w, capture_h);
-    if (!desc.to_window && !capture) return;   // a resolve nobody reads: nothing to do
+    if (!desc.to_window && !capture) {   // a resolve nobody reads: nothing to do
+        gpu_timers_.EndFrame(TimerWork());
+        return;
+    }
     state_.BindFb(GL_FRAMEBUFFER, capture ? capture_fbo_ : 0);
     state_.Disable(GL_SCISSOR_TEST);
     state_.ColorMask(true, true, true, true);
@@ -1784,12 +1967,15 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         glBufferSubData(GL_ARRAY_BUFFER,0,sizeof(quad),quad);
 #endif
         state_.BindVertexArray(scanout_vao_);
+        ++timer_work_;
         glDrawArrays(GL_TRIANGLES, 0, 6);
         glBindSampler(0,0); // the next draw observes only its own texture parameters
         state_.BindVertexArray(0);
         state_.UseProgram(0);
         state_.Enable(GL_DEPTH_TEST);
     }
+    // the frame's GPU phases end with its scanout (a capture's read-back below is not timed)
+    gpu_timers_.EndFrame(TimerWork());
     presented_w_ = presented_h_ = 0;
     if (capture) {
         // The frame dump's presented image: the whole window as drawn above
@@ -1821,6 +2007,7 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         GlCensus& c = Census();
         c.present_draw_us += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(t_swap - present_t0).count());
         const uint64_t swap_us = uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(t_done - t_swap).count());
+        gpu_timers_.NoteSwap(double(swap_us) / 1000.0);
         c.swap_us += swap_us;
         if (swap_us > c.swap_max_us) c.swap_max_us = swap_us;
         c.presents++;
@@ -1912,6 +2099,22 @@ void GlDevice::SetOption(const char* name, int value) {
         if (executor_) executor_->SetLegacy(value != 0);
         uniforms_.SetDeferred(value == 0);
     }
+    if (std::strcmp(name, "gpu_timers") == 0) {
+        // a tile-based GPU (Apple's) ends its render pass at a query boundary: kAuto then cuts only where the frame's
+        // own pass ends (the draw framebuffer's changes, the copies, the present)
+        const bool tile_based = device_name_.compare(0, 5, "Apple") == 0;
+        gpu_timers_.SetMode(value, tile_based);
+        state_.SetDrawFramebufferHook(gpu_timers_.On() ? &GlDevice::TimerFramebufferChanged : nullptr, this);
+        if (gpu_timers_.On())
+            std::fprintf(stderr, "[gl] GPU phase timer on: %s (%s GPU)\n", gpu_timers_.ModeName(),
+                         tile_based ? "a tile-based" : "an immediate-mode");
+    }
+}
+
+uint64_t GlDevice::TimerWork() const { return Census().gl_draws + timer_work_; }
+void GlDevice::TimerFramebufferChanged(void* self) {
+    GlDevice* d = static_cast<GlDevice*>(self);
+    d->gpu_timers_.Break(d->TimerWork());
 }
 
 void GlDevice::BeginFrame() {

@@ -33,6 +33,12 @@ public:
 
     // framebuffer
     void BindFb(uint32_t target, uint32_t fbo);
+    // A function told right before the draw framebuffer binding changes (null: none) -- where a tile-based GPU's render
+    // pass ends (the GPU phase timer cuts its queries there: gl_gpu_timers.h)
+    void SetDrawFramebufferHook(void (*hook)(void*), void* user) {
+        fb_hook_ = hook;
+        fb_hook_user_ = user;
+    }
     void DeleteFramebuffers(int n, const uint32_t* ids);
     // texture units / objects
     void ActiveTexture(uint32_t unit_enum);
@@ -141,6 +147,8 @@ private:
 
     uint32_t fbo_draw_ = kUnknown;
     uint32_t fbo_read_ = kUnknown;
+    void (*fb_hook_)(void*) = nullptr;
+    void* fb_hook_user_ = nullptr;
     int active_unit_ = -1;
     uint32_t tex2d_[kMaxUnits] = {kUnknown, kUnknown, kUnknown, kUnknown,
                                   kUnknown, kUnknown, kUnknown, kUnknown};

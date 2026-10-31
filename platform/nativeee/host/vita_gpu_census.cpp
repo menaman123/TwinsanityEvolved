@@ -12,7 +12,9 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "engine/platform/ps2e/ps2e_draw.h"
 #include "engine/render/backends/gl/gl_census.h"
+#include "te_graphics_hooks.h"
 
 // vitaGL r1488's globals, read only: the context it draws on (gxm.c), the fragment notification it passes to every
 // sceGxmEndScene with value = the count of scenes ended so far (buffers.c query_fence, gxm.c scene_end), its frame count
@@ -106,6 +108,9 @@ constexpr uint32_t kSceneArms = 64;
 std::atomic<int8_t> g_scene_arm[kSceneArms];
 std::atomic<uint32_t> g_ab_busy[2];
 uint32_t g_ab_presents[2] = {0, 0};
+// the presents of the window by the internal scale their frame target was drawn at ([0] = 1x .. [3] = 4x): the window's
+// GPU line names the scale its pictures had (a row change, or a scale A/B, inside a window shows as two)
+std::atomic<uint32_t> g_scale_presents[4];
 
 }  // namespace
 
@@ -800,6 +805,39 @@ int __wrap_sceKernelDelayThread(SceUInt delay) {
     return __real_sceKernelDelayThread(delay);
 }
 
+// vitaGL's level transfers (gpu_utils.c gpu_alloc_mipmaps: each level below the first made from the one above by a GPU
+// transfer nothing waits on): not made while the GL backend writes a chain's levels itself -- gl_device.cpp FinishMipChain
+// sets te_gxm_skip_downscale around vitaGL's chain allocation (the drawing thread's: vitaGL's one caller) -- and counted
+int te_gxm_skip_downscale = 0;
+unsigned te_gxm_downscales_skipped = 0;
+// ... and those made (TE_GFX_VITA_LEVELS=gpu, or a chain the backend does not fill): how many, how many the GPU library
+// refused (the first refusal's code), how many named an address off GXM's 16-byte alignment (vitaGL's chain comes from a
+// realloc of level 0's block)
+unsigned g_downscales_made = 0, g_downscales_refused = 0, g_downscales_misaligned = 0;
+int g_downscale_first_error = 0;
+int __real_sceGxmTransferDownscale(SceGxmTransferFormat srcFormat, const void* srcAddress, unsigned int srcX, unsigned int srcY,
+                                   unsigned int srcWidth, unsigned int srcHeight, int srcStride, SceGxmTransferFormat destFormat,
+                                   void* destAddress, unsigned int destX, unsigned int destY, int destStride,
+                                   SceGxmSyncObject* syncObject, unsigned int syncFlags, const SceGxmNotification* notification);
+int __wrap_sceGxmTransferDownscale(SceGxmTransferFormat srcFormat, const void* srcAddress, unsigned int srcX, unsigned int srcY,
+                                   unsigned int srcWidth, unsigned int srcHeight, int srcStride, SceGxmTransferFormat destFormat,
+                                   void* destAddress, unsigned int destX, unsigned int destY, int destStride,
+                                   SceGxmSyncObject* syncObject, unsigned int syncFlags, const SceGxmNotification* notification) {
+    if (te_gxm_skip_downscale) {
+        ++te_gxm_downscales_skipped;
+        return 0;
+    }
+    const int r = __real_sceGxmTransferDownscale(srcFormat, srcAddress, srcX, srcY, srcWidth, srcHeight, srcStride, destFormat,
+                                                 destAddress, destX, destY, destStride, syncObject, syncFlags, notification);
+    ++g_downscales_made;
+    if ((reinterpret_cast<uintptr_t>(srcAddress) | reinterpret_cast<uintptr_t>(destAddress)) & 15u) ++g_downscales_misaligned;
+    if (r < 0) {
+        ++g_downscales_refused;
+        if (!g_downscale_first_error) g_downscale_first_error = r;
+    }
+    return r;
+}
+
 }  // extern "C"
 
 namespace te::vita_gpu {
@@ -825,6 +863,13 @@ void OnPresented() {
         // the per-present GPU A/B: the frame just presented was drawn in this arm (the next frame's BeginFrame sets its own)
         const int arm = ps2r::render::Census().gpu_ab_arm;
         if (arm == 0 || arm == 1) g_ab_presents[arm]++;
+    }
+    if (ps2e_draw* dev = te_graphics_device()) {
+        // the scale asked for at this present (a change made during a frame applies from the next frame's start: one
+        // present at most is counted at the new scale early)
+        ps2e_draw_presentation p{};
+        ps2e_draw_get_presentation(dev, &p);
+        g_scale_presents[std::clamp(p.scale, 1, 4) - 1].fetch_add(1, std::memory_order_relaxed);
     }
     if (&query_fence && query_fence.address) {
         const uint32_t issued = query_fence.value;
@@ -912,8 +957,21 @@ std::string WindowLines(double frames) {
                               per * b1 / p1, p1, gc.gpu_ab_arms[0], per * b0 / p0, p0, per * b1 / p1 - per * b0 / p0);
             }
         }
-        std::snprintf(head, sizeof head, "[te.gfx.vita] gpu: lag at the swap %.2f scenes (max %u); drains %u (%.1f ms each)%s",
-                      lag_n ? double(lag_sum) / lag_n : 0.0, lag_max, pdrains, pdrains ? pdrain / 1000.0 / pdrains : 0.0, busy);
+        // the scales the window's presents were drawn at: "resolution 2x", or "1x (120 presents) and 2x (180 presents)"
+        // when the row changed inside the window (its GPU figure is then the two scales' together)
+        std::string scales;
+        for (int i = 0; i < 4; ++i) {
+            const uint32_t n = g_scale_presents[i].exchange(0, std::memory_order_relaxed);
+            if (!n) continue;
+            char one[48];
+            std::snprintf(one, sizeof one, "%s%dx (%u presents)", scales.empty() ? "" : " and ", i + 1, n);
+            scales += one;
+        }
+        if (scales.find(" and ") == std::string::npos) scales = scales.substr(0, scales.find(' '));   // one scale: "2x"
+        std::snprintf(head, sizeof head, "[te.gfx.vita] gpu: lag at the swap %.2f scenes (max %u); drains %u (%.1f ms each)%s; "
+                      "resolution %s",
+                      lag_n ? double(lag_sum) / lag_n : 0.0, lag_max, pdrains, pdrains ? pdrain / 1000.0 / pdrains : 0.0, busy,
+                      scales.empty() ? "unknown" : scales.c_str());
         b = head;
         for (int arm = 1; arm >= 0; --arm) {
             const uint32_t pn = g_probe_n[arm].exchange(0, std::memory_order_relaxed);
@@ -949,6 +1007,17 @@ std::string WindowLines(double frames) {
                   g_frees.exchange(0, std::memory_order_relaxed), g_gl_finish.exchange(0, std::memory_order_relaxed),
                   g_long_sleeps.exchange(0, std::memory_order_relaxed));
     c += d;
+    {
+        // vitaGL's level transfers in the window (the sceGxmTransferDownscale wrapper): made, refused, misaligned; skipped
+        static unsigned last_skipped = 0;
+        char x[220];
+        std::snprintf(x, sizeof x, "; vitaGL level transfers made %u (refused %u, first error %#x; off 16-byte alignment %u), "
+                      "not made %u", g_downscales_made, g_downscales_refused, unsigned(g_downscale_first_error),
+                      g_downscales_misaligned, te_gxm_downscales_skipped - last_skipped);
+        c += x;
+        last_skipped = te_gxm_downscales_skipped;
+        g_downscales_made = g_downscales_refused = g_downscales_misaligned = 0;
+    }
     {
         uint32_t n[kGxmCategories];
         uint64_t total = 0;

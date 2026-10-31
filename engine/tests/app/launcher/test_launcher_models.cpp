@@ -169,7 +169,8 @@ private slots:
         QJsonObject vita = targets["vita"].toObject();
         vita["note"] = QJsonArray{"Copy {vpk} with VitaShell.", "Copy {data_dir} so that it is {data}.", "Copy your disc to {data}/{disc}."};
         vita["folder"] = QJsonObject{{"name", "vita"}, {"data_dir", "ux0/data/twinsanity"}, {"readme", "README-vita.txt"}, {"default_disc", "game.iso"},
-                                     {"settings_left_out", QJsonArray{"paths.memcards", "paths.mods", "game.hz", "video.scale"}}};
+                                     {"settings_left_out", QJsonArray{"paths.memcards", "paths.mods", "game.hz", "video.scale"}},
+                                     {"settings_note", "The console keeps its own scale in {data}/ps2r.ini."}};
         targets["vita"] = vita;
         root["targets"] = targets;
         TitleManifest m;
@@ -235,6 +236,7 @@ private slots:
         QVERIFY2(readme.contains("(musicpack test, arabic test)"), qPrintable(readme));   // the mods' names, in the overlay order
         QCOMPARE(r.names, (QStringList{"musicpack test", "arabic test"}));
         QVERIFY(readme.contains("Your saves are not copied"));
+        QVERIFY2(readme.contains("The console keeps its own scale in ux0:data/twinsanity/ps2r.ini.\n"), qPrintable(readme));
         // made again with nothing changed: every file kept
         VitaFolderReport again;
         QVERIFY2(VitaFolder::make(&m, game, folder, QString(), &again), qPrintable(again.error));

@@ -18,6 +18,7 @@
 #include "graphics_internal.h"
 #include "ps2e_seam.h"
 #include "te_host.h"
+#include "te_prof.h"
 
 namespace {
 
@@ -145,6 +146,7 @@ float CosinePolynomial(float radians) {
 extern "C" {
 
 void ps2e_vu0_points_box(ps2e_u32 points, ps2e_s32 count, ps2e_u32 box) {
+    TE_SEAM(kSeamBounds);
     Box* out = BoxW(box);
     if (!out || count <= 0) return;
     const V4* p = Vecs(points, uint32_t(count));
@@ -165,6 +167,7 @@ void ps2e_vu0_points_box(ps2e_u32 points, ps2e_s32 count, ps2e_u32 box) {
 }
 
 void ps2e_vu0_triangle_bounds(ps2e_u32 box, ps2e_u32 first, ps2e_u32 second, ps2e_u32 third) {
+    TE_SEAM(kSeamBounds);
     te::gfx::CountCall(te::gfx::kCallTriangleBounds);
     Box* out = BoxW(box);
     const V4* a = Vecs(first, 1);
@@ -196,6 +199,7 @@ void ps2e_vu0_triangle_bounds(ps2e_u32 box, ps2e_u32 first, ps2e_u32 second, ps2
 }
 
 void ps2e_vu0_get_bbox(ps2e_u32 points, ps2e_s32 count, ps2e_u32 box, ps2e_u32 matrix) {
+    TE_SEAM(kSeamBounds);
     te::gfx::CountCall(te::gfx::kCallGetBbox);
     te::gfx::CountCall(te::gfx::kCallBboxPoints, count > 0 ? uint32_t(count) : 0u);
     Box* out = BoxW(box);

@@ -75,6 +75,23 @@ unsigned g_rows = 16;
 double g_min_pct = 0.5;
 const char* const kSlotNames[kSlots] = {"game", "render", "build0", "build1", "build2", "build3", "io", "movie", "audio"};
 
+// The seam groups (te_prof.h SeamGroup): the report's short names and the sections' names in the game thread's line
+const char* const kSeamShort[kSeamGroups] = {"rays", "collision", "boxes", "place", "skins", "joints", "matrices", "bounds", "shadows",
+                                             "particles", "decals", "sky"};
+const char* const kSeamSection[kSeamGroups] = {
+    "seam: rays (SetRay / Start / FinishRayTriangle)",  "seam: collision maths (edge tests, hulls)",
+    "seam: culling (views, links, box / cell tests)",   "seam: placed + rigid models (draws recorded)",
+    "seam: skins (DrawSkin / DrawBlendSkin)",           "seam: joint maths (joint matrix, Euler, parent)",
+    "seam: VU0 matrices (products, transforms)",        "seam: bounds (GetBbox / TriangleBounds)",
+    "seam: shadow meshes",                              "seam: particle views",
+    "seam: decals",                                     "seam: sky"};
+// the calls: written by the game thread only (a relaxed load and store, no exclusive access), read by the report on the
+// thread that presents
+std::atomic<uint32_t> g_seam_calls[kSeamGroups];
+uint32_t g_seam_calls_seen[kSeamGroups];
+// the report window's wall-clock start (the game seams' milliseconds a present = their share of the samples x the window)
+int64_t g_window_us = 0;
+
 int64_t NowUs() {
 #if defined(__vita__)
     return int64_t(sceKernelGetProcessTimeWide());
@@ -244,7 +261,44 @@ void Bench() {
     std::fprintf(stderr, "[te.prof] bench done (%lld)\n", (long long)sink);
 }
 
+// "[te.prof] presents A-B game seams per present: rays N (x.xx ms), ..." beside the game thread's line: each group's calls a
+// present and its milliseconds a present -- its share of the game thread's samples times the window's wall time a present
+// (the sampler reads the thread's section whether it runs or waits: the shares are of the wall time). A host section
+// opened inside a seam (a texture decode, a mesh wait) takes its samples from the group, as in the line above.
+void SeamLine(uint64_t from, uint64_t to, const std::vector<std::pair<uint32_t, unsigned>>& rows, uint64_t total, int64_t wall_us) {
+    const double n = double(to - from + 1);
+    const double present_ms = n > 0 ? double(wall_us) / 1000.0 / n : 0.0;
+    auto share_ms = [&](unsigned id) {
+        for (const auto& r : rows)
+            if (r.second == id) return total ? double(r.first) / double(total) * present_ms : 0.0;
+        return 0.0;
+    };
+    std::string line;
+    char buf[96];
+    double grouped = 0;
+    for (int s = 0; s < kSeamGroups; ++s) {
+        const uint32_t now = g_seam_calls[s].load(std::memory_order_relaxed);
+        const double calls = double(uint32_t(now - g_seam_calls_seen[s])) / n;
+        g_seam_calls_seen[s] = now;
+        const double ms = g_seam_id[s] ? share_ms(g_seam_id[s]) : 0.0;
+        grouped += ms;
+        std::snprintf(buf, sizeof buf, "%s%s %.1f (%.2f ms)", s ? ", " : "", kSeamShort[s], calls, ms);
+        line += buf;
+    }
+    std::fprintf(stderr, "[te.prof] presents %llu-%llu game seams per present (calls, ms of the game thread's %.2f ms of wall time): %s; "
+                 "the groups %.2f ms, (own code) %.2f ms = the game's code and the other seams\n",
+                 (unsigned long long)from, (unsigned long long)to, present_ms, line.c_str(), grouped, share_ms(0));
+}
+
 }  // namespace
+
+// ---- the game seams' groups (te_prof.h SeamScope) ------------------------------------------------------------------
+unsigned short g_seam_id[kSeamGroups];
+
+void CountSeam(SeamGroup group) {
+    std::atomic<uint32_t>& c = g_seam_calls[group];
+    c.store(c.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+}
 
 // ---- the CPU census (the Vita) --------------------------------------------------------------------------------------
 namespace {
@@ -392,6 +446,9 @@ void StartFromEnv() {
     if (const char* p = std::getenv("TE_PROF_US")) g_period_us = std::min(100000L, std::max(100L, std::atol(p)));
     if (const char* r = std::getenv("TE_PROF_ROWS")) g_rows = unsigned(std::min(64L, std::max(1L, std::atol(r))));
     if (const char* m = std::getenv("TE_PROF_MIN")) g_min_pct = std::max(0.0, std::atof(m));
+    // the game seams' sections (te_prof.h SeamScope): registered before the game runs; their ids stay 0 without TE_PROF
+    for (int s = 0; s < kSeamGroups; ++s) g_seam_id[s] = Register(kSeamSection[s]);
+    g_window_us = NowUs();
     g_active = true;
     std::thread(Sampler).detach();
     std::fprintf(stderr, "[te.prof] sampling the game / render / build threads every %.1f ms (TE_PROF_US); a report every %ld presents\n",
@@ -432,6 +489,9 @@ void OnPresent(uint64_t presents) {
     if (!g_active || presents % uint64_t(g_every) != 0) return;
     const uint64_t from = g_window_start + 1;
     g_window_start = presents;
+    const int64_t now_us = NowUs();
+    const int64_t wall_us = now_us - g_window_us;
+    g_window_us = now_us;
     const uint32_t bound = g_bound.load(std::memory_order_relaxed);
     for (int s = 0; s < kSlots; ++s) {
         if (!(bound & (1u << s))) continue;
@@ -453,6 +513,7 @@ void OnPresent(uint64_t presents) {
         }
         std::fprintf(stderr, "[te.prof] presents %llu-%llu %s (%llu samples): %s\n", (unsigned long long)from,
                      (unsigned long long)presents, kSlotNames[s], (unsigned long long)total, line.c_str());
+        if (s == kGame) SeamLine(from, presents, rows, total, wall_us);
     }
 }
 

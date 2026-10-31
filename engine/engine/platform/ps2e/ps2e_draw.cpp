@@ -23,6 +23,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
@@ -57,6 +58,16 @@ struct ps2e_draw {
     int last_out_x = 0, last_out_y = 0, last_out_w = 0, last_out_h = 0;        // the last present's output rectangle
     bool headless = false;
     bool stencil_diag = false;   // ps2e_draw_config.stencil_diag
+    // the GPU phase timer (ps2e_draw_set_gpu_timers): on, and the phase the producer named last (the device's own marks
+    // -- the stencil passes, the copies -- hand back to it)
+    bool gpu_timers = false;
+    int producer_phase = -1;
+    // the shadow bracket's region (ps2e_draw_shadow_region): the next bracket's rectangles (frame pixels, exclusive), and
+    // the open bracket's -- its clear and mark were made over them, its composite is drawn over them
+    std::vector<int> next_shadow_rects, bracket_rects;
+    bool next_shadow_region = false, bracket_region = false;
+    std::string renderer;         // the backend's GPU / driver name (ps2e_draw_renderer)
+    int target_logged_scale = 1;  // the frame target's scale the log last named (MakeFrameTarget)
     bool early_casters = false;  // this frame's casters marked before its translucent draws (kEarlyCasterBit)
     bool in_frame = false;
     bool capture = false;
@@ -78,8 +89,13 @@ struct ps2e_draw {
         // 0 = not known (a texture handed over in GPU alpha, or nothing uploaded yet)
         uint8_t min_gpu_alpha = 0;
         bool alpha_seen = false;
+        uint64_t bytes = 0, vita_bytes = 0;   // its texels as held here / as the Vita's GL library allocates them (the census)
     };
     std::unordered_map<uint32_t, Texture> textures;
+    // the textures' memory (ps2e_draw_texture_memory_census): the sums over `textures`, the Vita figure's peak, and the
+    // creations / destructions since create
+    uint64_t texture_bytes = 0, texture_vita_bytes = 0, texture_vita_peak = 0;
+    uint64_t textures_made = 0, textures_made_vita_bytes = 0, textures_destroyed = 0, textures_destroyed_vita_bytes = 0;
     // the last lookups of `textures`, direct-mapped by id (an element's address holds until it is erased; the erase drops
     // its slot): a draw finds its texture without the map's division (software on the Vita's CPU)
     // (512 slots, an id and its record side by side -- one cache line per lookup; 64 found a hub frame's
@@ -121,6 +137,27 @@ struct ps2e_draw {
     uint64_t mesh_run_draws = 0;
     int texture_swap = 2;   // ps2e_draw_set_mesh_texture_swap: 1 a mesh draw whose state differs from the run's in the texture only,
                             // 2 (the default) in the texture, the alpha test and the mipmapping; 0 none
+    // The meshes' model-space bounds (the sky's wait asks each mesh draw's depth: ps2e_draw_mesh_depth_far_above; the Vita's
+    // casters, draw order and alpha-test fold read them too)
+    struct MeshBounds {
+        uint8_t a = 0, la = 0;           // its vertices' largest alpha, unlit and lit
+        uint8_t min_a = 0, min_la = 0;   // ... and their smallest (the alpha-test fold: ps2e_draw_alpha_floor)
+        float lo[3] = {0.f, 0.f, 0.f}, hi[3] = {0.f, 0.f, 0.f};   // its model-space box
+        bool skin = false;               // a skin mesh: its bind-pose box says nothing of where it is drawn
+        bool convex = false;             // a skin mesh: every vertex's weights are >= 0 and sum to 1 (its skinned position lies in
+                                         // the hull of its joints' images of the bind box: ps2e_draw_skin_depth_far)
+    };
+    std::unordered_map<uint32_t, MeshBounds> mesh_bounds;
+    // the last mesh_bounds lookups, direct-mapped by mesh id (an element's address holds until it is erased; the erase drops
+    // its slot): every mesh draw's caster check found its bounds without the map's division (software on the Vita's CPU)
+    // (2048 slots, an id and its record side by side; 256 missed most of a hub frame's several hundred meshes)
+    static constexpr uint32_t kBoundSlots = 2048;
+    struct BoundSlot {
+        uint32_t id = 0;
+        MeshBounds* ptr = nullptr;
+    };
+    BoundSlot bound_slots[kBoundSlots] = {};
+    uint64_t bound_lookups = 0, bound_misses = 0;   // (the census: FindBounds)
 #if PS2R_HOST_VITA
     // The casters' re-stamp (see ResetCasterCounts): the frame's draws that can leave a PS2 alpha of 0x80 or more, kept
     // from the frame's start as their replay states and screen boxes, drawn again at each shadow composite where a
@@ -145,25 +182,6 @@ struct ps2e_draw {
     };
     std::vector<CasterDraw> casters;
     std::vector<ps2e_draw_vertex> caster_verts;
-    struct MeshBounds {
-        uint8_t a = 0, la = 0;           // its vertices' largest alpha, unlit and lit
-        uint8_t min_a = 0, min_la = 0;   // ... and their smallest (the alpha-test fold: ps2e_draw_alpha_floor)
-        float lo[3] = {0.f, 0.f, 0.f}, hi[3] = {0.f, 0.f, 0.f};   // its model-space box
-        bool skin = false;               // a skin mesh: its bind-pose box says nothing of where it is drawn
-        bool convex = false;             // a skin mesh: every vertex's weights are >= 0 and sum to 1 (its skinned position lies in
-                                         // the hull of its joints' images of the bind box: ps2e_draw_skin_depth_far)
-    };
-    std::unordered_map<uint32_t, MeshBounds> mesh_bounds;
-    // the last mesh_bounds lookups, direct-mapped by mesh id (an element's address holds until it is erased; the erase drops
-    // its slot): every mesh draw's caster check found its bounds without the map's division (software on the Vita's CPU)
-    // (2048 slots, an id and its record side by side; 256 missed most of a hub frame's several hundred meshes)
-    static constexpr uint32_t kBoundSlots = 2048;
-    struct BoundSlot {
-        uint32_t id = 0;
-        MeshBounds* ptr = nullptr;
-    };
-    BoundSlot bound_slots[kBoundSlots] = {};
-    uint64_t bound_lookups = 0, bound_misses = 0;   // (the census: FindBounds)
     // THE MESH DRAW PACKETS (render::Backend::TakeMeshPacket / DrawMeshPacket; TE_GFX_VITA_PACKETS=0: none): the packet the
     // backend last recorded for a (state, lit), direct-mapped by the state's hash. A mesh draw that would take the again /
     // texture-swap path (its GL context is the run's) is drawn from its packet when there is one; mesh_run_state stays the
@@ -215,6 +233,8 @@ struct ps2e_draw {
     long census_every = 0;        // TE_GFX_CASTER_CENSUS=N: a census line every N brackets / presents
     uint64_t census_brackets = 0, frame_draws = 0, frame_fix = 0;
     uint64_t frame_fix_blends = 0, frame_fix_blends_textured = 0;   // every GS FIX blend (the backend's source-alpha stand-in)
+    uint32_t frame_restamps = 0;  // the casters drawn again this frame (ResetCasterCounts; the budget kMaxRestamps)
+    size_t max_casters = 4096;    // the casters a frame keeps (CasterRoom; TE_GFX_VITA_CASTERS_KEEP)
 #endif
 };
 
@@ -343,6 +363,58 @@ void StencilProbe(ps2e_draw* d, const char* tag) {
 // cannot (the Vita: the submit re-stamps the casters at the composite instead, ResetCasterCounts).
 bool SeedCasterMask(ps2e_draw* d) { return d->device->MarkStencilWhereOpaque(d->color, d->depth, kCasterBit); }
 
+// The GPU phase timer's marks (no-ops while it is off): the device's own phases, and the producer's phase handed back
+inline void TimerPhase(ps2e_draw* d, int phase) {
+    if (d->gpu_timers) d->device->MarkGpuPhase(phase);
+}
+inline void TimerFill(ps2e_draw* d, int phase, double pixels, uint32_t count = 1) {
+    if (d->gpu_timers) d->device->NoteGpuFill(phase, pixels, count);
+}
+inline void TimerResume(ps2e_draw* d) {
+    if (d->gpu_timers && d->producer_phase >= 0) d->device->MarkGpuPhase(d->producer_phase);
+}
+// A mesh's bounds through the direct-mapped slots, the map on a miss -- which then fills the slot (null: none kept)
+const ps2e_draw::MeshBounds* FindBounds(ps2e_draw* d, uint32_t mesh) {
+    ps2e_draw::BoundSlot& s = d->bound_slots[mesh & (ps2e_draw::kBoundSlots - 1)];
+    d->bound_lookups++;
+    if (mesh && s.id == mesh) return s.ptr;
+    d->bound_misses++;
+    auto it = d->mesh_bounds.find(mesh);
+    if (it == d->mesh_bounds.end()) return nullptr;
+    s.id = mesh;
+    s.ptr = &it->second;
+    return &it->second;
+}
+inline double TargetPixels(const ps2e_draw* d) {
+    return double(d->frame_w) * d->scale * double(d->frame_h) * d->scale;
+}
+#if !PS2R_HOST_VITA
+// frame-pixel rectangles (x0, y0, x1, y1, exclusive) as the target's physical texels (the GS's rows are the target's: no
+// flip), clipped to the frame; their area in physical pixels (the shadow regions': the Vita takes none)
+std::vector<render::Rect> PhysicalRects(const ps2e_draw* d, const int* r, int n, double* area) {
+    std::vector<render::Rect> out;
+    out.reserve(size_t(std::max(0, n)));
+    double a = 0;
+    for (int i = 0; i < n; ++i) {
+        const int x0 = std::clamp(r[4 * i], 0, d->frame_w), y0 = std::clamp(r[4 * i + 1], 0, d->frame_h);
+        const int x1 = std::clamp(r[4 * i + 2], 0, d->frame_w), y1 = std::clamp(r[4 * i + 3], 0, d->frame_h);
+        if (x1 <= x0 || y1 <= y0) continue;
+        out.push_back(render::Rect{x0 * d->scale, y0 * d->scale, (x1 - x0) * d->scale, (y1 - y0) * d->scale});
+        a += double(out.back().w) * out.back().h;
+    }
+    if (area) *area = a;
+    return out;
+}
+#endif
+// the area a triangle list rasterises (frame pixels; the GS's pixels, each scale^2 of the target's)
+double TriangleArea(const ps2e_draw_vertex* v, int count) {
+    double a = 0;
+    for (int i = 0; i + 2 < count; i += 3)
+        a += std::fabs(double(v[i + 1].x - v[i].x) * double(v[i + 2].y - v[i].y) -
+                       double(v[i + 2].x - v[i].x) * double(v[i + 1].y - v[i].y));
+    return a * 0.5;
+}
+
 bool MakeFrameTarget(ps2e_draw& d, int w, int h) {
     if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return false;
     const int scale = std::clamp(d.scale, 1, 4);
@@ -375,6 +447,11 @@ bool MakeFrameTarget(ps2e_draw& d, int w, int h) {
     d.frame_w = w;
     d.frame_h = h;
     d.scale = scale;
+    if (scale != d.target_logged_scale) {
+        // a log reader sees the pixels the frame costs (the user's log: 2048x2048 at 4x)
+        std::fprintf(stderr, "[ps2e_draw] frame target %ux%u (the frame %dx%d at %dx)\n", cd.width, cd.height, w, h, scale);
+        d.target_logged_scale = scale;
+    }
     if (!d.color.id || !d.depth.id) return false;
     d.device->Clear(d.color, d.depth, 0x80000000u, 0.0f, render::kClearColor | render::kClearDepth);
     return true;
@@ -442,8 +519,10 @@ ps2e_draw* ps2e_draw_create(const ps2e_draw_config* config) {
         d->shadow_fix = !off("TE_GFX_VITA_SHADOW_FIX");
         d->packets = !off("TE_GFX_VITA_PACKETS");   // (=abN: the backend switches them in turns)
         if (const char* e = std::getenv("TE_GFX_CASTER_CENSUS")) d->census_every = std::atol(e);
-        std::fprintf(stderr, "[ps2e] shadows on the Vita: casters %s, the composite's FIX %s\n",
-                     d->record_casters ? "re-stamped at the clear" : "not marked (TE_GFX_VITA_CASTERS=0)",
+        if (const char* e = std::getenv("TE_GFX_VITA_CASTERS_KEEP"))
+            if (std::atol(e) > 0) d->max_casters = size_t(std::min(std::atol(e), 65536L));
+        std::fprintf(stderr, "[ps2e] shadows on the Vita: casters %s (at most %u kept a frame), the composite's FIX %s\n",
+                     d->record_casters ? "re-stamped at the clear" : "not marked (TE_GFX_VITA_CASTERS=0)", unsigned(d->max_casters),
                      d->shadow_fix ? "through the source alpha" : "left to the backend (TE_GFX_VITA_SHADOW_FIX=0)");
     }
 #endif
@@ -454,6 +533,7 @@ ps2e_draw* ps2e_draw_create(const ps2e_draw_config* config) {
     const bool gs_z24 = config->depth_bits == 24;
     d->device = ps2e::CreateDrawBackend(d->window, d->context, gs_z24);
     if (!d->device) return nullptr;
+    d->renderer = d->device->DeviceName();
     std::fprintf(stderr, "[ps2e_draw] depth: GS Z%s -> window depth z / 2^%s\n", gs_z24 ? "24" : "32",
                  gs_z24 ? "24 (every Z unit kept)" : "32");
     // The device's window size is the frame's when headless (the hidden window is 64x64: the capture must be the
@@ -501,6 +581,12 @@ int ps2e_draw_pump(ps2e_draw* d) {
             int w = 0, h = 0;
             SDL_GL_GetDrawableSize(d->window.Handle(), &w, &h);
             if (w > 0 && h > 0) { d->drawable_w = w; d->drawable_h = h; }
+            int pw = 0, ph = 0;
+            SDL_GetWindowSize(d->window.Handle(), &pw, &ph);
+            // (the pixels the present fills: a log reader sees a high-density backing store here)
+            std::fprintf(stderr, "[ps2e_draw] window %s: drawable %dx%d pixels (window %dx%d points)\n",
+                         mode == PS2E_DRAW_FULLSCREEN ? "fullscreen" : mode == PS2E_DRAW_BORDERLESS ? "borderless" : "windowed",
+                         w, h, pw, ph);
         }
         if (wscale > 0 && wscale != d->applied_window_scale) {
             d->applied_window_scale = wscale;
@@ -576,6 +662,41 @@ void ps2e_draw_frame_size(const ps2e_draw* d, int* w, int* h) {
 }
 
 namespace {
+// A texture's texels as the Vita's GL library (vitaGL r1488) allocates them: level 0 alone in rows of 8 texels at least
+// (gpu_alloc_texture); with levels, the whole chain down to 1x1 over the power-of-two size, rows of 8 at least
+// (gpu_alloc_mipmaps, which replaces level 0's storage). 4 bytes a texel.
+uint64_t VitaTextureBytes(int w, int h, int levels) {
+    if (levels <= 0) return uint64_t((uint32_t(w) + 7u) & ~7u) * uint64_t(h) * 4u;
+    auto po2 = [](uint32_t v) {
+        uint32_t p = 1;
+        while (p < v) p <<= 1;
+        return p;
+    };
+    uint32_t pw = po2(uint32_t(w)), ph = po2(uint32_t(h));
+    uint64_t size = 0;
+    while (pw > 1 && ph > 1) {
+        size += uint64_t(std::max(pw, 8u)) * ph * 4u;
+        pw /= 2;
+        ph /= 2;
+    }
+    return size + uint64_t(std::max(pw, 8u)) * ph * 4u;
+}
+// ... and as held here: level 0 and each level given, max(w >> i, 1) x max(h >> i, 1)
+uint64_t HeldTextureBytes(int w, int h, int levels) {
+    uint64_t size = uint64_t(w) * uint64_t(h) * 4u;
+    for (int i = 1; i <= levels; ++i) size += uint64_t(std::max(w >> i, 1)) * uint64_t(std::max(h >> i, 1)) * 4u;
+    return size;
+}
+// A texture's sizes into the device's sums (the census), and out of them
+void CountTextureBytes(ps2e_draw* d, ps2e_draw::Texture& t, int levels) {
+    d->texture_bytes -= t.bytes;
+    d->texture_vita_bytes -= t.vita_bytes;
+    t.bytes = HeldTextureBytes(t.w, t.h, levels);
+    t.vita_bytes = VitaTextureBytes(t.w, t.h, levels);
+    d->texture_bytes += t.bytes;
+    d->texture_vita_bytes += t.vita_bytes;
+    d->texture_vita_peak = std::max(d->texture_vita_peak, d->texture_vita_bytes);
+}
 // The texture's storage and record at `id` (an id already taken: the next one, or a reserved one), made with its image
 // in GPU alpha bytes when `gpu_rgba8` is given (Backend::CreateTextureWithData: the surface and the whole image's upload,
 // in one step where the backend can); false when the device made no surface
@@ -589,6 +710,9 @@ bool MakeTextureAt(ps2e_draw* d, uint32_t id, int w, int h, const void* gpu_rgba
     if (!s.id) return false;
     ps2e_draw::Texture& t = d->textures[id] = ps2e_draw::Texture{s, w, h};
     d->counters.textures_alive++;
+    CountTextureBytes(d, t, 0);
+    d->textures_made++;
+    d->textures_made_vita_bytes += t.vita_bytes;
     if (gpu_rgba8) {
         t.max_alpha = 0xFF;   // the GPU's scale: any texel may be a PS2 0x80
         t.min_gpu_alpha = 0;  // (and any may be 0: not known)
@@ -680,6 +804,12 @@ int ps2e_draw_texture_set_mips(ps2e_draw* d, uint32_t texture, int count, const 
     }
     d->device->FinishMipChain(t.surface, count, false);
     t.levels = count;
+    {
+        // (the census: the made figure follows the texture's storage as it now stands)
+        const uint64_t before = t.vita_bytes;
+        CountTextureBytes(d, t, count);
+        d->textures_made_vita_bytes += t.vita_bytes - before;
+    }
     return 1;
 }
 
@@ -697,6 +827,10 @@ void ps2e_draw_texture_destroy(ps2e_draw* d, uint32_t texture) {
     d->device->DestroySurface(it->second.surface);
     if (d->texture_slots[texture & (ps2e_draw::kTextureSlots - 1)].id == texture)
         d->texture_slots[texture & (ps2e_draw::kTextureSlots - 1)] = ps2e_draw::TextureSlot{};
+    d->texture_bytes -= it->second.bytes;
+    d->texture_vita_bytes -= it->second.vita_bytes;
+    d->textures_destroyed++;
+    d->textures_destroyed_vita_bytes += it->second.vita_bytes;
     d->textures.erase(it);
     d->counters.textures_alive--;
 }
@@ -777,6 +911,7 @@ void ps2e_draw_begin_frame(ps2e_draw* d, const ps2e_draw_clear* clear) {
     d->in_frame = true;
     d->frame_copy_valid = false;
     d->early_casters = false;
+    d->bracket_region = d->next_shadow_region = false;   // (a region holds for its own frame's bracket only)
     {
         // the screen copies' scene breaks (Backend::KeepDepthAcrossCopies): this frame's announced copies, or copies the
         // frame before took without an announcement
@@ -794,6 +929,7 @@ void ps2e_draw_begin_frame(ps2e_draw* d, const ps2e_draw_clear* clear) {
     d->frame_fix = 0;
     d->frame_fix_blends = 0;
     d->frame_fix_blends_textured = 0;
+    d->frame_restamps = 0;
 #endif
     if (clear && (clear->clear_colour || clear->clear_depth)) {
         uint32_t flags = 0;
@@ -802,6 +938,8 @@ void ps2e_draw_begin_frame(ps2e_draw* d, const ps2e_draw_clear* clear) {
         // Clear's rgba is the attachment's byte order (R in the low byte); the alpha written is the GPU's opaque.
         const uint32_t rgba = uint32_t(clear->red) | uint32_t(clear->green) << 8 | uint32_t(clear->blue) << 16 |
                               0xFFu << 24;
+        TimerPhase(d, PS2E_DRAW_PHASE_CLEAR);
+        TimerFill(d, PS2E_DRAW_PHASE_CLEAR, TargetPixels(d));
         d->device->Clear(d->color, d->depth, rgba, 0.0f, flags);
     }
     d->device->BeginDrawRun();
@@ -1072,18 +1210,23 @@ ps2e_draw_state ReplayState(const ps2e_draw_state* st, bool whole) {
     return r;
 }
 
-// The re-stamp's budget: every draw of a GXM scene that changes its uniforms reserves them from the context's rings
+// The casters a frame KEEPS: a bound on the records alone (ps2e_draw::max_casters; a frame's draws that can leave a PS2
+// alpha of 0x80 or more: the Academy hub keeps up to ~180 a picture, lit FBA scenery drawn before its characters).
+// TE_GFX_VITA_CASTERS_KEEP=N bounds them at N (128: the earlier rule, which kept the frame's FIRST 128 -- in the Academy hub
+// all of them scenery far from any shadow, so Crash's own parts were never kept and his volume darkened him).
+// The re-stamps a frame DRAWS: every draw of a GXM scene that changes its uniforms reserves them from the context's rings
 // (vitaGL's defaults: 512 KB of fragment uniforms), which do not turn over within a scene -- the hub's frame already
-// takes ~700 draws, and doubling them overran them (other draws' uniforms read: garbage); past the budget a frame's
-// casters are kept no more (logged once)
-constexpr size_t kMaxCasters = 128;
+// takes ~700 draws, and doubling them overran them (other draws' uniforms read: garbage). Only the casters near a counted
+// volume are drawn again (ResetCasterCounts: a few a bracket), the characters first; past this budget a frame's later
+// ones are not (logged once)
+constexpr uint32_t kMaxRestamps = 128;
 bool CasterRoom(ps2e_draw* d) {
-    if (d->casters.size() < kMaxCasters) return true;
+    if (d->casters.size() < d->max_casters) return true;
     static bool said = false;
     if (!said) {
         said = true;
         std::fprintf(stderr, "[ps2e] the casters' re-stamp keeps the first %u casters of a frame (present %llu has more)\n",
-                     unsigned(kMaxCasters), (unsigned long long)d->presented);
+                     unsigned(d->max_casters), (unsigned long long)d->presented);
     }
     return false;
 }
@@ -1168,17 +1311,6 @@ void RecordCaster(ps2e_draw* d, const ps2e_draw_state* st, const ps2e_draw_verte
 }
 
 // a mesh's bounds (null: none kept) through the direct-mapped slots
-const ps2e_draw::MeshBounds* FindBounds(ps2e_draw* d, uint32_t mesh) {
-    ps2e_draw::BoundSlot& s = d->bound_slots[mesh & (ps2e_draw::kBoundSlots - 1)];
-    d->bound_lookups++;
-    if (mesh && s.id == mesh) return s.ptr;
-    d->bound_misses++;
-    auto it = d->mesh_bounds.find(mesh);
-    if (it == d->mesh_bounds.end()) return nullptr;
-    s.id = mesh;
-    s.ptr = &it->second;
-    return &it->second;
-}
 
 void RecordCasterMesh(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh, const ps2e_draw_mesh_params* mp,
                       const float* bones = nullptr, int joints = 0, const float* disp = nullptr, int disp_count = 0) {
@@ -1391,6 +1523,35 @@ int ps2e_draw_submit(ps2e_draw* d, const ps2e_draw_state* st, const ps2e_draw_ve
     if ((st->texture & ps2e_draw::kMovieIdMask) == ps2e_draw::kMovieIdBase) return SubmitMovie(d, st, v, count);
     if (st->stencil == PS2E_DRAW_STENCIL_CLEAR) {
         // The counter's origin (15: counts 1..16 set bit 4, as the GS byte 120 + 8n set bit 7 for n in 1..16)
+        TimerPhase(d, PS2E_DRAW_PHASE_COMPOSITE);
+#if !PS2R_HOST_VITA
+        // a bracket whose region the producer gave (ps2e_draw_shadow_region): the origin and the casters' mark over its
+        // rectangles only -- outside them nothing of this bracket reads the counter or the caster bits
+        d->bracket_region = d->next_shadow_region && !d->stencil_diag;
+        d->bracket_rects.swap(d->next_shadow_rects);
+        d->next_shadow_rects.clear();
+        d->next_shadow_region = false;
+        if (d->bracket_region) {
+            double area = 0;
+            const std::vector<render::Rect> rects = PhysicalRects(d, d->bracket_rects.data(), int(d->bracket_rects.size() / 4), &area);
+            TimerFill(d, PS2E_DRAW_PHASE_COMPOSITE, area);
+            if (d->early_casters) {
+                render::StencilState origin;
+                origin.enabled = true;
+                origin.func = render::StencilState::kAlways;
+                origin.ref = kStencilOrigin;
+                origin.write_mask = kCounterMask | kCasterBit;
+                origin.pass_op = render::StencilState::kReplace;
+                for (const render::Rect& r : rects) d->device->DrawConstQuad(render::SurfaceId{}, d->depth, r, 0, false, origin);
+            } else {
+                d->device->ClearStencilIn(d->depth, kStencilOrigin, rects.data(), int(rects.size()));
+            }
+            d->device->MarkStencilWhereOpaqueIn(d->color, d->depth, kCasterBit, rects.data(), int(rects.size()));
+            d->counters.draws++;
+            return 0;
+        }
+#endif
+        TimerFill(d, PS2E_DRAW_PHASE_COMPOSITE, TargetPixels(d));   // (the casters' mark: a pass over the whole target)
         StencilProbe(d, "before-clear");
         if (d->early_casters) {
             // the counter and the caster bit to the origin, the early mark kept
@@ -1413,6 +1574,38 @@ int ps2e_draw_submit(ps2e_draw* d, const ps2e_draw_state* st, const ps2e_draw_ve
         StencilProbe(d, "after-clear");
         d->counters.draws++;
         return 0;
+    }
+#if !PS2R_HOST_VITA
+    if (st->stencil == PS2E_DRAW_STENCIL_INSIDE && d->bracket_region) {
+        // the bracket's composite over its rectangles (one draw each, the state's own scissor kept inside them): the
+        // counter is off its origin nowhere else
+        d->bracket_region = false;
+        TimerPhase(d, PS2E_DRAW_PHASE_COMPOSITE);
+        const bool own = st->scissor_x0 | st->scissor_y0 | st->scissor_x1 | st->scissor_y1;
+        int drawn = 0;
+        for (size_t i = 0; i + 3 < d->bracket_rects.size(); i += 4) {
+            ps2e_draw_state rs = *st;
+            // the GS scissor: inclusive frame pixels
+            rs.scissor_x0 = std::max(d->bracket_rects[i], own ? st->scissor_x0 : 0);
+            rs.scissor_y0 = std::max(d->bracket_rects[i + 1], own ? st->scissor_y0 : 0);
+            rs.scissor_x1 = std::min(d->bracket_rects[i + 2] - 1, own ? st->scissor_x1 : d->frame_w - 1);
+            rs.scissor_y1 = std::min(d->bracket_rects[i + 3] - 1, own ? st->scissor_y1 : d->frame_h - 1);
+            if (rs.scissor_x1 < rs.scissor_x0 || rs.scissor_y1 < rs.scissor_y0) continue;
+            TimerFill(d, PS2E_DRAW_PHASE_COMPOSITE,
+                      double(rs.scissor_x1 - rs.scissor_x0 + 1) * d->scale * double(rs.scissor_y1 - rs.scissor_y0 + 1) * d->scale);
+            if (SubmitTriangles(d, &rs, v, count, nullptr) >= 0) drawn++;
+        }
+        return drawn;
+    }
+#endif
+    if (d->gpu_timers && st->stencil != PS2E_DRAW_STENCIL_OFF) {
+        if (st->stencil == PS2E_DRAW_STENCIL_INSIDE) {
+            TimerPhase(d, PS2E_DRAW_PHASE_COMPOSITE);
+            TimerFill(d, PS2E_DRAW_PHASE_COMPOSITE, TriangleArea(v, count) * d->scale * d->scale);
+        } else {
+            TimerPhase(d, PS2E_DRAW_PHASE_VOLUMES);
+            TimerFill(d, PS2E_DRAW_PHASE_VOLUMES, TriangleArea(v, count) * d->scale * d->scale);
+        }
     }
 #if PS2R_HOST_VITA
     if (d->record_casters && !d->replaying) {
@@ -1449,10 +1642,9 @@ int ps2e_draw_submit(ps2e_draw* d, const ps2e_draw_state* st, const ps2e_draw_ve
 uint32_t ps2e_draw_mesh_create(ps2e_draw* d, const ps2e_draw_mesh_vertex* verts, int count) {
     static_assert(sizeof(ps2e_draw_mesh_vertex) == sizeof(render::MeshVertex), "the mesh vertex is the backend's");
     if (!d || !d->device || !verts || count < 3) return 0;
-#if PS2R_HOST_VITA
     const uint32_t id = d->device->CreateMesh(reinterpret_cast<const render::MeshVertex*>(verts), size_t(count / 3 * 3));
     if (id) {
-        // its vertices' largest alpha, unlit and lit, and its model-space box (the casters' re-stamp)
+        // its vertices' largest alpha, unlit and lit, and its model-space box (the casters' re-stamp; the sky's wait)
         ps2e_draw::MeshBounds b;
         for (int k = 0; k < 3; ++k) {
             b.lo[k] = 1e30f;
@@ -1473,19 +1665,14 @@ uint32_t ps2e_draw_mesh_create(ps2e_draw* d, const ps2e_draw_mesh_vertex* verts,
         d->mesh_bounds[id] = b;
     }
     return id;
-#else
-    return d->device->CreateMesh(reinterpret_cast<const render::MeshVertex*>(verts), size_t(count / 3 * 3));
-#endif
 }
 
 void ps2e_draw_mesh_destroy(ps2e_draw* d, uint32_t mesh) {
-#if PS2R_HOST_VITA
     if (d) {
         d->mesh_bounds.erase(mesh);
         ps2e_draw::BoundSlot& s = d->bound_slots[mesh & (ps2e_draw::kBoundSlots - 1)];
         if (s.id == mesh) s = ps2e_draw::BoundSlot{};
     }
-#endif
     if (d && d->device && mesh) d->device->DestroyMesh(mesh);
 }
 
@@ -2020,7 +2207,7 @@ int ps2e_draw_state_caster(ps2e_draw* d, const ps2e_draw_state* st) {
 int ps2e_draw_caster_room(const ps2e_draw* d) {
 #if PS2R_HOST_VITA
     if (!d || !d->record_casters) return 0;
-    return d->casters.size() < kMaxCasters ? int(kMaxCasters - d->casters.size()) : 0;
+    return d->casters.size() < d->max_casters ? int(d->max_casters - d->casters.size()) : 0;
 #else
     (void)d;
     return 0;
@@ -2061,7 +2248,6 @@ int ps2e_draw_mesh_depth_range(ps2e_draw* d, uint32_t mesh, const ps2e_draw_mesh
 }
 
 int ps2e_draw_mesh_depth_far_above(ps2e_draw* d, uint32_t mesh, const ps2e_draw_mesh_params* mp, float z_min) {
-#if PS2R_HOST_VITA
     if (!d || !mesh || !mp) return -1;
     const ps2e_draw::MeshBounds* found = FindBounds(d, mesh);
     if (!found || found->skin) return -1;
@@ -2086,10 +2272,6 @@ int ps2e_draw_mesh_depth_far_above(ps2e_draw* d, uint32_t mesh, const ps2e_draw_
         if (!(cz / cw >= z_min)) below = true;
     }
     return below ? 0 : 1;
-#else
-    (void)d; (void)mesh; (void)mp; (void)z_min;
-    return -1;
-#endif
 }
 
 int ps2e_draw_skin_depth_far(ps2e_draw* d, uint32_t mesh, const ps2e_draw_mesh_params* mp, const float* bones, int joints,
@@ -2370,14 +2552,22 @@ void ResetCasterCounts(ps2e_draw* d) {
             d->device->ApplyStencilState(reset);
             g_restamp.runs++;
         }
+        // THE CHARACTERS FIRST: the skins (GPU skins and the vertex draws -- the CPU-built skin parts, a clipped part's runs)
+        // then the scenery meshes. A re-stamp writes the counter's origin wherever its fragments pass, so the order changes
+        // no stencil value -- only which casters the frame's budget (kMaxRestamps) reaches when more than it are near
+        bool budget_left = d->frame_restamps < kMaxRestamps;
+        for (int pass = 0; pass < 2 && budget_left; ++pass)
         for (const ps2e_draw::CasterDraw& c : d->casters) {
+            if ((!c.mesh || c.bones) != (pass == 0)) continue;
             bool near = false;
             if (c.mesh) {
-                for (const ps2e_draw::ScreenBox& v : d->volume_boxes)
-                    if (Overlaps(c.box, v)) {
-                        near = true;
-                        break;
-                    }
+                // (outside the volumes' union it overlaps none of them: one test for the far scenery)
+                if (Overlaps(c.box, all))
+                    for (const ps2e_draw::ScreenBox& v : d->volume_boxes)
+                        if (Overlaps(c.box, v)) {
+                            near = true;
+                            break;
+                        }
             } else {
                 // every 4th vertex: a skin overlapping the volumes does so with many small triangles, one of whose tested
                 // corners lies in the padded union; the far casters (clipped FBA instances: ~12k vertices a hub frame)
@@ -2395,6 +2585,17 @@ void ResetCasterCounts(ps2e_draw* d) {
                 }
             }
             if (!near) continue;
+            if (d->frame_restamps >= kMaxRestamps) {
+                static bool said = false;
+                if (!said) {
+                    said = true;
+                    std::fprintf(stderr, "[ps2e] the casters' re-stamp draws at most %u casters a frame (present %llu has more near "
+                                 "its shadow volumes)\n", unsigned(kMaxRestamps), (unsigned long long)d->presented);
+                }
+                budget_left = false;
+                break;
+            }
+            d->frame_restamps++;
             if (c.mesh) {
                 if (c.bones) {
                     render::MeshDrawParams m = MeshParams(&c.mp);
@@ -2444,9 +2645,11 @@ void ResetCasterCounts(ps2e_draw* d) {
                 kept_vertices += c.count;
             }
         std::fprintf(stderr, "[ps2e.casters] bracket %llu (present %llu): %u of %u casters re-stamped (%u of %u vertex draws, %u of %u "
-                     "vertices; %u meshes) over %u volume boxes, after %llu draws; Cd - Cs.FIX draws %llu; FIX blends %llu (textured %llu)\n",
+                     "vertices; %u meshes; %u this frame, at most %u) over %u volume boxes, after %llu draws; Cd - Cs.FIX draws %llu; "
+                     "FIX blends %llu (textured %llu)\n",
                      (unsigned long long)d->census_brackets, (unsigned long long)d->presented, cpu + meshes, unsigned(d->casters.size()),
-                     cpu, kept_cpu, vertices, kept_vertices, meshes, unsigned(d->volume_boxes.size()), (unsigned long long)d->frame_draws,
+                     cpu, kept_cpu, vertices, kept_vertices, meshes, d->frame_restamps, unsigned(kMaxRestamps),
+                     unsigned(d->volume_boxes.size()), (unsigned long long)d->frame_draws,
                      (unsigned long long)d->frame_fix, (unsigned long long)d->frame_fix_blends,
                      (unsigned long long)d->frame_fix_blends_textured);
     }
@@ -2460,10 +2663,42 @@ int ps2e_draw_mark_casters_early(ps2e_draw* d) {
     return 0;   // (the re-stamp keeps these casters already: drawn again where they are still the nearest surface)
 #else
     d->mesh_run = false;
+    TimerPhase(d, PS2E_DRAW_PHASE_COMPOSITE);
+    TimerFill(d, PS2E_DRAW_PHASE_COMPOSITE, TargetPixels(d));
     d->device->ClearStencil(d->depth, 0);
     d->early_casters = d->device->MarkStencilWhereOpaque(d->color, d->depth, kEarlyCasterBit);
+    TimerResume(d);
     return d->early_casters ? 1 : 0;
 #endif
+}
+
+int ps2e_draw_mark_casters_early_in(ps2e_draw* d, const int* rects, int n) {
+    if (!d || !d->in_frame) return 0;
+#if PS2R_HOST_VITA
+    (void)rects;
+    (void)n;
+    return 0;   // (the re-stamp keeps these casters already)
+#else
+    if (d->stencil_diag) return ps2e_draw_mark_casters_early(d);
+    d->mesh_run = false;
+    d->early_casters = false;
+    if (n <= 0) return 0;   // no volume this frame: nothing reads the early casters
+    double area = 0;
+    const std::vector<render::Rect> phys = PhysicalRects(d, rects, n, &area);
+    if (phys.empty()) return 0;
+    TimerPhase(d, PS2E_DRAW_PHASE_COMPOSITE);
+    TimerFill(d, PS2E_DRAW_PHASE_COMPOSITE, area);
+    d->device->ClearStencilIn(d->depth, 0, phys.data(), int(phys.size()));
+    d->early_casters = d->device->MarkStencilWhereOpaqueIn(d->color, d->depth, kEarlyCasterBit, phys.data(), int(phys.size()));
+    TimerResume(d);
+    return d->early_casters ? 1 : 0;
+#endif
+}
+
+void ps2e_draw_shadow_region(ps2e_draw* d, const int* rects, int n) {
+    if (!d) return;
+    d->next_shadow_rects.assign(rects ? rects : nullptr, rects ? rects + 4 * std::max(0, n) : nullptr);
+    d->next_shadow_region = true;
 }
 
 void ps2e_draw_restamp_census(const ps2e_draw* d, uint64_t out[6]) {
@@ -2625,7 +2860,10 @@ int ps2e_draw_copy_frame(ps2e_draw* d) {
     // The draws so far are issued (the device draws as it goes; the vertex ring is flushed per draw), so the copy holds
     // every submit before this call and none after it.
     const render::Rect whole{0, 0, d->frame_copy.w, d->frame_copy.h};
+    TimerPhase(d, PS2E_DRAW_PHASE_COPIES);
+    TimerFill(d, PS2E_DRAW_PHASE_COPIES, double(whole.w) * whole.h);
     d->device->CopyRect(d->color, whole, d->frame_copy.surface, whole, 0);
+    TimerResume(d);
     d->frame_copy_valid = true;
     return 1;
 }
@@ -2646,7 +2884,10 @@ int ps2e_draw_copy_frame_region(ps2e_draw* d, const float box[4]) {
     d->frame_copies++;
     if (x1 <= x0 || y1 <= y0) return 1;   // nothing of the frame inside: the texture holds it already
     const render::Rect r{x0, y0, x1 - x0, y1 - y0};
+    TimerPhase(d, PS2E_DRAW_PHASE_COPIES);
+    TimerFill(d, PS2E_DRAW_PHASE_COPIES, double(r.w) * r.h);
     d->device->CopyRect(d->color, r, d->frame_copy.surface, r, 0);
+    TimerResume(d);
     return 1;
 }
 
@@ -2751,6 +2992,7 @@ void Scanout(ps2e_draw* d, bool to_window) {
     d->last_out_w = dw;
     d->last_out_h = dh;
     d->device->SetWindowSize(ww, wh);
+    TimerFill(d, PS2E_DRAW_PHASE_PRESENT, double(dw) * dh);   // (the device marks the phase itself)
     d->device->Present(sd);
     d->device->EndFrame();
     d->in_frame = false;
@@ -2827,9 +3069,76 @@ int ps2e_draw_write_ppm(ps2e_draw* d, const char* path) {
     return 1;
 }
 
+int ps2e_draw_write_target_ppm(ps2e_draw* d, const char* path) {
+    if (!d || !path || !d->color.id) return 0;
+    const int w = d->frame_w * d->scale, h = d->frame_h * d->scale;
+    std::vector<uint8_t> rgba(size_t(w) * h * 4);
+    d->device->Readback(d->color, render::Rect{0, 0, w, h}, rgba.data(), size_t(w) * 4);   // (the GS's rows are the target's)
+    FILE* f = std::fopen(path, "wb");
+    if (!f) return 0;
+    std::fprintf(f, "P6\n%d %d\n255\n", w, h);
+    for (size_t i = 0; i < rgba.size(); i += 4) std::fwrite(&rgba[i], 1, 3, f);
+    std::fclose(f);
+    return 1;
+}
+
+void ps2e_draw_set_gpu_timers(ps2e_draw* d, int mode) {
+    if (!d || !d->device) return;
+    d->device->SetOption("gpu_timers", mode);
+    d->gpu_timers = d->device->GpuTimersOn();
+}
+
+int ps2e_draw_gpu_timers_on(const ps2e_draw* d) { return d && d->gpu_timers ? 1 : 0; }
+
+void ps2e_draw_gpu_phase(ps2e_draw* d, int phase) {
+    if (!d || !d->gpu_timers) return;
+    d->producer_phase = phase;
+    d->device->MarkGpuPhase(phase);
+}
+
+size_t ps2e_draw_gpu_timer_lines(ps2e_draw* d, double wall_ms, char* out, size_t capacity) {
+    if (!d || !d->gpu_timers || !out || !capacity) return 0;
+    const std::string lines = d->device->GpuTimerLines(wall_ms);
+    const size_t n = std::min(lines.size(), capacity - 1);
+    std::memcpy(out, lines.data(), n);
+    out[n] = 0;
+    return n;
+}
+
+const char* ps2e_draw_renderer(const ps2e_draw* d) { return d ? d->renderer.c_str() : ""; }
+
+void ps2e_draw_target_size(const ps2e_draw* d, int* w, int* h, int* scale) {
+    if (w) *w = d ? d->frame_w * d->scale : 0;
+    if (h) *h = d ? d->frame_h * d->scale : 0;
+    if (scale) *scale = d ? d->scale : 0;
+}
+
+void ps2e_draw_window_size(const ps2e_draw* d, int* pw, int* ph, int* dw, int* dh) {
+    const bool shown = d && !d->headless;
+    if (pw) *pw = shown ? d->window.Width() : 0;
+    if (ph) *ph = shown ? d->window.Height() : 0;
+    if (dw) *dw = shown ? d->drawable_w : 0;
+    if (dh) *dh = shown ? d->drawable_h : 0;
+}
+
 void ps2e_draw_counts(const ps2e_draw* d, ps2e_draw_counters* out) {
     if (!out) return;
     *out = d ? d->counters : ps2e_draw_counters{};
+}
+
+void ps2e_draw_texture_memory_census(ps2e_draw* d, ps2e_draw_texture_memory* out, int reset_peak) {
+    if (!out) return;
+    *out = ps2e_draw_texture_memory{};
+    if (!d) return;
+    out->alive = d->textures.size();
+    out->bytes = d->texture_bytes;
+    out->vita_bytes = d->texture_vita_bytes;
+    out->vita_peak = d->texture_vita_peak;
+    out->made = d->textures_made;
+    out->made_vita_bytes = d->textures_made_vita_bytes;
+    out->destroyed = d->textures_destroyed;
+    out->destroyed_vita_bytes = d->textures_destroyed_vita_bytes;
+    if (reset_peak) d->texture_vita_peak = d->texture_vita_bytes;
 }
 
 }  // extern "C"

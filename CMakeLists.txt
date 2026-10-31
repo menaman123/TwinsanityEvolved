@@ -733,7 +733,9 @@ if(TE_VITA)
                        sceGxmReserveVertexDefaultUniformBuffer sceGxmReserveFragmentDefaultUniformBuffer
                        sceGxmSetVertexUniformBuffer sceGxmSetFragmentUniformBuffer sceGxmSetTwoSidedEnable
                        sceGxmShaderPatcherReleaseVertexProgram sceGxmShaderPatcherReleaseFragmentProgram
-                       sceGxmShaderPatcherUnregisterProgram sceGxmShaderPatcherForceUnregisterProgram)
+                       sceGxmShaderPatcherUnregisterProgram sceGxmShaderPatcherForceUnregisterProgram
+                       # vitaGL's level transfers, not made while the GL backend writes a chain's levels itself
+                       sceGxmTransferDownscale)
         target_link_options(twinsanityevolved PRIVATE "-Wl,--wrap=${te_wrapped}")
     endforeach()
     # vita-elf-create appends its module data (4 KB and more) after the code segment, in the space before the data

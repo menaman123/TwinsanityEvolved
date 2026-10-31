@@ -293,7 +293,7 @@ int ps2e_draw_skin_depth_far(ps2e_draw* device, uint32_t mesh, const ps2e_draw_m
 int ps2e_draw_mesh_depth_range(ps2e_draw* device, uint32_t mesh, const ps2e_draw_mesh_params* params, float* z_near, float* z_far);
 /* ps2e_draw_mesh_depth_range's answer to one question, cheaper: 1 when the mesh's bounds through `params` are known
  * and every corner's depth is at least z_min (z_far >= z_min), 0 when known and not, -1 when not known (as depth_range's 0).
- * The Vita only (-1 elsewhere). */
+ * (Every device keeps the meshes' bounds: the Vita's draw order and the sky's wait after the opaque scene ask it.) */
 int ps2e_draw_mesh_depth_far_above(ps2e_draw* device, uint32_t mesh, const ps2e_draw_mesh_params* params, float z_min);
 /* A lower bound of the PS2 alpha (0..255, before the alpha test) every fragment of a draw under `state` computes -- of
  * `mesh` (lit: its lit colours' alpha) or of the `count` vertices `v` -- from the smallest vertex alpha and the texture's
@@ -381,6 +381,18 @@ void ps2e_draw_restamp_census(const ps2e_draw* device, uint64_t out[6]);
  * water over a sinking Crash) replaced their alpha -- the retail picture shows no shadow on them. The Vita's re-stamp keeps
  * the same pixels already (a no-op there). Returns 1 when marked. */
 int ps2e_draw_mark_casters_early(ps2e_draw* device);
+/* THE SHADOW BRACKET'S REGION (a producer that knows its volumes before it draws them): `rects` = `n` rectangles of frame
+ * pixels (x0, y0, x1, y1 each, x1 / y1 exclusive, disjoint) that hold every fragment the counting draws of the bracket the
+ * next PS2E_DRAW_STENCIL_CLEAR opens can touch. The clear's counter origin and its casters' mark are then made over them
+ * only, and the bracket's PS2E_DRAW_STENCIL_INSIDE composite is drawn over them only (one draw per rectangle) -- the same
+ * picture at every scale: the composite darkens only where a counting draw moved the counter off its origin, and a
+ * counting draw reads the counter and the casters' bits only where it draws. n = 0: the bracket counts nothing (no clear,
+ * no mark). For the next bracket only; a bracket without one keeps the whole frame. ps2e_draw_mark_casters_early_in: the
+ * early casters' mark over rectangles (the frame's brackets' together). The Vita's device keeps the whole frame; so does
+ * the stencil diagnosis (ps2e_draw_config.stencil_diag: its histograms are of the whole frame). */
+#define PS2E_DRAW_HAS_SHADOW_REGION 1
+void ps2e_draw_shadow_region(ps2e_draw* device, const int* rects, int n);
+int ps2e_draw_mark_casters_early_in(ps2e_draw* device, const int* rects, int n);
 /* 1 = the producer keeps every vertex array it hands to ps2e_draw_submit valid until the frame's ps2e_draw_present
  * (its frame's draw lists outlive their drawing): the device may then keep pointers to a frame's vertices instead of
  * copying them (the Vita's shadow casters, drawn again at the shadows' composite). 0 (the default) = copied. */
@@ -484,6 +496,36 @@ int ps2e_draw_read_presented(ps2e_draw* device, uint8_t* rgba8, size_t capacity,
 /* The held presented image written as a binary PPM (P6). Returns 1 on success. */
 int ps2e_draw_write_ppm(ps2e_draw* device, const char* path);
 
+/* ---- the GPU phase timer (a diagnosis; engine/render/backends/gl/gl_gpu_timers.h) ------------------------------ */
+/* mode 0 = off (the default: nothing timed, nothing queried), 1 = auto (every phase timed apart on an immediate-mode GPU;
+ * on a tile-based GPU -- Apple's -- only where the frame's render pass ends already: a query boundary inside a pass would
+ * end it, a tile store + load of the whole frame), 2 = every phase, 3 = the render-pass ends only. The producer names the
+ * phase of its next draws (ps2e_draw_gpu_phase); the device marks its own: the frame's clear, the shadow volumes'
+ * counting and the composite with its caster marks, the screen copies, the present. ps2e_draw_gpu_timer_lines writes the
+ * census window's lines -- "[te.gfx] gpu phases per frame ...", "[te.gfx] gpu fill per frame ...", "[te.gfx] gl cpu per
+ * frame ..." (the drawing thread's time per phase) -- and starts the next window (0 written when off or nothing was
+ * read). A device without timer queries (the Vita) stays off. The drawing thread's calls. */
+#define PS2E_DRAW_HAS_GPU_TIMERS 1
+enum ps2e_draw_phase { PS2E_DRAW_PHASE_CLEAR = 0, PS2E_DRAW_PHASE_SKY = 1, PS2E_DRAW_PHASE_SCENE = 2, PS2E_DRAW_PHASE_BLENDED = 3,
+                       PS2E_DRAW_PHASE_VOLUMES = 4, PS2E_DRAW_PHASE_COMPOSITE = 5, PS2E_DRAW_PHASE_COPIES = 6,
+                       PS2E_DRAW_PHASE_HUD = 7, PS2E_DRAW_PHASE_PRESENT = 8,
+                       PS2E_DRAW_PHASE_WAIT = 9 /* the drawing thread's own work (waiting for builds): its clock only */ };
+void ps2e_draw_set_gpu_timers(ps2e_draw* device, int mode);
+int ps2e_draw_gpu_timers_on(const ps2e_draw* device);
+void ps2e_draw_gpu_phase(ps2e_draw* device, int phase);
+size_t ps2e_draw_gpu_timer_lines(ps2e_draw* device, double wall_ms_per_frame, char* out, size_t capacity);
+/* The GPU and driver the device draws with, e.g. "Apple M4 / OpenGL 4.1 Metal - 90.5" ("" when not known), and the frame
+ * target's physical size and scale as it stands (the internal scale is applied at a frame's start). */
+const char* ps2e_draw_renderer(const ps2e_draw* device);
+void ps2e_draw_target_size(const ps2e_draw* device, int* width, int* height, int* scale);
+/* The window's size in points and its drawable in pixels (a high-density display's backing store; 0 when headless). */
+void ps2e_draw_window_size(const ps2e_draw* device, int* points_w, int* points_h, int* drawable_w, int* drawable_h);
+
+/* The frame target itself as a binary PPM (P6) at its physical size (the internal scale's pixels, GS rows top first) -- the
+ * picture before the scan-out's filter (a judge's A/B at 2x..4x; the presented image is the window's size). On the drawing
+ * thread, after the frame's draws (before the next frame begins). Returns 1 on success. */
+int ps2e_draw_write_target_ppm(ps2e_draw* device, const char* path);
+
 /* Counters a producer may report: draws submitted and refused since create, triangles this frame. */
 typedef struct ps2e_draw_counters {
     uint64_t draws;
@@ -492,6 +534,21 @@ typedef struct ps2e_draw_counters {
     uint64_t textures_alive;
 } ps2e_draw_counters;
 void ps2e_draw_counts(const ps2e_draw* device, ps2e_draw_counters* out);
+
+/* The textures' memory (the producer's textures: not the frame target, its copy or the movies): how many are alive, their
+ * texels as this device holds them (4 bytes a texel, level 0 and the levels given), the same as the Vita's GL library
+ * allocates them (rows of 8 texels at least; a texture with levels as the whole chain to 1x1 over its power-of-two size),
+ * the most that figure reached since the previous call with reset_peak set, and the textures made and destroyed since
+ * create with their Vita bytes. */
+typedef struct ps2e_draw_texture_memory {
+    uint64_t alive;
+    uint64_t bytes;
+    uint64_t vita_bytes;
+    uint64_t vita_peak;
+    uint64_t made, made_vita_bytes;
+    uint64_t destroyed, destroyed_vita_bytes;
+} ps2e_draw_texture_memory;
+void ps2e_draw_texture_memory_census(ps2e_draw* device, ps2e_draw_texture_memory* out, int reset_peak);
 
 #ifdef __cplusplus
 }

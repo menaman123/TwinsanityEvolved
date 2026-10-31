@@ -1,4 +1,4 @@
-// te_display.h -- the port's DISPLAY settings -- the engine's Display page (aspect, internal scale,
+// te_display.h -- the port's DISPLAY settings -- the engine's Display page (aspect, resolution,
 // texture filter, vsync, window mode) and the title's own MoveDisplay (the console's "centre screen" option) -- over the
 // engine's ps2e_draw presentation, persisted in ps2r.ini (the engine's video.* keys), shown as rows of the title's GRAPHIC
 // OPTIONS page through the seam (Platform::Graphics::DisplaySetting*).
@@ -13,7 +13,7 @@ struct Settings {
     int aspect = 0;          // video.aspect: 0 auto (the TV's 4:3 in a window; the frame's own pixels headless -- the frozen
                              // judges' captures), 1 4:3, 2 16:9, 3 16:10, 4 21:9
     int fit = 1;             // video.fit_mode: 0 stretch, 1 fit (letterbox), 2 fill, 3 integer, 4 custom (= fit here)
-    int scale = 1;           // video.scale: the frame target's internal scale 1..4 (0 = 1)
+    int scale = 1;           // video.scale: the frame target's internal scale 1..4 (0 = 1; the PS Vita 1..2: display.cpp)
     int texture_filter = 0;  // video.texture_filter: 0 title, 1 point, 2 bilinear, 3 trilinear (bilinear here: ps2e_draw has no mip chain)
     bool vsync = false;      // video.vsync (the port's default: off -- its pacer times the presents; a windowed run may turn it on)
     int fullscreen = 0;      // video.fullscreen: 0 windowed, 1 fullscreen, 2 borderless
@@ -70,5 +70,11 @@ std::string FrameRateHelp();
 // The game rate chosen in the menu differs from the one this run started with: the help line says it applies next start.
 bool GameRatePending();
 std::string GameRateHelp();
+#if defined(__vita__)
+// The PS Vita's RESOLUTION row at its maximum (2x) and the help line the page shows then, in the menu's language
+// ("2x is the ps vita's maximum:~half the frame rate or less", two lines).
+bool ScaleAtMaximum();
+std::string ScaleHelp();
+#endif
 
 }  // namespace te::display

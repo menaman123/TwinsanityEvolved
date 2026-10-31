@@ -16,6 +16,7 @@
 //                             TE_GFX_DUMP_EVERY=n ... every n-th present (default 0 = none)
 //                             TE_GFX_DUMP_AT=k    ... and the k-th present
 //                             TE_GFX_DUMP_FROM=a / TE_GFX_DUMP_TO=b  ... the every-n dumps limited to pictures a..b
+//                             TE_GFX_DUMP_TARGET=1 ... the frame target at its physical size (the internal scale's pixels)
 //                             TE_GFX_LOG=1        log every seam call once
 //                             TE_GFX_SUMMARY_EVERY=n  print the counters every n presents (default 600; 0 = off)
 //                             PS2E_DRAW_STENCIL_DIAG=1  the engine's stencil histogram at the shadow clear / composite
@@ -31,7 +32,16 @@
 //                                                 TE_GFX_VITA_CASTERS=0 the casters not re-stamped (their own volumes darken
 //                                                 them); TE_GFX_VITA_SHADOW_FIX=0 the composite's FIX left to the backend's
 //                                                 source-alpha stand-in (Cd - Cs: black shadows); TE_GFX_CASTER_CENSUS=n the
-//                                                 re-stamp's census every n brackets / presents
+//                                                 re-stamp's census every n brackets / presents; TE_GFX_VITA_CASTERS_KEEP=n
+//                                                 the casters a frame keeps (default 4096; 128 = the earlier cap)
+//                             TE_GFX_SCALE_AB=n   the internal scale switched between the configured one and 1 every n
+//                                                 presents (a 1x / 4x comparison in one run: both share the machine's load)
+//                             TE_GFX_GPU_TIMERS=1 the GPU phase timer (engine/render/backends/gl/gl_gpu_timers.h): every
+//                                                 TE_GFX_SUMMARY_EVERY presents the GPU's ms and fill per phase of a frame (the
+//                                                 clear, the sky, the scene, the blended draws, the shadow volumes and their
+//                                                 composite, the copies, the HUD, the present) and the drawing thread's time
+//                                                 per phase; =phases cuts at every phase, =breaks only where the frame's
+//                                                 render pass ends (1 = auto: breaks on a tile-based GPU)
 //                             TE_GFX_INTERP=0/1   the frames between two pictures at 120/144/240/uncapped interpolated (1) or the
 //                                                 newest picture repeated (0); TE_GFX_DUMP_INTERP=1 dumps the interpolated frames
 //                                                 too (frame_<picture>_i<fraction in thousandths>.ppm) beside the pictures' dumps
@@ -309,6 +319,7 @@ struct Gfx {
     bool options_read = false;
     bool headless = false, log = false;
     bool present_ct16 = false;   // the dithered 16-bit present (te::Settings / TE_GFX_PRESENT_CT16; the hook toggles it)
+    int gpu_timers = 0;          // TE_GFX_GPU_TIMERS: the GPU phase timer's mode (ps2e_draw_set_gpu_timers; 0 off)
     std::string dump_dir;
     long dump_every = 0, dump_at = 0, summary_every = 600;
     // TE_HARNESS_KEYS=a,b,c: the harness leg hashes only the pictures preceding these boundaries (the capture armed for
@@ -705,6 +716,9 @@ void ReadOptions() {
                      g.ll_render_delay_us ? " -- TEST: the drawing thread sleeps TE_VITA_DIAG_RENDER_DELAY_US per picture" : "");
 #endif
     g.present_ct16 = te::GetSettings().present_ct16 || EnvFlag("TE_GFX_PRESENT_CT16");
+    if (const char* v = std::getenv("TE_GFX_GPU_TIMERS")) {
+        g.gpu_timers = std::strcmp(v, "phases") == 0 ? 2 : std::strcmp(v, "breaks") == 0 ? 3 : (v[0] && v[0] != '0') ? 1 : 0;
+    }
     if (const char* v = std::getenv("TE_GFX_INTERP")) g.rt.interpolate = v[0] != '0';
     g.rt.dump_interp = EnvFlag("TE_GFX_DUMP_INTERP");
     g.rt.probe_half = EnvFlag("TE_GFX_INTERP_PROBE");
@@ -1048,6 +1062,7 @@ bool EnsureDevice() {
     }
     te::display::Apply();   // the display settings read before the device existed
     std::fprintf(stderr, "[te.gfx] %s\n", te::display::Describe().c_str());
+    if (g.gpu_timers) ps2e_draw_set_gpu_timers(g.dev, g.gpu_timers);   // (no GL call: the queries are made at the first frame)
     if (te::prof::DrawBenchWanted()) te::prof::DrawBench(g.dev);   // TE_PROF_BENCH=2: before any frame (the GL thread is this one)
     // TE_GFX_MESH_TEXSWAP=0: a mesh draw that differs from the one before in its texture only takes the full path; =1 the
     // short path for a texture change only; 2 (the default) also when the alpha test / mipmapping differ
@@ -1069,8 +1084,22 @@ bool EnsureDevice() {
     if (g.present_ct16) te_graphics_set_present_ct16(1);
     // the judges' dumps / the harness leg read the present back (a keyed harness arms the capture per picture instead)
     if (!g.dump_dir.empty() || (te::harness::Armed() && g.harness_keys.empty())) OnRender([] { ps2e_draw_arm_capture(g.dev, 1); });
-    std::fprintf(stderr, "[te.gfx] renderer started: frame %dx%d (%s), %s, render thread %s\n", g.display_w, g.display_h,
-                 g.pal ? "PAL" : "NTSC", g.headless ? "headless" : "window", g.rt.started ? "on" : "off");
+    {
+        // the frame's pixels at the internal scale (taken at the first frame), the GPU, the window and its drawable (a
+        // high-density display's backing store is the drawable): what a user's log must say for a frame-rate report
+        ps2e_draw_presentation pr{};
+        ps2e_draw_get_presentation(g.dev, &pr);
+        const int scale = std::clamp(pr.scale, 1, 4);
+        int pw = 0, ph = 0, dw = 0, dh = 0;
+        ps2e_draw_window_size(g.dev, &pw, &ph, &dw, &dh);
+        char window[96];
+        if (g.headless) std::snprintf(window, sizeof window, "headless");
+        else if (dw != pw || dh != ph) std::snprintf(window, sizeof window, "window %dx%d (drawable %dx%d pixels)", pw, ph, dw, dh);
+        else std::snprintf(window, sizeof window, "window %dx%d", pw, ph);
+        std::fprintf(stderr, "[te.gfx] renderer started: frame %dx%d (%s) at %dx = %dx%d, %s, %s, render thread %s\n", g.display_w,
+                     g.display_h, g.pal ? "PAL" : "NTSC", scale, g.display_w * scale, g.display_h * scale,
+                     ps2e_draw_renderer(g.dev)[0] ? ps2e_draw_renderer(g.dev) : "GPU not named", window, g.rt.started ? "on" : "off");
+    }
     return true;
 }
 
@@ -1165,15 +1194,31 @@ void AlphaPreset(uint32_t preset, ps2e_draw_state& st) {
 }
 
 // The first shader's settings as the draw state (2D: the texture when the shader has one)
+// A made texture's levels below the first (ps2e_draw_texture_set_mips), on the drawing thread. TE_GFX_DIAG_MIP_TINT=1
+// (diagnosis): every level below the first given in magenta -- the surfaces drawn from them show it. On the Vita
+// TE_GFX_VITA_LEVELS=none gives none (level 0 only: the levels' A/B on the console; gl_device.cpp reads the other values)
+void SetLevels(uint32_t handle, const te::gfx::DecodedTexture& decoded) {
+    if (!handle || decoded.mips.empty()) return;
+#if defined(__vita__)
+    static const bool none = [] {
+        const char* v = std::getenv("TE_GFX_VITA_LEVELS");
+        return v && std::strcmp(v, "none") == 0;
+    }();
+    if (none) return;
+#endif
+    static const bool tint = std::getenv("TE_GFX_DIAG_MIP_TINT") != nullptr;
+    std::vector<std::vector<uint32_t>> tinted;
+    if (tint)
+        for (const auto& level : decoded.mips) tinted.emplace_back(level.size(), 0xFFFF00FFu);
+    std::vector<const void*> levels;
+    for (const auto& level : tint ? tinted : decoded.mips) levels.push_back(level.data());
+    ps2e_draw_texture_set_mips(g.dev, handle, int(levels.size()), levels.data());
+}
 // A decoded texture as a device texture with its levels (on the drawing thread)
 uint32_t CreateTexture(const te::gfx::DecodedTexture& decoded) {
     const int64_t t0 = te::load::NowNs();
     const uint32_t handle = ps2e_draw_texture_create_gpu_alpha(g.dev, decoded.width, decoded.height, decoded.rgba.data());
-    if (handle && !decoded.mips.empty()) {
-        std::vector<const void*> levels;
-        for (const auto& level : decoded.mips) levels.push_back(level.data());
-        ps2e_draw_texture_set_mips(g.dev, handle, int(levels.size()), levels.data());
-    }
+    SetLevels(handle, decoded);
     te::load::NoteRenderTexture(double(te::load::NowNs() - t0) / 1e6);
     return handle;
 }
@@ -1904,13 +1949,8 @@ void DecodePending(PendingTexture& t) {
 // A decoded texture made at its reserved id: CreateTexture's calls (the GL thread)
 void MakePending(PendingTexture& t) {
     const int64_t t0 = te::load::NowNs();
-    if (ps2e_draw_texture_create_reserved_gpu_alpha(g.dev, t.id, t.decoded.width, t.decoded.height, t.decoded.rgba.data())) {
-        if (!t.decoded.mips.empty()) {
-            std::vector<const void*> levels;
-            for (const auto& level : t.decoded.mips) levels.push_back(level.data());
-            ps2e_draw_texture_set_mips(g.dev, t.id, int(levels.size()), levels.data());
-        }
-    }
+    if (ps2e_draw_texture_create_reserved_gpu_alpha(g.dev, t.id, t.decoded.width, t.decoded.height, t.decoded.rgba.data()))
+        SetLevels(t.id, t.decoded);
     const int64_t t1 = te::load::NowNs();
     te::load::NoteRenderTexture(double(t1 - t0) / 1e6);
     Eager().make_us.fetch_add(uint64_t((t1 - t0) / 1000), std::memory_order_relaxed);
@@ -2496,8 +2536,10 @@ void MaybeDump(uint64_t picture) {
     if (!at && !every) return;
     char path[1024];
     std::snprintf(path, sizeof path, "%s/frame_%06llu.ppm", g.dump_dir.c_str(), static_cast<unsigned long long>(picture));
-    // The frame's own counts follow its path (the judges' draws-per-frame floor reads them)
-    if (ps2e_draw_write_ppm(g.dev, path))
+    // The frame's own counts follow its path (the judges' draws-per-frame floor reads them). TE_GFX_DUMP_TARGET=1: the frame
+    // target at its physical size instead of the presented image (a picture A/B at the internal scale's pixels)
+    static const bool target = EnvFlag("TE_GFX_DUMP_TARGET");
+    if (target ? ps2e_draw_write_target_ppm(g.dev, path) : ps2e_draw_write_ppm(g.dev, path))
         std::fprintf(stderr, "[te.gfx] frame %llu -> %s (draws %llu, triangles %llu, scene rigid %llu placed %llu sky %llu shadows %llu)\n",
                      static_cast<unsigned long long>(picture), path, (unsigned long long)g.frame_draws.load(), (unsigned long long)g.frame_triangles.load(),
                      (unsigned long long)(te::gfx::Scene().rigid_models - g.scene_mark[0]), (unsigned long long)(te::gfx::Scene().placed_models - g.scene_mark[1]),
@@ -2511,6 +2553,111 @@ void MaybeDump(uint64_t picture) {
 // The frame's GL work: the buckets in their order (bucket 0 holds StartFrame's clear), then the scan-out -- shown
 // (Present), resolved for the armed capture only (Capture: a picture the cadence does not show), or dropped (None: no GL
 // work at all). On the render thread when there is one, else the game thread's.
+// THE SHADOW BRACKETS' REGIONS (ps2e_draw_shadow_region). The shadows' bucket is a run of brackets -- the counter's clear,
+// the volumes' counting draws, the composite -- and each bracket's counting draws touch a small part of the frame (the
+// hub: 4-18 % of it in 16-pixel tiles); the clear, its casters' mark and the composite are full-frame passes, three of
+// them with the early casters' mark: at 4x 12.6 Mpx a frame. Here each bracket's region is the 16-pixel tiles its counting
+// draws' triangles can touch (each triangle's box padded 2 pixels), as disjoint rectangles (row runs, merged down), and the
+// early mark's region the frame's tiles together. Exact: outside them no counting fragment moves the counter, so the
+// composite darkens nothing there, and the counting draws read the caster bits only where they draw. A bucket that is not
+// whole brackets (a counting draw or a composite before any clear of the frame, a counting mesh) keeps the whole frame.
+struct ShadowRegions {
+    bool ok = false;
+    std::vector<std::vector<int>> brackets;   // per counter clear, in the bucket's order: x0, y0, x1, y1 (exclusive) each
+    std::vector<int> all;                     // the frame's tiles together (the early casters' mark)
+};
+void TilesToRects(const std::vector<uint8_t>& tiles, int tw, int th, int w, int h, std::vector<int>& out) {
+    out.clear();
+    constexpr int kTile = 16;
+    // row runs [x0, x1) per tile row; a run equal to the one right above it (same span, the row before) extends it
+    std::vector<int> open;   // indices into out of the rectangles the row before ended
+    std::vector<int> next;
+    for (int ty = 0; ty < th; ++ty) {
+        next.clear();
+        for (int tx = 0; tx < tw;) {
+            if (!tiles[size_t(ty) * tw + tx]) { ++tx; continue; }
+            int e = tx;
+            while (e < tw && tiles[size_t(ty) * tw + e]) ++e;
+            const int x0 = tx * kTile, x1 = std::min(e * kTile, w), y0 = ty * kTile, y1 = std::min((ty + 1) * kTile, h);
+            int merged = -1;
+            for (int k : open)
+                if (out[size_t(k)] == x0 && out[size_t(k) + 2] == x1 && out[size_t(k) + 3] == y0) { merged = k; break; }
+            if (merged >= 0) {
+                out[size_t(merged) + 3] = y1;
+                next.push_back(merged);
+            } else {
+                next.push_back(int(out.size()));
+                out.insert(out.end(), {x0, y0, x1, y1});
+            }
+            tx = e;
+        }
+        open.swap(next);
+    }
+}
+void ComputeShadowRegions(Draw* const* list, size_t count, int w, int h, ShadowRegions& out) {
+    out.ok = false;
+    out.brackets.clear();
+    out.all.clear();
+    if (w <= 0 || h <= 0) return;
+    constexpr int kTile = 16, kPad = 2;
+    const int tw = (w + kTile - 1) / kTile, th = (h + kTile - 1) / kTile;
+    std::vector<uint8_t> all(size_t(tw) * th, 0), cur;
+    bool open = false;
+    auto close = [&] {
+        out.brackets.emplace_back();
+        TilesToRects(cur, tw, th, w, h, out.brackets.back());
+        open = false;
+    };
+    for (size_t i = 0; i < count; ++i) {
+        const Draw& d = *list[i];
+        const int st = d.state.stencil;
+        if (st == PS2E_DRAW_STENCIL_OFF) continue;
+        if (d.mesh) return;
+        if (st == PS2E_DRAW_STENCIL_CLEAR) {
+            if (open) close();
+            cur.assign(size_t(tw) * th, 0);
+            open = true;
+        } else if (st == PS2E_DRAW_STENCIL_INSIDE) {
+            if (!open) return;
+            close();
+        } else {
+            if (!open) return;
+            const ps2e_draw_vertex* v = d.Vertices();
+            for (size_t k = 0, n = d.VertexCount() / 3 * 3; k < n; k += 3) {
+                const float bx0 = std::min({v[k].x, v[k + 1].x, v[k + 2].x}), by0 = std::min({v[k].y, v[k + 1].y, v[k + 2].y});
+                const float bx1 = std::max({v[k].x, v[k + 1].x, v[k + 2].x}), by1 = std::max({v[k].y, v[k + 1].y, v[k + 2].y});
+                if (!(bx0 <= bx1) || !(by0 <= by1)) {   // (a vertex not a number: this bracket keeps the whole frame)
+                    return;
+                }
+                if (bx1 < -kPad || by1 < -kPad || bx0 > float(w + kPad) || by0 > float(h + kPad)) continue;   // off the frame
+                const int tx0 = std::clamp(int(std::floor(bx0)) - kPad, 0, w - 1) / kTile;
+                const int ty0 = std::clamp(int(std::floor(by0)) - kPad, 0, h - 1) / kTile;
+                const int tx1 = std::clamp(int(std::ceil(bx1)) + kPad, 0, w - 1) / kTile;
+                const int ty1 = std::clamp(int(std::ceil(by1)) + kPad, 0, h - 1) / kTile;
+                for (int ty = ty0; ty <= ty1; ++ty)
+                    for (int tx = tx0; tx <= tx1; ++tx) {
+                        cur[size_t(ty) * tw + tx] = 1;
+                        all[size_t(ty) * tw + tx] = 1;
+                    }
+            }
+        }
+    }
+    if (open) close();
+    TilesToRects(all, tw, th, w, h, out.all);
+    out.ok = true;
+}
+
+// The GPU phase timer's phase of a frame bucket (renderer.h FrameBucket): the sky, the opaque scene (2-5), the blended
+// draws (6-20 and the particles / distortion 22-23), the shadows (21: the device marks its counting and composite), the HUD
+// and text (24-27)
+int BucketPhase(int b) {
+    if (b <= 1) return PS2E_DRAW_PHASE_SKY;
+    if (b <= 5) return PS2E_DRAW_PHASE_SCENE;
+    if (b == 21) return PS2E_DRAW_PHASE_VOLUMES;
+    if (b <= 23) return PS2E_DRAW_PHASE_BLENDED;
+    return PS2E_DRAW_PHASE_HUD;
+}
+
 void BeginFrameTarget(int screen_w, int screen_h) {
     int fw = 0, fh = 0;
     ps2e_draw_frame_size(g.dev, &fw, &fh);
@@ -2886,8 +3033,9 @@ void FillCensusBoxOf(const Draw& d, int screen_w, int screen_h) {
     }
     ps2r::render::FillCensusBox(bx);
 }
+#endif
 
-// ---- THE SKY AFTER THE OPAQUE SCENE (TE_GFX_VITA_SKY_LAST=0: off) -------------------------------------------------------
+// ---- THE SKY AFTER THE OPAQUE SCENE (TE_GFX_VITA_SKY_LAST=0 on the Vita, TE_GFX_SKY_LAST=0 elsewhere: off) ---------------
 // The game draws its sky first (bucket 0: layers with no depth test and no depth write, most of them blended -- the title's
 // island pan: 9 draws whose triangles cover 6.2 frames' worth) and then RESETS the depth to the far value with a
 // full-frame, colour-less quad at z 0; the scene follows with GEQUAL / GREATER tests. On the device's deferred renderer every
@@ -2905,7 +3053,9 @@ void FillCensusBoxOf(const Draw& d, int screen_w, int screen_h) {
 // colour mask) and still does; at a pixel they did not write, the sky's layers composite over the same colour (the frame's
 // clear and the layers before them) as before; the depth the scene reads is the reset's either way (the sky writes none),
 // and every draw after the insertion point sees the frame as it was. Not the shadows' casters (ps2e_draw_set_far_background:
-// as when drawn first with no test). The frame's clear and the reset itself are unchanged.
+// as when drawn first with no test). The frame's clear and the reset itself are unchanged. The same holds on the desktop
+// (its depth z / 2^24 keeps every GS z unit: any z of at least kSkyMinZ is above the reset's 0), where at internal scale 4
+// the sky's layers were 16 Mpx of a hub frame's fill, most of it under the scene.
 constexpr float kSkyMinZ = 1024.f;   // GS z: z / 2^31 - 1 is then above -1 in float (the Vita's depth above the reset's 0)
 struct SkyMove {
     static constexpr size_t kMaxLayers = 32;
@@ -2925,9 +3075,36 @@ const char* const kSkyStopNames[kStopCount] = {"the frame's end", "a screen copy
                                                "a blended draw", "another depth test", "no depth write",
                                                "an alpha test writing its failures", "a destination alpha test", "a skin",
                                                "a mesh not wholly in front", "a depth near the far value"};
+// A desktop lever's switch, read once from `name`: unset / 1 on, 0 off, abN on and off in turns every N presents (on
+// first; a log line at each turn) -- an in-run A/B whose arms share the host's load
+struct LeverSwitch {
+    const char* name;
+    int mode = -1;    // -1 not read, 0 off, 1 on, 2 A/B
+    long period = 0;
+    bool last = true;
+    bool On() {
+        if (mode < 0) {
+            const char* v = std::getenv(name);
+            mode = !v || !v[0] ? 1 : std::strncmp(v, "ab", 2) == 0 ? 2 : v[0] == '0' ? 0 : 1;
+            if (mode == 2) period = std::max(1L, v[2] ? std::atol(v + 2) : 600L);
+        }
+        if (mode != 2) return mode == 1;
+        const bool on = (g.presents.load(std::memory_order_relaxed) / uint64_t(period)) % 2 == 0;
+        if (on != last) {
+            last = on;
+            std::fprintf(stderr, "[te.gfx] %s A/B: present %llu: %s\n", name, (unsigned long long)g.presents.load(), on ? "on" : "off");
+        }
+        return on;
+    }
+};
 bool SkyLastOn() {
+#if defined(__vita__)
     static const bool on = [] { const char* v = std::getenv("TE_GFX_VITA_SKY_LAST"); return !(v && v[0] == '0'); }();
     return on;
+#else
+    static LeverSwitch sw{"TE_GFX_SKY_LAST"};
+    return sw.On();
+#endif
 }
 // bucket 0's last draw: the full-frame depth reset to the far value (no colour, no test, depth written, every vertex at z
 // 0, two triangles splitting a rectangle that holds the frame along a diagonal, no scissor)
@@ -3002,7 +3179,13 @@ void FlushSky(SkyMove& sky, int stop, int screen_w, int screen_h, bool fill, int
     static const unsigned short profSky = te::prof::Register("rt the sky after the opaque scene");
     te::prof::Scope scope(profSky, te::prof::ThreadSlot());
     static std::vector<ps2e_draw_vertex> scratch;   // (the device copies a submit's vertices: reused per layer)
+#if defined(__vita__)
     if (fill) ps2r::render::FillCensusGroup(TE_GFX_BUCKET_SKY);
+#endif
+#if !defined(__vita__)
+    (void)screen_w;   // (the fill census's box: the Vita's)
+    (void)screen_h;
+#endif
     ps2e_draw_set_far_background(g.dev, 1);
     for (size_t i = 0; i < sky.count; ++i) {
         const Draw& d = *sky.layers[i];
@@ -3011,7 +3194,9 @@ void FlushSky(SkyMove& sky, int stop, int screen_w, int screen_h, bool fill, int
         for (ps2e_draw_vertex& v : scratch) v.z = 0.f;
         ps2e_draw_state st = d.state;
         st.depth_test = PS2E_DRAW_DEPTH_GEQUAL;   // (its depth_write stays 0)
+#if defined(__vita__)
         if (fill) FillCensusBoxOf(d, screen_w, screen_h);
+#endif
         if (ps2e_draw_submit(g.dev, &st, scratch.data(), int(n)) < 0) g.dropped_draws++;
         triangles += n / 3;
     }
@@ -3022,10 +3207,19 @@ void FlushSky(SkyMove& sky, int stop, int screen_w, int screen_h, bool fill, int
     g_sky.over += sky.over;
     g_sky.stops[std::clamp(stop, 0, kStopCount - 1)]++;
 }
-#endif
 std::string SkyCensusLine(double frames) {
 #if defined(__vita__)
-    if (!SkyLastOn()) return "[te.gfx.vita] the sky after the opaque scene: off (TE_GFX_VITA_SKY_LAST=0)\n";
+    const char* const tag = "[te.gfx.vita]";
+    const char* const knob = "TE_GFX_VITA_SKY_LAST";
+#else
+    const char* const tag = "[te.gfx]";
+    const char* const knob = "TE_GFX_SKY_LAST";
+#endif
+    char buf[700];
+    if (!SkyLastOn()) {
+        std::snprintf(buf, sizeof buf, "%s the sky after the opaque scene: off (%s=0)\n", tag, knob);
+        return buf;
+    }
     if (!g_sky.frames) return std::string();
     std::string stops;
     for (int k = 0; k < kStopCount; ++k) {
@@ -3034,20 +3228,15 @@ std::string SkyCensusLine(double frames) {
         std::snprintf(b, sizeof b, "%s%s %llu", stops.empty() ? "" : ", ", kSkyStopNames[k], (unsigned long long)g_sky.stops[k]);
         stops += b;
     }
-    char buf[700];
-    std::snprintf(buf, sizeof buf, "[te.gfx.vita] the sky after the opaque scene (TE_GFX_VITA_SKY_LAST): %llu of %llu frames (%llu without "
+    std::snprintf(buf, sizeof buf, "%s the sky after the opaque scene (%s): %llu of %llu frames (%llu without "
                   "the sky + depth reset pattern); per moved frame %.1f sky layers drawn after %.1f scene draws, at z 0 with a GEQUAL "
-                  "test: shaded only where nothing opaque covers them; drawn before: %s\n",
+                  "test: shaded only where nothing opaque covers them; drawn before: %s\n", tag, knob,
                   (unsigned long long)g_sky.moved, (unsigned long long)g_sky.frames, (unsigned long long)g_sky.no_pattern,
                   g_sky.moved ? double(g_sky.sky_draws) / double(g_sky.moved) : 0.0,
                   g_sky.moved ? double(g_sky.over) / double(g_sky.moved) : 0.0, stops.empty() ? "-" : stops.c_str());
     (void)frames;
     g_sky = SkyCensus{};
     return buf;
-#else
-    (void)frames;
-    return std::string();
-#endif
 }
 
 uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool count_as_picture) {
@@ -3104,8 +3293,10 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
     // the fill census (gl_fill_census.h: TE_GFX_VITA_FILL=N): one frame in N, every draw its GPU visibility counter and its
     // true screen box (handed over below)
     const bool fill = ps2r::render::FillCensusFrame(screen_w, screen_h);
-    SkyMove sky;   // the sky after the opaque scene (see SkyMove)
+#else
+    constexpr bool fill = false;
 #endif
+    SkyMove sky;   // the sky after the opaque scene (see SkyMove)
     {
         TE_PROF_SCOPE("rt begin frame");
         BeginFrameTarget(screen_w, screen_h);
@@ -3176,13 +3367,42 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
     const int profSlot = te::prof::ThreadSlot();   // (once: a thread_local read is the Vita's emulated TLS, per scope below)
     // renderer.h's buckets: the blended materials' first, the shadows'
     constexpr int kBlendedBucket = 6, kShadowsBucket = 21;
+    const bool timers = ps2e_draw_gpu_timers_on(g.dev) != 0;
+    // the shadow brackets' regions (ShadowRegions; TE_GFX_SHADOW_REGION=0: the whole frame for every bracket)
+#if !defined(__vita__)
+    static LeverSwitch regionSwitch{"TE_GFX_SHADOW_REGION"};
+    const bool shadowRegions = regionSwitch.On();
+#endif
+    thread_local ShadowRegions regions;
+    regions.ok = false;
+    size_t bracket = 0;
     for (int b = 0; b < TE_GFX_BUCKET_COUNT; ++b) {
         // the casters as the opaque buckets left them, before the blended ones draw over them (ps2e_draw_mark_casters_early)
-        if (b == kBlendedBucket && buckets[kShadowsBucket].used) ps2e_draw_mark_casters_early(g.dev);
+        // -- over the frame's shadow tiles when the shadows' bucket is whole brackets (its builds expanded first)
+        if (b == kBlendedBucket && buckets[kShadowsBucket].used) {
+#if !defined(__vita__)
+            if (shadowRegions && !diag) {
+                if (timers) ps2e_draw_gpu_phase(g.dev, PS2E_DRAW_PHASE_WAIT);
+                {
+                    te::prof::Scope scope(profExpand, profSlot);
+                    ExpandBucket(buckets, kShadowsBucket);
+                }
+                thread_local std::vector<Draw*> shadowList;
+                shadowList.resize(buckets[kShadowsBucket].used);
+                for (size_t i = 0; i < shadowList.size(); ++i) shadowList[i] = &buckets[kShadowsBucket].draws[i];
+                ComputeShadowRegions(shadowList.data(), shadowList.size(), screen_w, screen_h, regions);
+                if (timers) ps2e_draw_gpu_phase(g.dev, BucketPhase(b));
+            }
+#endif
+            if (regions.ok) ps2e_draw_mark_casters_early_in(g.dev, regions.all.data(), int(regions.all.size() / 4));
+            else ps2e_draw_mark_casters_early(g.dev);
+        }
+        if (timers) ps2e_draw_gpu_phase(g.dev, PS2E_DRAW_PHASE_WAIT);
         {
             te::prof::Scope scope(profExpand, profSlot);
             ExpandBucket(buckets, b);   // its builds, when the picture came with them still running
         }
+        if (timers) ps2e_draw_gpu_phase(g.dev, BucketPhase(b));
         // the bucket's draws in drawing order: the Vita's order of pointers (ExpandBucket: the records stay in place), the
         // desktop's expanded records themselves
 #if defined(__vita__)
@@ -3255,6 +3475,7 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
         }
 #if defined(__vita__)
         if (fill) ps2r::render::FillCensusGroup(b);   // (the census folds per frame bucket too)
+#endif
         if (b == TE_GFX_BUCKET_SKY && !diag && SkyLastOn() && count) {
             // the sky's layers, then the depth reset: the layers wait for the opaque scene (SkyMove). (The bucket's draws in
             // drawing order: `at(k)` = the k-th entry of the bucket's order of pointers -- ExpandBucket's segment records
@@ -3272,6 +3493,7 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                 g_sky.no_pattern++;
             }
         }
+#if defined(__vita__)
         // the bucket's batching census / instancing plan (graphics_batch.cpp), over the order drawn below; the sky's
         // insertion point (the first draw it stops at while it waits) is a barrier no draw moves over
         const te::gfx::BatchPlan* plan = nullptr;
@@ -3294,6 +3516,11 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
 #endif
         for (size_t i = 0; i < count; ++i) {
             const Draw& d = *list[i];
+            // (the timer: StartFrame's clear -- bucket 0's first draw, an untextured quad with the depth test off -- is the clear)
+            if (timers && b == TE_GFX_BUCKET_SKY && i <= 1) {
+                const bool clear = i == 0 && !d.mesh && !d.state.texture && d.state.depth_test == PS2E_DRAW_DEPTH_ALWAYS && d.VertexCount() == 6;
+                ps2e_draw_gpu_phase(g.dev, clear ? PS2E_DRAW_PHASE_CLEAR : PS2E_DRAW_PHASE_SKY);
+            }
 #if defined(__vita__)
             if (plan && plan->absorbed[i]) {   // drawn with its group, at the group's first draw
                 submitIndex++;
@@ -3301,16 +3528,25 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                 continue;
             }
             if (i + 1 < count) PrefetchDrawHot(list[i + 1]);   // (the next record's lines, written on another core)
+#endif
             if (sky.pending) {
                 if (b == TE_GFX_BUCKET_SKY) {
                     if (i < sky.count) continue;   // a sky layer: drawn by FlushSky (the reset, bucket 0's last, now)
                 } else {
+#if defined(__vita__)
                     const int stop = plan ? (i == skyStopAt ? skyStopWhy : -1) : SkyStopOf(d);
-                    if (stop >= 0) FlushSky(sky, stop, screen_w, screen_h, fill, b, triangles);
-                    else sky.over++;
+#else
+                    const int stop = SkyStopOf(d);
+#endif
+                    if (stop >= 0) {
+                        if (timers) ps2e_draw_gpu_phase(g.dev, PS2E_DRAW_PHASE_SKY);
+                        FlushSky(sky, stop, screen_w, screen_h, fill, b, triangles);
+                        if (timers) ps2e_draw_gpu_phase(g.dev, BucketPhase(b));
+                    } else {
+                        sky.over++;
+                    }
                 }
             }
-#endif
             if (diag) {
                 float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f, z0 = 1e38f, z1 = -1e38f;
                 double r = 0, gg = 0, bb = 0, a = 0;
@@ -3330,6 +3566,10 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
             }
             submitIndex++;
             if (diag && diagStop >= 0 && submitIndex > diagStop) continue;
+            if (regions.ok && b == kShadowsBucket && d.state.stencil == PS2E_DRAW_STENCIL_CLEAR && bracket < regions.brackets.size()) {
+                const std::vector<int>& r = regions.brackets[bracket++];
+                ps2e_draw_shadow_region(g.dev, r.data(), int(r.size() / 4));
+            }
             float copyRegion[4];
             if (d.copy_frame && te::gfx::CopyWanted(list, count, i, copyRegion)) {
                 te::prof::Scope scope(profCopy, profSlot);
@@ -3463,8 +3703,11 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
         }
         te::gfx::CopiesBucketEnd(list, count);   // (the bucket's draws since its last copy draw: the coalescer's notes)
     }
+    if (sky.pending) {
+        if (timers) ps2e_draw_gpu_phase(g.dev, PS2E_DRAW_PHASE_SKY);
+        FlushSky(sky, kStopEnd, screen_w, screen_h, fill, TE_GFX_BUCKET_COUNT - 1, triangles);
+    }
 #if defined(__vita__)
-    if (sky.pending) FlushSky(sky, kStopEnd, screen_w, screen_h, fill, TE_GFX_BUCKET_COUNT - 1, triangles);
     if (drawHash && count_as_picture)
         std::fprintf(stderr, "[te.drawhash] picture %llu: %016llx (%llu draws)\n", (unsigned long long)(g.pictures.load() + 1),
                      (unsigned long long)pictureHash, (unsigned long long)pictureDraws);
@@ -3483,7 +3726,26 @@ struct Pace {
 };
 Pace g_pace;
 
+// TE_GFX_SCALE_AB=N (diagnosis): the internal scale switched between the configured one and 1 every N presents (the
+// configured first), each switch logged -- a 1x / Nx comparison whose windows share the machine's load. The target is
+// re-made at each switch (taken at the next frame's start: ps2e_draw_begin_frame).
+void ScaleAb(uint64_t presents) {
+    static const long every = EnvLong("TE_GFX_SCALE_AB", 0);
+    static int configured = 0;
+    if (every <= 0 || !g.dev) return;
+    ps2e_draw_presentation pr{};
+    ps2e_draw_get_presentation(g.dev, &pr);
+    if (!configured) configured = std::max(1, pr.scale);
+    if (presents % uint64_t(every) != 0) return;
+    const int want = (presents / uint64_t(every)) % 2 == 0 ? configured : 1;
+    if (std::max(1, pr.scale) == want) return;
+    pr.scale = want;
+    ps2e_draw_set_presentation(g.dev, &pr);
+    std::fprintf(stderr, "[te.gfx] scale A/B: present %llu: %dx\n", (unsigned long long)presents, want);
+}
+
 void NotePace(uint64_t presents) {
+    ScaleAb(presents);
     // (the window's census below runs on the thread that presented -- the drawing thread in play mode: its cost is
     // measured and logged with it, so a device log shows what the diagnostics themselves take from the frame)
     [[maybe_unused]] const bool census_window = g.summary_every > 0 && presents % uint64_t(g.summary_every) == 0 && g_pace.frames >= 1;
@@ -3539,6 +3801,30 @@ void NotePace(uint64_t presents) {
                      s > 0 ? gaps / s : 0.0, g_pace.longest_ms, (unsigned long long)g_pace.slow,
                      (unsigned long long)(g_pace.frames - 1), frame_ms, g_pace.submit_ms / gaps, g_pace.present_ms / gaps,
                      std::max(0.0, frame_ms - (g_pace.submit_ms + g_pace.present_ms) / gaps), built, waited);
+        if (g.dev && ps2e_draw_gpu_timers_on(g.dev)) {
+            // the GPU phase timer's window (TE_GFX_GPU_TIMERS): read on the drawing thread, as its queries are
+            static char lines[2048];
+            if (ps2e_draw_gpu_timer_lines(g.dev, frame_ms, lines, sizeof lines)) std::fputs(lines, stderr);
+        }
+#if !defined(__vita__)
+        std::fputs(SkyCensusLine(gaps).c_str(), stderr);   // (the Vita's census window prints its own)
+#endif
+        if (g.dev) {
+            // the textures' memory (ps2e_draw_texture_memory_census; the drawing thread's, as this line is): alive, their
+            // texels as held here and as the Vita's GL library allocates them -- against its pools' free figures (the
+            // heap line) -- the window's peak, and the textures made / destroyed in the window
+            static ps2e_draw_texture_memory last{};
+            ps2e_draw_texture_memory tm{};
+            ps2e_draw_texture_memory_census(g.dev, &tm, 1);
+            constexpr double kMB = 1048576.0;
+            std::fprintf(stderr, "[te.gfx] texture memory: %llu alive, %.1f MB held (%.1f MB as the Vita's GL library allocates "
+                         "them, the window's peak %.1f MB); in the window made %llu (+%.1f MB), destroyed %llu (-%.1f MB)\n",
+                         (unsigned long long)tm.alive, double(tm.bytes) / kMB, double(tm.vita_bytes) / kMB, double(tm.vita_peak) / kMB,
+                         (unsigned long long)(tm.made - last.made), double(tm.made_vita_bytes - last.made_vita_bytes) / kMB,
+                         (unsigned long long)(tm.destroyed - last.destroyed),
+                         double(tm.destroyed_vita_bytes - last.destroyed_vita_bytes) / kMB);
+            last = tm;
+        }
         {
             // the screen copies: asked, taken (and why), coalesced (graphics_copies.cpp; only a window with copy draws)
             const std::string copies = te::gfx::CopyCensusLine(presents - g_pace.frames + 1, presents);
@@ -3751,6 +4037,21 @@ void NotePace(uint64_t presents) {
                          (unsigned long long)(now_c.buffer_subdata - last.buffer_subdata),
                          (unsigned long long)(now_c.scanout_same - last.scanout_same), (unsigned long long)now_c.meshes_alive,
                          (unsigned long long)(now_c.meshes_created - last.meshes_created), (now_c.mesh_bytes - last.mesh_bytes) / 1024.0);
+            if (now_c.tex_made != last.tex_made || now_c.tex_chains != last.tex_chains || now_c.tex_no_storage)
+                std::fprintf(stderr, "[te.gfx.vita] textures made in the window: %llu, left without storage by vitaGL %llu (%llu so far); "
+                             "level chains %llu, off GXM's 16-byte texture alignment %llu; given the PS2's authored levels %llu (%.0f KB "
+                             "written; vitaGL's level transfers not made %llu, waited for %.2f ms); levels past vitaGL's chain %llu, "
+                             "held and never finished %llu\n",
+                             (unsigned long long)(now_c.tex_made - last.tex_made),
+                             (unsigned long long)(now_c.tex_no_storage - last.tex_no_storage), (unsigned long long)now_c.tex_no_storage,
+                             (unsigned long long)(now_c.tex_chains - last.tex_chains),
+                             (unsigned long long)(now_c.tex_chain_misaligned - last.tex_chain_misaligned),
+                             (unsigned long long)(now_c.tex_levels_authored - last.tex_levels_authored),
+                             (now_c.tex_level_bytes - last.tex_level_bytes) / 1024.0,
+                             (unsigned long long)(now_c.tex_level_transfers_skipped - last.tex_level_transfers_skipped),
+                             (now_c.tex_level_wait_us - last.tex_level_wait_us) / 1000.0,
+                             (unsigned long long)(now_c.tex_levels_beyond_chain - last.tex_levels_beyond_chain),
+                             (unsigned long long)now_c.tex_levels_dropped);
             std::fprintf(stderr, "[te.gfx.vita] present per frame (drawing thread): draw part %.2f ms + swap %.2f ms (longest swap %.1f "
                          "ms)\n%s\n", double(now_c.present_draw_us - last.present_draw_us) / 1000.0 / pres,
                          double(now_c.swap_us - last.swap_us) / 1000.0 / pres, now_c.swap_max_us / 1000.0,
@@ -3976,6 +4277,7 @@ void RenderBetween(Gfx::Frame& prev, Gfx::Frame& cur, double fraction, int64_t s
     }
 #endif
     BeginFrameTarget(cur.screen_w, cur.screen_h);
+    ps2e_draw_gpu_phase(g.dev, PS2E_DRAW_PHASE_SCENE);   // (the timer: an interpolated frame's draws, as one phase)
     uint64_t submitted = 0;
     for (const auto& o : rt.interp_out) {
         if (o.count < 3) continue;

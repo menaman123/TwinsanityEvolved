@@ -279,6 +279,7 @@ void ps2e_graphics_init_decal_uv_packet(ps2e_u32 packetAddress) {
 // four copies of the near plane, each four transposed; then the other chunk's matrix when there is one; the program to run on
 // each decal (0x1C0 same chunk / 0x360 other chunk)
 void ps2e_graphics_load_decal_view(ps2e_u32 chunkMatrices, ps2e_u32 fromChunk) {
+    TE_SEAM_PART(kSeamDecals);
     const auto* chunk = reinterpret_cast<const float(*)[4]>(te::GuestPointer(chunkMatrices, 64));
     const float* far = reinterpret_cast<const float*>(te::GuestPointer(te::RetailAddress(kFarViewPlanes), 6 * 16));
     const float* view = reinterpret_cast<const float*>(te::GuestPointer(te::RetailAddress(kViewPlanes), 6 * 16));
@@ -317,6 +318,7 @@ void ps2e_graphics_load_decal_view(ps2e_u32 chunkMatrices, ps2e_u32 fromChunk) {
 
 // LoadDecalType: the type's variants (eight quadwords each: the colour keys then the size keys) into VU0's memory from 0x10
 void ps2e_graphics_load_decal_type(ps2e_u32 typeAddress) {
+    TE_SEAM_PART(kSeamDecals);
     const uint8_t* type = te::GuestPointer(typeAddress, kTypeBytes);
     if (!type) return;
     int32_t count;
@@ -329,6 +331,7 @@ void ps2e_graphics_load_decal_type(ps2e_u32 typeAddress) {
 // AgeDecal: the decal in vf01-vf03 and its variant's address in vi01 through the view's program; its place in vf28, its colour
 // in vf29 and its corners' offsets in vf31 / vf30 (the half words are the lanes' low ones)
 void ps2e_graphics_age_decal(ps2e_u32 placeAddress, ps2e_u32 frameAddress, ps2e_s32 variant, ps2e_u32 lookAddress) {
+    TE_SEAM(kSeamDecals);
     const float* place = reinterpret_cast<const float*>(te::GuestPointer(placeAddress, 16));
     const int32_t* frame = reinterpret_cast<const int32_t*>(te::GuestPointer(frameAddress, 32));
     uint8_t* look = te::GuestPointer(lookAddress, 32);
@@ -379,6 +382,7 @@ void ps2e_graphics_age_decal(ps2e_u32 placeAddress, ps2e_u32 frameAddress, ps2e_
 // DrawDecals (particles.cpp): no decals -> no chunk they're in; else each key's draw list (emptied) through its material: the
 // view's matrix to the screen, the UV packet, each block's quadwords, the VU1 program's quads into the material's bucket
 void ps2e_graphics_draw_decals(ps2e_u32 decalsAddress) {
+    TE_SEAM_PART(kSeamDecals);
     uint8_t* decals = te::GuestPointer(decalsAddress, kDataBytes);
     if (!decals) return;
     int32_t count;

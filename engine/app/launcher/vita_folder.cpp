@@ -176,6 +176,7 @@ QString VitaFolder::readme(const TitleManifest* m, const VitaFolderReport& r) {
     if (!discs.isEmpty()) t += discs.join(QStringLiteral("\n")) + "\n\n";
     if (!r.dataDir.isEmpty()) {
         t += summary(r) + "\n";
+        if (!m->vitaSettingsNote().isEmpty()) t += fill(m, m->vitaSettingsNote(), r.disc) + "\n";
         t += QStringLiteral("Your saves are not copied: the %1 keeps its own memory card in %2/memcards.\n").arg(m->vitaLabel(), data);
         if (discs.isEmpty())   // the manifest's discs note says it at length when there is one
             t += QStringLiteral("Another disc: copy it beside %1 in %2 and write its file name in %2/%3.\n")

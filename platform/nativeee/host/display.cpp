@@ -1,6 +1,6 @@
 // platform/nativeee (host side) -- te_display.h: the display settings. See the header.
 //
-// The engine's Display page rows (aspect, internal scale, texture filter, vsync, window mode) over ps2e_draw's
+// The engine's Display page rows (aspect, resolution, texture filter, vsync, window mode) over ps2e_draw's
 // presentation; the title's MoveDisplay as the picture's offset; every change pushed to the device at once and written
 // to ps2r.ini through the engine's SettingsFile (the keys are the engine's VideoConfig: video.aspect, video.scale,
 // video.texture_filter, video.vsync, video.fullscreen, video.custom_offset_x/y). The rows' labels come from the engine's
@@ -32,6 +32,16 @@ Settings g_settings;
 uint64_t g_page_polled_at = 0;   // the boundary at which the game last read a row's value (the page is open)
 using Pacer = ps2r::ps2e::PresentPacer;
 bool Uncapped() { return g_settings.frame_rate == int(Pacer::Rate::Uncapped); }
+
+#if defined(__vita__)
+// The PS Vita's RESOLUTION row offers 1x and 2x. The GPU time of a picture there is mostly per pixel (the device's
+// logs: the menus all of it, a level half or more), and a scale multiplies the pixels by its square: 2x already runs the
+// beach hub at the 50 Hz lock's 25 or below. Beyond 2x the screen gains nothing: the present's bilinear quad onto the
+// 960x544 screen reads every pixel of a 2x frame, 71 % of a 3x one and 50 % of a 4x one.
+constexpr int kMaxScale = 2;
+#else
+constexpr int kMaxScale = 4;
+#endif
 
 const char* const kAspectKeys[] = {"auto", "4:3", "16:9", "16:10", "21:9"};
 const char* const kFullscreenKeys[] = {"windowed", "fullscreen", "borderless"};
@@ -73,6 +83,17 @@ void Configure(const Settings& settings) {
     g_settings.aspect = std::clamp(g_settings.aspect, 0, 4);
     g_settings.fit = std::clamp(g_settings.fit, 0, 4);
     g_settings.scale = std::clamp(g_settings.scale, 1, 4);
+#if defined(__vita__)
+    // a ps2r.ini naming 3x or 4x (a computer's settings copied over, or an earlier version's row) is read as 2x; the file
+    // keeps its value until the row is changed
+    if (g_settings.scale > kMaxScale) {
+        std::fprintf(stderr, "[twinsanityevolved] vita: resolution %dx is beyond the console: %dx used (ps2r.ini's "
+                             "video.scale = %d is read as %d)\n", g_settings.scale, kMaxScale, g_settings.scale, kMaxScale);
+        g_settings.scale = kMaxScale;
+    }
+    std::fprintf(stderr, "[twinsanityevolved] vita: resolution %dx%s (the RESOLUTION row: 1x | 2x, 2x the console's "
+                         "maximum)\n", g_settings.scale, g_settings.scale == 2 ? ": the frame drawn at four times the pixels of 1x" : "");
+#endif
     g_settings.texture_filter = std::clamp(g_settings.texture_filter, 0, 3);
     g_settings.fullscreen = std::clamp(g_settings.fullscreen, 0, 2);
     g_settings.offset_x = std::clamp(g_settings.offset_x, -256, 256);
@@ -151,7 +172,7 @@ std::string Describe() {
 uint32_t Choices(uint32_t row) {
     switch (row) {
     case RowAspect: return 5;
-    case RowScale: return 4;
+    case RowScale: return uint32_t(kMaxScale);   // 1x .. 4x (the Vita: 1x, 2x)
     case RowTextureFilter: return 3;
     case RowVSync: return 2;
 #if defined(__vita__)
@@ -184,6 +205,10 @@ bool EffectiveVSync() { return g_settings.vsync && !Uncapped(); }
 std::string FrameRateHelp() { return MS(title::MenuStrings::Id::VSyncCapsRate); }
 bool GameRatePending() { return g_settings.game_hz != g_settings.running_hz; }
 std::string GameRateHelp() { return MS(title::MenuStrings::Id::GameRateNextStart); }
+#if defined(__vita__)
+bool ScaleAtMaximum() { return g_settings.scale >= kMaxScale; }
+std::string ScaleHelp() { return MS(title::MenuStrings::Id::ScaleVitaMaximum); }
+#endif
 bool GraphicsPageOpen() {
     const uint64_t now = Services::Get().clock().BoundaryCount();
     return g_page_polled_at != 0 && now >= g_page_polled_at && now - g_page_polled_at <= 1;

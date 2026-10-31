@@ -25,7 +25,7 @@ constexpr const char* kTable[MenuStrings::kCount][kLanguageCount] = {
     {"keyboard and mouse", "keyboard and mouse", "clavier et souris", "tastatur und maus", "teclado y raton",
      "tastiera e mouse"},
     // Scale
-    {"internal scale", "internal scale", "resolution interne", "interne skalierung", "escala interna", "scala interna"},
+    {"resolution", "resolution", "resolution", "aufloesung", "resolucion", "risoluzione"},
     // Scale1x .. Scale4x, ScaleNative (the title's ValueItems print digits: the font has them)
     {"1x", "1x", "1x", "1x", "1x", "1x"},
     {"2x", "2x", "2x", "2x", "2x", "2x"},
@@ -93,6 +93,10 @@ constexpr const char* kTable[MenuStrings::kCount][kLanguageCount] = {
     {"the game rate changes the next time the game starts", "the game rate changes the next time the game starts",
      "la vitesse du jeu change au prochain lancement", "das spieltempo aendert sich beim naechsten start",
      "la velocidad cambia la proxima vez que inicie el juego", "la velocita cambia al prossimo avvio del gioco"},
+    // ScaleVitaMaximum (two lines: `~` is the title's line break)
+    {"2x is the ps vita's maximum:~half the frame rate or less", "2x is the ps vita's maximum:~half the frame rate or less",
+     "2x est le maximum de la ps vita:~moitie des images ou moins", "2x ist das maximum der ps vita:~halbe bildrate oder weniger",
+     "2x es el maximo de la ps vita:~la mitad de cuadros o menos", "2x e il massimo della ps vita:~meta dei fotogrammi o meno"},
 };
 
 }  // namespace

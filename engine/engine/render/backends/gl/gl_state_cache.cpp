@@ -37,9 +37,11 @@ void GlStateCache::InvalidateAll() {
 void GlStateCache::BindFb(uint32_t target, uint32_t fbo) {
     if (target == GL_FRAMEBUFFER) {
         if (fbo_draw_ == fbo && fbo_read_ == fbo) return;
+        if (fb_hook_ && fbo_draw_ != fbo) fb_hook_(fb_hook_user_);
         fbo_draw_ = fbo_read_ = fbo;
     } else if (target == GL_DRAW_FRAMEBUFFER) {
         if (fbo_draw_ == fbo) return;
+        if (fb_hook_) fb_hook_(fb_hook_user_);
         fbo_draw_ = fbo;
     } else if (target == GL_READ_FRAMEBUFFER) {
         if (fbo_read_ == fbo) return;

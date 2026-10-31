@@ -92,6 +92,9 @@ public:
     QString vitaReadme() const { return vitaReadme_; }
     QString vitaDefaultDisc() const { return vitaDefaultDisc_; }
     QStringList vitaSettingsLeftOut() const { return vitaDroppedKeys_; }
+    // One sentence the folder's README says about the settings the console keeps for itself (targets.vita.folder.
+    // settings_note, with {data} {data_dir}): empty = none
+    QString vitaSettingsNote() const { return vitaSettingsNote_; }
     // The PS Vita explained: the discs on the console (targets.vita.discs_note: lines with {disc} {data} {disc_file}),
     // the Mods page's panel (targets.vita.mods_note) and About's section (targets.vita.about: the whole flow, one sentence a line)
     QStringList vitaDiscsNote() const { return vitaDiscsNote_; }
@@ -135,7 +138,7 @@ private:
     QVector<ComputerTarget> computers_;
     QString vitaLabel_, vitaFile_;
     QStringList vitaNote_;
-    QString vitaFolderName_, vitaDataDir_, vitaReadme_, vitaDefaultDisc_;
+    QString vitaFolderName_, vitaDataDir_, vitaReadme_, vitaDefaultDisc_, vitaSettingsNote_;
     QStringList vitaDroppedKeys_;
     QStringList vitaDiscsNote_, vitaAbout_;
     QString vitaModsNote_;

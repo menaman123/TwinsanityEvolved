@@ -62,6 +62,7 @@
         "readme": "README-vita.txt",
         "default_disc": "game.iso",
         "settings_left_out": ["paths.memcards", "paths.mods", "game.hz", "video.scale", "video.fullscreen", "video.vsync", "video.frame_rate"],
+        "settings_note": "The PS Vita has its own resolution setting, 1x or 2x in the game's Options > graphic options (2x is the console's maximum and runs at half the frame rate or less), so your computer's resolution is not copied.",
         "why": "the PS Vita folder: <game folder>/vita holds the package, README-vita.txt and ux0/data/twinsanity (the console's data folder as its memory card has it) with the game folder's ps2r.ini without the computer's own keys (its folders, its picture size, window, vertical sync and frame rate, and its game rate: the PS Vita has its own default -- the PAL disc's 50 Hz), a copy of the language packs and of the mods switched on, and disc-image.txt naming the disc's file name (game.iso when it is not a plain name)"
       }
     }
@@ -117,8 +118,8 @@
             ]
           },
           {
-            "key": "video.scale", "label": "Internal scale", "kind": "choice", "default": "1", "write_default": true,
-            "help": "How many times the PlayStation 2's resolution the game is drawn at.",
+            "key": "video.scale", "label": "Resolution", "kind": "choice", "default": "1", "write_default": true,
+            "help": "The size the game's picture is drawn at: 1x is the PlayStation 2's own, 4x draws sixteen times its pixels (sharper, and much more work for the graphics card).",
             "choices": [ { "value": "1", "label": "1x" }, { "value": "2", "label": "2x" }, { "value": "3", "label": "3x" }, { "value": "4", "label": "4x" } ]
           },
           {

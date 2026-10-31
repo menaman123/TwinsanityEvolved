@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "engine/render/backend.h"
+#include "engine/render/backends/gl/gl_gpu_timers.h"
 #include "engine/render/backends/gl/gl_shader_library.h"
 #include "engine/render/backends/gl/gl_state_cache.h"
 #include "engine/render/backends/gl/gl_texture_pool.h"
@@ -143,6 +144,9 @@ public:
     // colour surface sampled on unit 0, colour writes off, depth ALWAYS without writes, the
     // stencil REPLACEs `bits` under a write mask of `bits` where the fragment survives.
     bool MarkStencilWhereOpaque(SurfaceId color, SurfaceId stencil, uint8_t bits) override;
+    // ... over rectangles only (each a scissored clear / draw; the Vita's arms: the whole target, as before)
+    void ClearStencilIn(SurfaceId stencil, uint8_t value, const Rect* rects, int n) override;
+    bool MarkStencilWhereOpaqueIn(SurfaceId color, SurfaceId stencil, uint8_t bits, const Rect* rects, int n) override;
     // glReadPixels GL_STENCIL_INDEX from the stencil-only framebuffer.
     bool ReadbackStencil(SurfaceId stencil, const Rect& rect, uint8_t* out) override;
     void BeginFrame() override;
@@ -152,8 +156,17 @@ public:
     void EndDrawRun() override;
     // Default-framebuffer size Present falls back to when ScanoutDesc.dst is empty.
     void SetWindowSize(int w, int h) override;
-    // "draw_legacy" (Backend::SetOption): the executor's and the uniform cache's per-draw sequence as before the drawing thread's rework
+    // "draw_legacy" (Backend::SetOption): the executor's and the uniform cache's per-draw sequence as before the drawing thread's rework;
+    // "gpu_timers": the GPU phase timer's mode (gl_gpu_timers.h; the Vita's GL library has no timer queries: off there)
     void SetOption(const char* name, int value) override;
+    void MarkGpuPhase(int phase) override { gpu_timers_.Mark(phase, TimerWork()); }
+    void NoteGpuFill(int phase, double pixels, uint32_t count) override {
+        gpu_timers_.NoteFill(phase, pixels);
+        gpu_timers_.NoteCount(phase, count);
+    }
+    std::string GpuTimerLines(double wall_ms) override { return gpu_timers_.Lines(wall_ms); }
+    bool GpuTimersOn() const override { return gpu_timers_.On(); }
+    std::string DeviceName() const override { return device_name_; }
 
     // Binds GL_FRAMEBUFFER to the colour surface's fbo with `depth` attached
     // (attachment changed only when it differs). Returns the fbo (0 if none).
@@ -197,6 +210,14 @@ public:
 private:
     bool BuildRenderable(GlSurface& s);
     void ReleaseSurface(GlSurface& s);
+    bool MarkOpaque(SurfaceId color, SurfaceId stencil, uint8_t bits, const Rect* rects, int n);
+    // The GPU phase timer: the GL work issued so far (the executor's draws + the device's own clears, quads, copies and
+    // scanouts) names its segments; the draw framebuffer's changes are where a tile-based GPU's render pass ends
+    uint64_t TimerWork() const;
+    static void TimerFramebufferChanged(void* self);
+    GlGpuTimers gpu_timers_;
+    uint64_t timer_work_ = 0;
+    std::string device_name_;   // "renderer / OpenGL version" (Init)
 
     GlDeviceSettings settings_;
     bool initialized_ = false;
@@ -229,6 +250,17 @@ private:
     uint64_t vita_ps2_ab_presents_ = 0;
     std::chrono::steady_clock::time_point vita_last_present_{};
     bool vita_last_present_valid_ = false;
+    // A texture's levels below the first as UploadLevel was given them, held for FinishMipChain (the levels the PS2
+    // authored written over vitaGL's chain: see UploadLevel); the bytes are a copy (a caller may reuse its buffer)
+    struct HeldLevel {
+        uint32_t surface = 0;
+        int level = 0, w = 0, h = 0;
+        std::vector<uint8_t> rgba;
+    };
+    std::vector<HeldLevel> held_levels_;
+    // the texture bound to unit 0 checked for the storage vitaGL gave it (glTexImage2D): counted and, when it has none,
+    // logged with what the pools have left
+    void CheckVitaStorage(uint32_t width, uint32_t height, int level);
 #endif
     uint32_t present_nearest_ = 0; // window-only sampler objects; never alter shared textures
     uint32_t present_linear_ = 0;

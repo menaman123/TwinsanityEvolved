@@ -93,6 +93,7 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error, const QStr
     vitaReadme_ = vitaFolder.value("readme").toString("README-vita.txt");
     vitaDefaultDisc_ = vitaFolder.value("default_disc").toString("game.iso");
     vitaDroppedKeys_ = stringList(vitaFolder.value("settings_left_out"));
+    vitaSettingsNote_ = vitaFolder.value("settings_note").toString();
     vitaDiscsNote_ = stringList(vita.value("discs_note"));
     vitaModsNote_ = vita.value("mods_note").toString();
     vitaAbout_ = stringList(vita.value("about"));

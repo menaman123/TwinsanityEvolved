@@ -412,7 +412,7 @@ void PlanPass(ps2e_draw* dev, Draw* const* list, size_t count, size_t barrier, b
     }
     size_t barrier_slot = ~size_t(0);
     int32_t prev_cand = -1;   // the previous draw when it was a candidate (the consecutive census)
-    // THE CASTERS' ORDER: the frame keeps its first 128 shadow casters only (ps2e_draw.cpp CasterRoom), so where this
+    // THE CASTERS' ORDER: the frame keeps its first shadow casters only, up to a bound (ps2e_draw.cpp CasterRoom), so where this
     // bucket's draws that may record one outnumber the room left, WHICH are kept depends on their order -- then a draw that
     // may record one never moves over another that may (the casters' records stay in their order; the others' moves change
     // nothing in them). Where they fit the room, every one is kept whatever the order (and two that swap are box-disjoint:

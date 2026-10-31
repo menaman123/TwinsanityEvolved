@@ -2845,6 +2845,7 @@ extern "C" {
 // space = matrix * view.toClip, the lights' directions turned into the model's space (the rotation's transpose), drawn as the
 // view test found it (mode 1 wholly in view: no clipping; 2: clipped)
 void ps2e_graphics_draw_rigid_model(ps2e_u32 model, ps2e_u32 matrix, ps2e_u32 lights, ps2e_s32 mode) {
+    TE_SEAM(kSeamPlace);
     const Mem mem;
     const auto* rigid = mem.Get<te_gfx_rigid_model>(model);
     const auto world = ReadMatrix(matrix);
@@ -2901,6 +2902,7 @@ void ps2e_graphics_draw_rigid_model(ps2e_u32 model, ps2e_u32 matrix, ps2e_u32 li
 // DrawPlacedModel (models.cpp SetPlacedModelDMA): the chunk view's matrices of its last culling test (to the screen, to the clip
 // space), its clip vector and how the test found it. Billboards (shader type 1B) are drawn as placed for now.
 void ps2e_graphics_draw_placed_model(ps2e_u32 model, ps2e_u32 viewAddress, ps2e_u32 world) {
+    TE_SEAM(kSeamPlace);
     const Mem mem;
     const auto* rigid = mem.Get<te_gfx_rigid_model>(model);
     const auto* cv = mem.Get<ChunkView>(viewAddress);
@@ -2946,6 +2948,7 @@ void ps2e_graphics_draw_placed_model(ps2e_u32 model, ps2e_u32 viewAddress, ps2e_
 
 // ---- the sky (sky.cpp DrawSky): the sky's models around the camera, first in the frame, the depth left at the far plane ----
 void ps2e_gfx2_draw_sky(ps2e_u32 skyAddress, ps2e_u32 viewAddress, ps2e_u32 cameraAddress) {
+    TE_SEAM(kSeamSky);
     const auto* sky = Guest<te_gfx_sky>(skyAddress);
     const auto* view = Guest<RenderView>(viewAddress);
     const auto camera = ReadVector(cameraAddress);
@@ -3264,6 +3267,7 @@ void ps2e_graphics_end_shadows(void) {
 }
 
 void ps2e_graphics_draw_shadow_mesh(ps2e_u32 mesh, ps2e_u32 toScreen, ps2e_u32 toCamera, ps2e_u32 world) {
+    TE_SEAM(kSeamShadows);
     te::gfx::CountCall(te::gfx::kCallShadowMesh);
     if (ShadowsOff()) return;
     Timed timed(te::gfx::Scene().shadow_ms);
@@ -3489,6 +3493,7 @@ void ps2e_graphics_draw_shadow_mesh(ps2e_u32 mesh, ps2e_u32 toScreen, ps2e_u32 t
 
 // The chunk's planes from the camera's place in it: the view's planes and the far set (the retail arrays SetViewFrustum fills)
 void ps2e_graphics_load_chunk_planes(ps2e_u32 place) {
+    TE_SEAM_PART(kSeamBoxes);
     const auto matrix = ReadMatrix(place);
     const auto view = ReadPlanes(te::RetailAddress(kViewPlanes)), far = ReadPlanes(te::RetailAddress(kFarViewPlanes));
     if (!matrix || !view || !far) return;
@@ -3505,6 +3510,7 @@ void ps2e_graphics_load_chunk_planes(ps2e_u32 place) {
     g_cull.box.reset();
 }
 void ps2e_graphics_load_portal_planes(ps2e_u32 place, ps2e_u32 portal) {
+    TE_SEAM_PART(kSeamBoxes);
     const auto matrix = ReadMatrix(place);
     const auto view = ReadPlanes(te::RetailAddress(kViewPlanes)), far = ReadPlanes(te::RetailAddress(kFarViewPlanes)), sides = ReadPlanes(portal);
     if (!matrix || !view || !far || !sides) return;
@@ -3517,6 +3523,7 @@ void ps2e_graphics_load_portal_planes(ps2e_u32 place, ps2e_u32 portal) {
 }
 // The view's matrix, the renderer view's matrix to the screen and the camera's place; the link made the identity
 void ps2e_graphics_load_culling_view(ps2e_u32 toClip, ps2e_u32 toScreen, ps2e_u32 camera) {
+    TE_SEAM_PART(kSeamBoxes);
     const auto clip = ReadMatrix(toClip), screen = ReadMatrix(toScreen);
     const auto eye = ReadVector(camera);
     if (!clip || !screen || !eye) return;
@@ -3531,6 +3538,7 @@ void ps2e_graphics_load_culling_view(ps2e_u32 toClip, ps2e_u32 toScreen, ps2e_u3
     g_cull.box.reset();
 }
 void ps2e_graphics_cull_load_link(ps2e_u32 chunk, ps2e_u32 object) {
+    TE_SEAM_PART(kSeamBoxes);
     const auto c = ReadMatrix(chunk), o = ReadMatrix(object);
     if (!c || !o || !g_cull.view) return;
     MakeCullMatrices();   // the pending matrices need the link this replaces
@@ -3540,6 +3548,7 @@ void ps2e_graphics_cull_load_link(ps2e_u32 chunk, ps2e_u32 object) {
 #endif
 }
 void ps2e_graphics_cull_load_model(ps2e_u32 model) {
+    TE_SEAM_PART(kSeamBoxes);
     const Mem mem;
     const float* m = mem.Floats(model, 16);
     if (!m || !g_cull.link) return;
@@ -3557,6 +3566,7 @@ void ps2e_graphics_cull_load_model(ps2e_u32 model) {
     g_seams.modelLoads++;
 }
 void ps2e_graphics_cull_test_box(ps2e_u32 corners) {
+    TE_SEAM_PART(kSeamBoxes);
     const float* c = reinterpret_cast<const float*>(te::GuestPointer(corners, 32));
     if (!c || !g_cull.planes) return;
     title::CullingMath::Box box{{c[0], c[1], c[2], c[3]}, {c[4], c[5], c[6], c[7]}};
@@ -3589,6 +3599,7 @@ void ps2e_graphics_cull_test_box(ps2e_u32 corners) {
     g_seams.cellTests++;
 }
 void ps2e_graphics_cull_test_box_at(ps2e_u32 boxAddress, ps2e_u32 model) {
+    TE_SEAM(kSeamBoxes);
     const Mem mem;
     const float* c = mem.Floats(boxAddress, 8);
     const float* mf = mem.Floats(model, 16);
@@ -3761,6 +3772,7 @@ void ps2e_graphics_cull_test_box_at(ps2e_u32 boxAddress, ps2e_u32 model) {
 // CullOutcome {outside, clipped, distance}: the last test's masks (nonzero = out / partly out), the distance of the last
 // model or box test (vf15 keeps it across a cell test)
 void ps2e_graphics_cull_result(ps2e_u32 out) {
+    TE_SEAM_PART(kSeamBoxes);
     uint32_t* o = reinterpret_cast<uint32_t*>(te::GuestPointer(out, 12));
     if (!o) return;
     g_seams.results++;
@@ -3787,6 +3799,7 @@ void ps2e_graphics_cull_result(ps2e_u32 out) {
     o[2] = uint32_t(distance);
 }
 void ps2e_graphics_cull_matrices(ps2e_u32 clipped, ps2e_u32 toScreen) {
+    TE_SEAM_PART(kSeamBoxes);
     MakeCullMatrices();
     g_seams.matrixReads++;
     if (clipped) WriteMatrix(clipped, g_cull.toClip);
@@ -3796,6 +3809,7 @@ void ps2e_graphics_cull_matrices(ps2e_u32 clipped, ps2e_u32 toScreen) {
 // ---- ClipBox / ClipBoxAt (culling.cpp macro mode; the engine's ClippingMath): the corners through the view's matrix (and a
 // model's), scaled by the row after the matrix; flags[0] = every corner's bits together, flags[1] = their common bits -----------
 void ps2e_graphics_clip_box(ps2e_u32 view, ps2e_u32 boxAddress, ps2e_u32 flags) {
+    TE_SEAM_PART(kSeamBoxes);
     const auto matrix = ReadMatrix(view);
     const auto guard = ReadVector(view + 0x40);
     const float* c = reinterpret_cast<const float*>(te::GuestPointer(boxAddress, 32));
@@ -3808,6 +3822,7 @@ void ps2e_graphics_clip_box(ps2e_u32 view, ps2e_u32 boxAddress, ps2e_u32 flags) 
     f[1] = result.common;
 }
 void ps2e_graphics_clip_box_at(ps2e_u32 view, ps2e_u32 boxAddress, ps2e_u32 flags, ps2e_u32 model) {
+    TE_SEAM_PART(kSeamBoxes);
     const auto matrix = ReadMatrix(view);
     const auto guard = ReadVector(view + 0x40);
     const auto m = ReadMatrix(model);
@@ -4408,6 +4423,7 @@ void ps2e_gfx2_blend_skin_released(ps2e_u32 skin) {
 
 // DrawSkin (skins.cpp SetSkinDMA): every submodel under its material through the skinned lit strip program
 void ps2e_graphics_draw_skin(ps2e_u32 skinAddress, ps2e_u32 joints, ps2e_s32 jointCount, ps2e_u32 matrix, ps2e_u32 lights, ps2e_s32 mode) {
+    TE_SEAM(kSeamSkins);
     te::gfx::CountCall(te::gfx::kCallSkin);
 #if defined(__vita__)
     if (Opts().noDraw) return;   // (TE_GFX_NO_DRAW, read once: a function-local static's guard is a DMB per call)
@@ -4582,6 +4598,7 @@ void ps2e_graphics_draw_skin(ps2e_u32 skinAddress, ps2e_u32 joints, ps2e_s32 joi
 // packet through the blend programs with the shapes the game lists (weights[i] on shapes[i]) over the first part's factors
 void ps2e_graphics_draw_blend_skin(ps2e_u32 skinAddress, ps2e_u32 joints, ps2e_s32 jointCount, ps2e_u32 matrix, ps2e_u32 lights,
                                    ps2e_u32 weightsAddress, ps2e_u32 shapesAddress, ps2e_s32 shapeCount, ps2e_s32 mode) {
+    TE_SEAM(kSeamSkins);
     te::gfx::CountCall(te::gfx::kCallBlendSkin);
 #if defined(__vita__)
     if (Opts().noDraw) return;   // (read once: a function-local static's guard is a DMB per call)
