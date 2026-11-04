@@ -15,6 +15,7 @@
 #include <regex>
 #include <utility>
 #include <vector>
+#include <arm_neon.h>   // (the instanced draws' rows copied as quadwords)
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include "engine/render/backend.h"   // MeshVertex (the raw mesh draws' stream)
@@ -814,6 +815,70 @@ inline bool SameBytes(const void* a, const void* b, uint32_t bytes) {
         if (x[i] != y[i]) return false;
     return true;
 }
+// the four-word compare (a texture record's control words) inlined
+inline bool SameWords4(const void* a, const void* b) {
+    uint32_t p[4], q[4];
+    std::memcpy(p, a, 16);
+    std::memcpy(q, b, 16);
+    return ((p[0] ^ q[0]) | (p[1] ^ q[1]) | (p[2] ^ q[2]) | (p[3] ^ q[3])) == 0;
+}
+
+// THE PACKET DRAWS' CENSUS WITHOUT A VFP COMPARE. A replay counts the draw's share of the frame (its box clamped to the
+// frame: the "share of the drawn pixels" census) and checks the frame size it was recorded for; as float compares (each
+// std::min / std::max and test a VCMP and a VMRS, ten a draw) the Cortex-A9 waits at every flag transfer for its VFP
+// pipeline. Here the box's words are read into core registers and clamped there -- the same values, then the same double
+// product. A float's bits order as the float for two values of the same sign that are not NaNs.
+// two floats' words equal (memcmp's answer for 8 bytes, without its call)
+inline bool SameWords2(const float* a, const float* b) {
+    uint32_t p[2], q[2];
+    std::memcpy(p, a, 8);
+    std::memcpy(q, b, 8);
+    return ((p[0] ^ q[0]) | (p[1] ^ q[1])) == 0;
+}
+inline uint32_t FloatWord(const float* p) {
+    uint32_t u;
+    std::memcpy(&u, p, 4);
+    return u;
+}
+inline uint32_t FloatBitsOf(float f) {
+    uint32_t u;
+    std::memcpy(&u, &f, 4);
+    return u;
+}
+// the bits of std::max(0.f, std::min(v, top)) from v's bits, `top` a positive float's: a NaN (std::min keeps it, std::max's
+// `0 < NaN` then keeps its 0) and every value at or below 0 (-0 too) give +0, a value above top gives top
+inline uint32_t ClampedBits(uint32_t u, uint32_t top) {
+    if ((u & 0x7FFFFFFFu) > 0x7F800000u) return 0u;
+    if (int32_t(u) <= 0) return 0u;   // (a negative value, -0 or +0)
+    return u > top ? top : u;         // (both positive: their bits order as they do)
+}
+// the census's share of the frame of a box (x0, y0, x1, y1): the box clamped to the frame (fw, fh: the frame size's
+// float bits), (x1 - x0) * (y1 - y0) in double where x1 > x0 and y1 > y0, else 0
+inline double BoxShareOfFrame(const float* box, uint32_t fw, uint32_t fh) {
+    const uint32_t x0 = ClampedBits(FloatWord(box), fw), x1 = ClampedBits(FloatWord(box + 2), fw);
+    const uint32_t y0 = ClampedBits(FloatWord(box + 1), fh), y1 = ClampedBits(FloatWord(box + 3), fh);
+    if (!(x1 > x0 && y1 > y0)) return 0.0;   // (+0 or positive: compared as their bits)
+    float a, b, c, e;
+    std::memcpy(&a, &x0, 4);
+    std::memcpy(&b, &x1, 4);
+    std::memcpy(&c, &y0, 4);
+    std::memcpy(&e, &y1, 4);
+    return double(b - a) * double(e - c);
+}
+// the frame size's float bits (positive ints' floats), kept for the last size asked
+struct FrameBits {
+    uint32_t w, h;
+};
+inline FrameBits FrameSizeBits(int w, int h) {
+    static int last_w = -1, last_h = -1;
+    static FrameBits bits{0u, 0u};
+    if (w != last_w || h != last_h) {
+        last_w = w;
+        last_h = h;
+        bits = FrameBits{FloatBitsOf(static_cast<float>(w)), FloatBitsOf(static_cast<float>(h))};
+    }
+    return bits;
+}
 
 // THE RAW DRAWS' REDUNDANT SETS (TE_GFX_VITA_SKIP_SETS=0: every raw draw sets its texture and stream as before).
 // A raw draw (RawSubmit, a packet's replay, the skins') hands GXM its unit-0 texture and its stream 0 at every draw; the
@@ -822,21 +887,22 @@ inline bool SameBytes(const void* a, const void* b, uint32_t bytes) {
 // every scene begin / end), the same data pointer for stream 0 -- is skipped: GXM keeps both as context state between
 // draws, so the draw reads exactly what the set would have given it, and its own state emission has nothing new to write.
 int g_skip_sets = -1;   // -1 not read, 0 off, 1 on
-bool SkipSetsOn() {
-    if (g_skip_sets < 0) {
-        const char* e = std::getenv("TE_GFX_VITA_SKIP_SETS");
-        g_skip_sets = (e && e[0] == '0') ? 0 : 1;
-        const bool known = &te_gxm_last_texture0 && &te_gxm_last_texture0_words && &te_gxm_last_stream0;
-        if (!known) g_skip_sets = 0;
-        std::fprintf(stderr, "[gl] raw draws' redundant GXM sets (TE_GFX_VITA_SKIP_SETS): %s\n",
-                     g_skip_sets ? "skipped (a texture / stream the context already holds is not set again)"
-                                 : known ? "off (every raw draw sets its texture and stream)" : "off (the GXM call census is not linked)");
-    }
+__attribute__((noinline)) void ReadSkipSets() {
+    const char* e = std::getenv("TE_GFX_VITA_SKIP_SETS");
+    g_skip_sets = (e && e[0] == '0') ? 0 : 1;
+    const bool known = &te_gxm_last_texture0 && &te_gxm_last_texture0_words && &te_gxm_last_stream0;
+    if (!known) g_skip_sets = 0;
+    std::fprintf(stderr, "[gl] raw draws' redundant GXM sets (TE_GFX_VITA_SKIP_SETS): %s\n",
+                 g_skip_sets ? "skipped (a texture / stream the context already holds is not set again)"
+                             : known ? "off (every raw draw sets its texture and stream)" : "off (the GXM call census is not linked)");
+}
+inline bool SkipSetsOn() {
+    if (__builtin_expect(g_skip_sets < 0, 0)) ReadSkipSets();
     return g_skip_sets != 0;
 }
 inline void RawSetTexture0(const SceGxmTexture* t) {
     Census().raw_texture_sets++;
-    if (SkipSetsOn() && te_gxm_last_texture0 == t && SameBytes(te_gxm_last_texture0_words, t, 16)) {
+    if (SkipSetsOn() && te_gxm_last_texture0 == t && SameWords4(te_gxm_last_texture0_words, t)) {
         Census().raw_texture_skipped++;
         return;
     }
@@ -863,15 +929,16 @@ inline void RawSetStream0(const void* p) {
 // between the parameters zero; no program reads it: every uniform of a twin's programs is one the raw draw writes,
 // BuildRawTwin) and copied into the reserved buffer whole.
 int g_vertex_reuse = -1;   // -1 not read, 0 off, 1 on
-bool VertexReuseOn() {
-    if (g_vertex_reuse < 0) {
-        const char* e = std::getenv("TE_GFX_VITA_GXM_CACHE");
-        const bool known = &te_gxm_last_vertex_uniforms && &te_gxm_last_vertex_program;
-        g_vertex_reuse = (!known || (e && (e[0] == '0' || e[0] == 'w'))) ? 0 : 1;
-        std::fprintf(stderr, "[gl] raw mesh draws' vertex uniforms (TE_GFX_VITA_GXM_CACHE): %s\n",
-                     g_vertex_reuse ? "re-used when the context holds the same contents for the same program"
-                                    : known ? "a buffer per draw (off)" : "a buffer per draw (the GXM call census is not linked)");
-    }
+__attribute__((noinline)) void ReadVertexReuse() {
+    const char* e = std::getenv("TE_GFX_VITA_GXM_CACHE");
+    const bool known = &te_gxm_last_vertex_uniforms && &te_gxm_last_vertex_program;
+    g_vertex_reuse = (!known || (e && (e[0] == '0' || e[0] == 'w'))) ? 0 : 1;
+    std::fprintf(stderr, "[gl] raw mesh draws' vertex uniforms (TE_GFX_VITA_GXM_CACHE): %s\n",
+                 g_vertex_reuse ? "re-used when the context holds the same contents for the same program"
+                                : known ? "a buffer per draw (off)" : "a buffer per draw (the GXM call census is not linked)");
+}
+inline bool VertexReuseOn() {
+    if (__builtin_expect(g_vertex_reuse < 0, 0)) ReadVertexReuse();
     return g_vertex_reuse != 0;
 }
 constexpr uint32_t kRawVertexImage = 512;   // the largest vertex default uniform buffer composed here (BuildRawTwin's are ~100-220 B)
@@ -1164,6 +1231,9 @@ int g_packets_mode = -1;        // TE_GFX_VITA_PACKETS: -1 not read, 0 off, 1 on
 bool g_packets_on = true;       // ... and on (the in-run A/B's arm)
 bool g_instancing = false;      // the instanced packet draws (BuildLeanPrograms: TE_GFX_VITA_INSTANCING, twins built)
 bool g_instancing_split = false;   // (diagnosis: TE_GFX_VITA_INSTANCING=2 -- the instanced twin, one plain draw per instance)
+// (diagnosis: TE_GFX_VITA_INSTANCING=skip -- the instanced draws not made, counted as drawn: the picture a GPU that drew none
+// of them would show, for a recording beside a console's photo)
+bool g_instancing_skip = false;
 
 // a raw draw's packet, recorded (the census half is SelectPs2's, below). CONTENT-ADDRESSED: a packet whose content is a
 // current packet's (the run starts re-draw the same states every frame) takes that packet's slot and id instead of a new
@@ -1587,7 +1657,7 @@ int RawReplay(const RawPacket& k, uint32_t vbo, uint32_t ibo, uint32_t first, ui
     if (blend_raw != k.blend_raw || is_fbo_float != k.fbo_float) return 5;
     // the texture record as the recording draw handed it over: the same sampler state, size, levels and texels' address
     // (an upload, a re-specification, another draw's parameters: changed -- the slow path sets the texture again)
-    if (k.slot && !SameBytes(k.slot + kVglTextureGxmOffset, k.tex_words, sizeof k.tex_words)) return 4;
+    if (k.slot && !SameWords4(k.slot + kVglTextureGxmOffset, k.tex_words)) return 4;
     void* const base = *reinterpret_cast<void* const*>(uintptr_t(vbo));
     if (!base) return 7;
     const uint16_t* indices = default_idx_ptr;
@@ -1678,18 +1748,21 @@ int RawReplay(const RawPacket& k, uint32_t vbo, uint32_t ibo, uint32_t first, ui
 // program; the same fragment GXP as the packet's: the packet's composed fragment image unchanged), the packet's texture
 // and vertex constants -- then sceGxmDrawInstanced over the range (count indices per instance, the index pointer back at
 // the range's start for each). The instances draw in their order, each its triangles as its own replay would. -1 drawn;
-// else a packet_declined reason (checked before any GXM call).
+// else a packet_declined reason (checked before any GXM call), or 8: GXM refused the instanced draw (nothing drawn).
 int RawReplayInstances(const RawPacket& k, RawTwin& it, uint32_t vbo, uint32_t ibo, uint32_t first, uint32_t count,
                        const MeshInstance* inst, int n) {
     const RawTwin& t = *k.twin;
     if (!t.ok || !it.ok || !it.instanced || !it.frag_as_mesh || it.v_shift.offset < 0) return 3;
     if (n < 2 || n > kMaxInstances || count < 3 || count > kRawMaxVerts) return 7;
-    for (int i = 1; i < n; ++i)   // (one shift for the run: u_mesh_shift)
-        if (std::memcmp(inst[i].offset, inst[0].offset, 8) != 0 || std::memcmp(inst[i].scroll, inst[0].scroll, 8) != 0) return 7;
+    // (one shift for the run: u_mesh_shift -- a member whose shift is the first one's storage holds its words)
+    for (int i = 1; i < n; ++i)
+        if ((inst[i].offset != inst[0].offset && !SameWords2(inst[i].offset, inst[0].offset)) ||
+            (inst[i].scroll != inst[0].scroll && !SameWords2(inst[i].scroll, inst[0].scroll)))
+            return 7;
     uint32_t blend_raw;
     std::memcpy(&blend_raw, &blend_info, sizeof blend_raw);
     if (blend_raw != k.blend_raw || is_fbo_float != k.fbo_float) return 5;
-    if (k.slot && std::memcmp(k.slot + kVglTextureGxmOffset, k.tex_words, sizeof k.tex_words) != 0) return 4;
+    if (k.slot && !SameWords4(k.slot + kVglTextureGxmOffset, k.tex_words)) return 4;
     void* const base = *reinterpret_cast<void* const*>(uintptr_t(vbo));
     if (!base) return 7;
     const uint16_t* indices = default_idx_ptr;
@@ -1753,11 +1826,21 @@ int RawReplayInstances(const RawPacket& k, RawTwin& it, uint32_t vbo, uint32_t i
     // vertex uniforms are (GPU-mapped; the ring outlives the frame's GPU work), 16-aligned
     uint8_t* const raw_rows = static_cast<uint8_t*>(vglReserveUniformCircularPoolBuffer(uint32_t(n) * kInstanceRowBytes + 16));
     uint8_t* const rows = reinterpret_cast<uint8_t*>((uintptr_t(raw_rows) + 15) & ~uintptr_t(15));
-    for (int i = 0; i < n; ++i) std::memcpy(rows + size_t(i) * kInstanceRowBytes, inst[i].screen, 64);
+    // (each row's 64 bytes as four quadword loads and stores: the word loop was ~53 instructions a member)
+    for (int i = 0; i < n; ++i) {
+        const uint8_t* const from = reinterpret_cast<const uint8_t*>(inst[i].screen);
+        uint8_t* const to = rows + size_t(i) * kInstanceRowBytes;
+        vst1q_u8(to, vld1q_u8(from));
+        vst1q_u8(to + 16, vld1q_u8(from + 16));
+        vst1q_u8(to + 32, vld1q_u8(from + 32));
+        vst1q_u8(to + 48, vld1q_u8(from + 48));
+    }
     RawSetStream0(stream);
     std::memcpy(reinterpret_cast<uint8_t*>(uintptr_t(vbo)) + 12, &vgl_framecount, 4);   // vbo.last_frame (its deferred free)
     if (ibo) std::memcpy(reinterpret_cast<uint8_t*>(uintptr_t(ibo)) + 12, &vgl_framecount, 4);
-    if (g_instancing_split) {
+    if (g_instancing_skip) {
+        // (diagnosis: the run's state set as for the draw, the draw not made)
+    } else if (g_instancing_split) {
         // (diagnosis, TE_GFX_VITA_INSTANCING=2: the instanced twin's programs, one plain draw per instance -- the draw count
         // of the replays one by one, the instanced draws' programs and rows)
         for (int i = 0; i < n; ++i) {
@@ -1766,7 +1849,15 @@ int RawReplayInstances(const RawPacket& k, RawTwin& it, uint32_t vbo, uint32_t i
         }
     } else {
         sceGxmSetVertexStream(gxm_context, 1, rows);
-        sceGxmDrawInstanced(gxm_context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, indices, uint32_t(n) * count, count);
+        // GXM's answer looked at: an instanced draw it refuses draws nothing -- declined, the run's members are then drawn
+        // one by one (ps2e_draw's SubmitMeshRun: the same draws in the same order) instead of missing from the picture (the
+        // census wrapper counts the refusal, the executor the declined run)
+        if (sceGxmDrawInstanced(gxm_context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, indices, uint32_t(n) * count,
+                                count) < 0) {
+            dirty_shader_vert_unifs = 1;
+            dirty_shader_frag_unifs = 1;
+            return 8;
+        }
     }
     dirty_shader_vert_unifs = 1;
     dirty_shader_frag_unifs = 1;
@@ -2396,26 +2487,36 @@ bool GlShaderLibrary::BuildLeanPrograms(const char* vertex) {
                          "them take their path's one vertex program); mesh draw packets %s\n", twins, 2 * built, shared_vertex,
                          !raw_mesh_ ? "off (no raw draws)" : g_packets_mode == 0 ? "off (TE_GFX_VITA_PACKETS=0)"
                                                                                   : "on (TE_GFX_VITA_PACKETS=0: off)");
-        // THE INSTANCED MESH PATH -- OFF BY DEFAULT (TE_GFX_VITA_INSTANCING=1: on; =2 the diagnosis: the instanced
-        // twin's programs with one plain draw per instance): in Vita3K the instanced twin's pictures differ from the mesh
-        // path's by a few pixels of 1-4 levels where runs draw (the same with one plain draw per instance: the programs, not
-        // the instanced draw; the same with two forms of different arithmetic) -- not picture-identical in the
-        // emulator, so not on unless asked. Its vertex shader compiled once with the first variant's fragment shader, linked
-        // with every other variant's (as the paths above), each program's GXPs taken for its GXM twin -- the GL programs
+        // THE INSTANCED MESH PATH -- ON WITH THE PLAN'S DEFAULT (TE_GFX_VITA_INSTANCING=0: off; =2 the diagnosis: the instanced
+        // twin's programs with one plain draw per instance; the plans of TE_GFX_VITA_SORT / TE_GFX_VITA_INSTANCE draw
+        // through it). Its vertex program had summed the matrix rows in another order than the mesh path's -- its pictures
+        // a few edge pixels off where runs drew --; written in the mesh path's order (gl_shader_sources.cpp
+        // kLeanPs2InstVertSrc) its USSE is the mesh path's instruction for instruction. Its vertex shader compiled once
+        // with the first variant's fragment shader, linked with every other variant's (as the paths above), each program's
+        // GXPs taken for its GXM twin -- the GL programs
         // themselves never draw (deleted once their GXPs are taken). A variant's twin is used only when its fragment side
         // is its mesh twin's (the same GXP: a packet's composed fragment image serves both). Built in the shader seed's
         // run (TE_GL_SHADER_SEED_BUILD=1) too: the shipped cache holds them, an opt-in on the device compiles nothing.
         for (RawTwin& t : g_inst_twins) ReleaseRawTwin(t);
         const char* inst_env = std::getenv("TE_GFX_VITA_INSTANCING");
-        // TE_GFX_VITA_INSTANCE=1 / abN (platform graphics_batch.cpp's plan, drawn instanced) asks for the twins too
+        // TE_GFX_VITA_INSTANCE=1 / abN and TE_GFX_VITA_SORT=safe / full (platform graphics_batch.cpp's plan, drawn instanced)
+        // ask for the twins too
         if (!(inst_env && *inst_env)) {
+            // The plan's default is the full rule (graphics_batch.cpp): the twins are wanted unless TE_GFX_VITA_SORT=off or
+            // TE_GFX_VITA_INSTANCE names a mode of its own (0: plain draws)
             const char* plan_env = std::getenv("TE_GFX_VITA_INSTANCE");
-            if (plan_env && (plan_env[0] == '1' || (plan_env[0] == 'a' && plan_env[1] == 'b'))) inst_env = "1";
+            const char* sort_env = std::getenv("TE_GFX_VITA_SORT");
+            if (plan_env && *plan_env) {
+                if (plan_env[0] == '1' || (plan_env[0] == 'a' && plan_env[1] == 'b')) inst_env = "1";
+            } else if (!sort_env || !*sort_env || std::strcmp(sort_env, "full") == 0 || std::strcmp(sort_env, "safe") == 0) {
+                inst_env = "1";
+            }
         }
-        const bool inst_wanted = inst_env && (inst_env[0] == '1' || inst_env[0] == '2');
+        const bool inst_wanted = inst_env && (inst_env[0] == '1' || inst_env[0] == '2' || std::strcmp(inst_env, "skip") == 0);
         const bool inst_build = raw_mesh_ && g_packets_mode != 0 && (inst_wanted || BuildEverything());
         g_instancing = inst_build && inst_wanted;
         g_instancing_split = inst_wanted && inst_env[0] == '2';
+        g_instancing_skip = inst_wanted && std::strcmp(inst_env, "skip") == 0;
         if (inst_build) {
             std::string vsrc = GlShaderSources::LeanPs2InstancedVertex();
             {
@@ -2458,10 +2559,11 @@ bool GlShaderLibrary::BuildLeanPrograms(const char* vertex) {
             g_gxps.clear();
             if (vs_obj) glDeleteShader(vs_obj);
             if (!inst_twins) g_instancing = false;
-            std::fprintf(stderr, "[gl] instanced packet draws (TE_GFX_VITA_INSTANCING=1: on, off by default): %d of %d mesh-path "
+            std::fprintf(stderr, "[gl] instanced packet draws (TE_GFX_VITA_INSTANCING=1: on; on by default with the plan): %d of %d mesh-path "
                          "variants have an instanced GXM twin -- a run of draws of one packet, one mesh range and one shift is %s\n",
                          inst_twins, inst_tried,
-                         g_instancing_split ? "the instanced twin's programs, one plain draw per instance (=2: the diagnosis)"
+                         g_instancing_skip ? "NOT DRAWN (=skip, the diagnosis: the picture without the instanced draws)"
+                         : g_instancing_split ? "the instanced twin's programs, one plain draw per instance (=2: the diagnosis)"
                          : g_instancing ? "ONE instanced draw (the matrices on an instance stream)"
                                         : "drawn one by one (the twins built for the shader seed's run)");
         } else if (raw_mesh_ && g_packets_mode != 0) {
@@ -2807,16 +2909,12 @@ int GlShaderLibrary::DrawRawPacket(uint32_t id, uint32_t vbo, uint32_t ibo, uint
     if (g_packets_mode == 0 || !g_packets_on || !RawMeshEnabled() || !Ps2LeanEnabled() || !lean_ || lean_->key_census) return 0;
     const RawPacket& k = g_packets[id & (kPackets - 1)];
     if (!id || k.id != id || k.epoch != g_packet_epoch || !k.twin || !k.program) return 3;
-    // the u_screen_size it was recorded with is the run's (DrawMesh sets it from the target for every run)
-    if (k.twin->v_screen.offset >= 0 && (k.screen[0] != static_cast<float>(frame_w) || k.screen[1] != static_cast<float>(frame_h)))
-        return 6;
+    // the u_screen_size it was recorded with is the run's (DrawMesh sets it from the target for every run) -- compared as
+    // the floats' bits (equal bits <=> equal floats here: a frame size is a positive int's float, never -0 or a NaN)
+    const FrameBits fb = FrameSizeBits(frame_w, frame_h);
+    if (k.twin->v_screen.offset >= 0 && (FloatWord(&k.screen[0]) != fb.w || FloatWord(&k.screen[1]) != fb.h)) return 6;
     // the draw's share of the frame (as SelectPs2 counts the draw it replays; the fill census's stand-in box too)
-    double px = 0;
-    {
-        const float x0 = std::max(0.f, std::min(mp.box[0], float(frame_w))), x1 = std::max(0.f, std::min(mp.box[2], float(frame_w)));
-        const float y0 = std::max(0.f, std::min(mp.box[1], float(frame_h))), y1 = std::max(0.f, std::min(mp.box[3], float(frame_h)));
-        if (x1 > x0 && y1 > y0) px = double(x1 - x0) * double(y1 - y0);
-    }
+    const double px = BoxShareOfFrame(mp.box, fb.w, fb.h);
     const int why = RawReplay(k, vbo, ibo, first, count, mp, px);
     if (why >= 0) return why;
     // the census, as SelectPs2 counts the draw it replays (its lean program, vertex path, the draw's share of the frame)
@@ -2846,28 +2944,33 @@ int GlShaderLibrary::DrawRawPacketInstances(uint32_t id, uint32_t vbo, uint32_t 
     if (!id || k.id != id || k.epoch != g_packet_epoch || !k.twin || !k.program) return 3;
     if (k.variant < 0 || k.variant >= kLeanMax || k.twin != &g_raw_twins[0][k.variant]) return 3;   // (the unlit mesh path's)
     RawTwin& it = g_inst_twins[k.variant];
-    if (k.twin->v_screen.offset >= 0 && (k.screen[0] != static_cast<float>(frame_w) || k.screen[1] != static_cast<float>(frame_h)))
-        return 6;
+    const FrameBits fb = FrameSizeBits(frame_w, frame_h);
+    if (k.twin->v_screen.offset >= 0 && (FloatWord(&k.screen[0]) != fb.w || FloatWord(&k.screen[1]) != fb.h)) return 6;
     const int why = RawReplayInstances(k, it, vbo, ibo, first, count, inst, n);
     if (why >= 0) return why;
-    // the census, as DrawRawPacket counts each draw it replays
+    // the census, as DrawRawPacket counts each draw it replays -- the counts added once for the run, the pixel shares
+    // summed member by member in registers (the same additions in the same order: the same sums), stored once
     LeanState& ls = *lean_;
     LeanState::Program& p = *static_cast<LeanState::Program*>(k.program);
+    const float* last_box = nullptr;
+    double px = 0.0;
+    double pixels = p.pixels, all = ls.all_pixels, opaque = ls.opaque_pixels;
+    const bool counts_opaque = !k.blend && !k.discards;
     for (int i = 0; i < n; ++i) {
-        double px = 0;
-        const float* b = inst[i].box;
-        const float x0 = std::max(0.f, std::min(b[0], float(frame_w))), x1 = std::max(0.f, std::min(b[2], float(frame_w)));
-        const float y0 = std::max(0.f, std::min(b[1], float(frame_h))), y1 = std::max(0.f, std::min(b[3], float(frame_h)));
-        if (x1 > x0 && y1 > y0) px = double(x1 - x0) * double(y1 - y0);
-        ls.path_draws[k.path]++;
-        p.draws++;
-        p.pixels += px;
-        ls.all_pixels += px;
-        if (!k.blend) {
-            p.draws_opaque++;
-            if (!k.discards) ls.opaque_pixels += px;
+        if (inst[i].box != last_box) {   // (the members sharing a box's storage share its share)
+            last_box = inst[i].box;
+            px = BoxShareOfFrame(last_box, fb.w, fb.h);
         }
+        pixels += px;
+        all += px;
+        if (counts_opaque) opaque += px;
     }
+    p.pixels = pixels;
+    ls.all_pixels = all;
+    ls.opaque_pixels = opaque;
+    ls.path_draws[k.path] += uint64_t(n);
+    p.draws += uint64_t(n);
+    if (!k.blend) p.draws_opaque += uint64_t(n);
     Census().draws_ps2_lean += uint64_t(n);
     Census().draws_raw_mesh += uint64_t(n);
     return -1;

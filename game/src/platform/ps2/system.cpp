@@ -389,6 +389,30 @@ void Platform::System::ModWarpTarget(char* chunk, u32 size, u32* character)
     }
 }
 
+// The console never grants them
+u32 Platform::System::InfiniteLives()
+{
+    return 0;
+}
+
+// The console's loader waits its seconds
+u32 Platform::System::LoadReadsDone()
+{
+    return 0;
+}
+
+// No table of verified skips on the PS2: its cutscenes play as retail's
+u32 Platform::System::CutsceneSkippable(u32)
+{
+    return 0;
+}
+
+// No test tools on the console: nothing is ever asked
+u32 Platform::System::NextTestRequest(TestRequest*)
+{
+    return 0;
+}
+
 Platform::System::DateTime Platform::System::LocalTime()
 {
     sceCdCLOCK clock;

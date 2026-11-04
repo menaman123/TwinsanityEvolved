@@ -250,4 +250,127 @@ std::string WindowLine(uint64_t from, uint64_t to) {
     return b;
 }
 
+// ---- the slow-tick and slow-picture lines' caps (TE_TICK_LOG_CAP, TE_PICTURE_LOG_CAP) --------------------------------------
+namespace {
+
+// A slow-line log's window (counted by the thread that logs -- the game thread for the ticks, the drawing thread for the
+// pictures -- and taken by the window line on the thread that prints the census): relaxed atomics, as the window above;
+// the lines not printed by the top section of their profile (the first kTops sections met in the window, the rest "other")
+// under a flag that the logging thread only tries: it never spins on the census thread, which may run at a lower priority
+// on its core (a line the try misses is one of the window's "other")
+constexpr int kTops = 6;
+struct TopRow {
+    const char* name;
+    uint32_t n;
+    uint64_t us;
+};
+struct SlowLog {
+    const char* cap_env;
+    std::atomic<uint64_t> over{0}, logged{0}, longest_us{0}, log_us{0};
+    std::atomic<uint64_t> not_n{0}, not_us{0}, not_max_us{0}, not_max_at{0}, missed_n{0}, missed_us{0};
+    TopRow tops[kTops] = {};
+    int tops_used = 0;
+    uint32_t other_n = 0;
+    uint64_t other_us = 0;
+    std::atomic_flag tops_lock = ATOMIC_FLAG_INIT;
+    explicit SlowLog(const char* env) : cap_env(env) {}
+    long Cap() const {
+        const char* v = std::getenv(cap_env);
+        const long n = v ? std::atol(v) : 0;
+        return n > 0 ? n : 0L;
+    }
+};
+SlowLog g_ticklog("TE_TICK_LOG_CAP"), g_piclog("TE_PICTURE_LOG_CAP");
+long TickCap() { static const long cap = g_ticklog.Cap(); return cap; }
+long PictureCap() { static const long cap = g_piclog.Cap(); return cap; }
+
+bool Wanted(SlowLog& t, long cap, double ms, double log_ms) {
+    if (cap <= 0) return true;
+    t.over.fetch_add(1, std::memory_order_relaxed);
+    t.log_us.store(Us(log_ms), std::memory_order_relaxed);
+    const uint64_t us = Us(ms), longest = t.longest_us.load(std::memory_order_relaxed);
+    if (us > longest) t.longest_us.store(us, std::memory_order_relaxed);
+    const bool wanted = t.logged.load(std::memory_order_relaxed) < uint64_t(cap) || ms >= 2.0 * log_ms || us > longest;
+    if (wanted) t.logged.fetch_add(1, std::memory_order_relaxed);
+    return wanted;
+}
+
+void NotLogged(SlowLog& t, uint64_t at, double ms, const char* top) {
+    const uint64_t us = Us(ms);
+    t.not_n.fetch_add(1, std::memory_order_relaxed);
+    t.not_us.fetch_add(us, std::memory_order_relaxed);
+    if (us > t.not_max_us.load(std::memory_order_relaxed)) {
+        t.not_max_us.store(us, std::memory_order_relaxed);
+        t.not_max_at.store(at, std::memory_order_relaxed);
+    }
+    const char* name = top ? top : "(no samples)";
+    if (t.tops_lock.test_and_set(std::memory_order_acquire)) {
+        t.missed_n.fetch_add(1, std::memory_order_relaxed);
+        t.missed_us.fetch_add(us, std::memory_order_relaxed);
+        return;
+    }
+    int k = 0;
+    while (k < t.tops_used && std::strcmp(t.tops[k].name, name) != 0) ++k;
+    if (k == t.tops_used && t.tops_used < kTops) t.tops[t.tops_used++] = TopRow{name, 0, 0};
+    if (k < t.tops_used) {
+        t.tops[k].n++;
+        t.tops[k].us += us;
+    } else {
+        t.other_n++;
+        t.other_us += us;
+    }
+    t.tops_lock.clear(std::memory_order_release);
+}
+
+// `what` names the lines ("slow ticks", "slow pictures"), `at` what a line is at ("boundary", "present")
+std::string Line(SlowLog& t, long cap, const char* what, const char* at_what, const char* ms_env, uint64_t from, uint64_t to) {
+    if (cap <= 0) return std::string();
+    const uint64_t over = Take(t.over), logged = Take(t.logged);
+    Take(t.longest_us);
+    const uint64_t not_n = Take(t.not_n), not_us = Take(t.not_us), not_max = Take(t.not_max_us), not_at = Take(t.not_max_at);
+    const double log_ms = double(t.log_us.load(std::memory_order_relaxed)) / 1000.0;
+    TopRow tops[kTops];
+    while (t.tops_lock.test_and_set(std::memory_order_acquire)) {}
+    const int used = std::min(t.tops_used, kTops);
+    std::copy(t.tops, t.tops + used, tops);
+    const uint32_t other_n = t.other_n + uint32_t(Take(t.missed_n));
+    const uint64_t other_us = t.other_us + Take(t.missed_us);
+    t.tops_used = 0;
+    t.other_n = 0;
+    t.other_us = 0;
+    t.tops_lock.clear(std::memory_order_release);
+    if (!not_n) return std::string();
+    // the rows by their milliseconds, the most first (at most kTops: an insertion sort)
+    for (int i = 1; i < used; ++i)
+        for (int k = i; k > 0 && tops[k].us > tops[k - 1].us; --k) std::swap(tops[k], tops[k - 1]);
+    auto ms = [](uint64_t u) { return double(u) / 1000.0; };
+    char b[1536];
+    int at = std::snprintf(b, sizeof b,
+                           "[te.load] presents %llu-%llu: %s not logged %llu of %llu over %g ms (%s=%g, %s=%ld: %llu logged, the first %ld "
+                           "and then the ones of %g ms or more and the window's longest so far); the ones not logged %.0f ms, the longest "
+                           "%.1f ms at %s %llu; by the top section of their profile:",
+                           (unsigned long long)from, (unsigned long long)to, what, (unsigned long long)not_n, (unsigned long long)over,
+                           log_ms, ms_env, log_ms, t.cap_env, cap, (unsigned long long)logged, cap, 2.0 * log_ms, ms(not_us), ms(not_max),
+                           at_what, (unsigned long long)not_at);
+    for (int k = 0; k < used && at > 0 && at < int(sizeof b); ++k)
+        at += std::snprintf(b + at, sizeof b - size_t(at), "%s %s %u (%.0f ms)", k ? "," : "", tops[k].name, tops[k].n, ms(tops[k].us));
+    if (other_n && at > 0 && at < int(sizeof b))
+        at += std::snprintf(b + at, sizeof b - size_t(at), ", other %u (%.0f ms)", other_n, ms(other_us));
+    if (at > 0 && at < int(sizeof b)) at += std::snprintf(b + at, sizeof b - size_t(at), "\n");
+    if (at >= int(sizeof b)) b[sizeof b - 2] = '\n', b[sizeof b - 1] = 0;
+    return b;
+}
+
+}  // namespace
+
+bool TickLineWanted(double tick_ms, double log_ms) { return Wanted(g_ticklog, TickCap(), tick_ms, log_ms); }
+void NoteTickNotLogged(uint64_t boundary, double tick_ms, const char* top) { NotLogged(g_ticklog, boundary, tick_ms, top); }
+bool PictureLineWanted(double picture_ms, double log_ms) { return Wanted(g_piclog, PictureCap(), picture_ms, log_ms); }
+void NotePictureNotLogged(uint64_t present, double picture_ms, const char* top) { NotLogged(g_piclog, present, picture_ms, top); }
+
+std::string TickLogLine(uint64_t from, uint64_t to) {
+    return Line(g_ticklog, TickCap(), "slow ticks", "boundary", "TE_TICK_LOG_MS", from, to) +
+           Line(g_piclog, PictureCap(), "slow pictures", "present", "TE_PICTURE_LOG_MS", from, to);
+}
+
 }  // namespace te::load

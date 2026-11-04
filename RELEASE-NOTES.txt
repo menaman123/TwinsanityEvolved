@@ -1,7 +1,28 @@
-# TwinsanityEvolved 0.9.1 -- what's new
+# TwinsanityEvolved 0.9.2 -- what's new
 
 Crash Twinsanity as a native game for Windows, macOS, Linux and the PS Vita: the twinsanity-reversed decompilation running
 on the NativeEE engine. **No game data is included: you play with your own disc image.**
+
+## New in 0.9.2
+
+- **Skip more in-game cutscenes with X.** Most of the game's scripted cutscenes can now be skipped too (45 of the 51
+  checked), not only those with a skip of their own: a skip plays the cutscene's remaining frames through at once, so
+  the characters, the camera and the level end up exactly where watching it would leave them. The few that cannot be
+  skipped that way yet still play to their end.
+- **Faster loading screens.** A level's parts are put in place as soon as they are read, so the loading picture is up
+  for well under a second on a computer.
+- **PS Vita: walls no longer vanish** in tunnels and corridors (the Boiler Room and others): a model wholly in view is
+  always drawn.
+- **PS Vita: smoother Rooftop Rampage** and faster heavy scenes; the parts of the level ahead are read from the
+  memory card in advance, and the game no longer waits for the card while you play.
+- **PS Vita: one package.** `twinsanityevolved-<version>-vita.vpk` now runs the game's code natively on the console; the
+  separate `-vita-native.vpk` of earlier releases is gone. Installing it over an earlier package keeps
+  `ux0:data/twinsanity/`.
+- **New mod: infinite lives** (Options > Mods): a death costs no life, so a checkpoint restart never ends in a game
+  over. Saves made with it on go to the mods memory card.
+
+Save states made with 0.9.1 do not load in 0.9.2 (a save state belongs to the build that made it); memory card saves
+are not affected.
 
 ## New in 0.9.1
 
@@ -158,12 +179,10 @@ E = triangle, W A S D = left stick, mouse = camera, Y = start, Tab = select).
 
 - The refractive ice's frame copies (Ice Climb) are taken only when needed and only for the region drawn since the last
   one, with the same pictures: on the emulator the copy passes' pixels per picture fell from 6.1 M to 0.27 M.
-- **A second PS Vita package to try:** `twinsanityevolved-<version>-vita-native.vpk` runs the game's code natively on the
-  console's ARM processor instead of through a translation layer. In the emulator it is identical in game state, sound and
-  picture sequence to the main package on every tested route, and its hot functions have about half the instructions; how
-  much faster the console runs it is what the console's own log tells. Same title: installing it replaces the program and
-  keeps `ux0:data/twinsanity/`; reinstall the main package to go back. The main package stays the proven one until the
-  console's figures make the native one the default.
+- **The PS Vita package runs the game's code natively** on the console's ARM processor instead of through a translation
+  layer: `twinsanityevolved-<version>-vita.vpk` is still the one package, and its hot functions have about half the
+  instructions. It is the same title: installing it over an earlier package keeps `ux0:data/twinsanity/`, and your memory
+  cards load in it (a card written by either package loads in the other).
 
 ## Fixes
 

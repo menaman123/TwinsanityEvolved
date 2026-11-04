@@ -160,7 +160,7 @@ namespace {
 // caller's image in place (the caller discards it) and the MAC / STATUS chain, which nothing but the final registers
 // observes (the FSAND tests read their producers' raw results directly), is not kept: the same arithmetic, the same
 // packets.
-template <bool kFull>
+template <bool kFull, bool kClamped = true>
 bool RunCContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
     // FMAC rule for every op below: the RAW result feeds the MAC push, the
     // CLAMPED result is stored. A-form MULA/MADDA broadcast operands read
@@ -170,6 +170,19 @@ bool RunCContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
     if ((in.start_pc != kCContEntryPc && in.start_pc != kCContReentryPc) || in.regs == nullptr) return false;
 
     VuChopRoundGuard chop_guard;
+
+    // The FMAC clamps: an operand as read (NaN / Inf -> +/-MAX, denormal -> +/-0) and a result as stored. kClamped false is
+    // RunCContKicksUnclamped's form: there every clamp is the identity (its gate: the floats the program reads are normal or
+    // zero, so every register holds a normal, zero or +/-MAX value, and the FPU flushes a denormal result to a zero of its
+    // sign as the clamp would), so the body does the arithmetic alone
+    auto In = [](u32 bits) -> float {
+        if constexpr (kClamped) return CF(bits2f(bits));
+        else return bits2f(bits);
+    };
+    auto St = [](float f) -> u32 {
+        if constexpr (kClamped) return f2bits(CF(f));
+        else return f2bits(f);
+    };
 
     u8* const s_mem = kFull ? WorkingCopy(in).data() : memory;
     QwPtr m{s_mem};
@@ -187,36 +200,36 @@ bool RunCContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
     // Single-lane FMACs: raw = op(CF(a), CF(b)); push; store CF(raw).
     // Returns the RAW result bits (FSAND producers test its sign).
     auto sub_lane = [&](int vfd, int k, u32 a, u32 b) -> u32 {
-        const float f = CF(bits2f(a)) - CF(bits2f(b));
+        const float f = In(a) - In(b);
         const u32 rb = f2bits(f);
         u32 raw[4] = {0, 0, 0, 0};
         raw[k] = rb;
         push(raw, (u8)(8u >> k));
-        W(vfd, k) = f2bits(CF(f));
+        W(vfd, k) = St(f);
         return rb;
     };
     auto add_lane = [&](int vfd, int k, u32 a, u32 b) {
-        const float f = CF(bits2f(a)) + CF(bits2f(b));
+        const float f = In(a) + In(b);
         u32 raw[4] = {0, 0, 0, 0};
         raw[k] = f2bits(f);
         push(raw, (u8)(8u >> k));
-        W(vfd, k) = f2bits(CF(f));
+        W(vfd, k) = St(f);
     };
     auto mul_lane = [&](int vfd, int k, u32 a, u32 b) {
-        const float f = CF(bits2f(a)) * CF(bits2f(b));
+        const float f = In(a) * In(b);
         u32 raw[4] = {0, 0, 0, 0};
         raw[k] = f2bits(f);
         push(raw, (u8)(8u >> k));
-        W(vfd, k) = f2bits(CF(f));
+        W(vfd, k) = St(f);
     };
     // Masked vector ops (per-lane, both operands clamped).
     auto vec_add = [&](int vfd, int vfa, int vfb, u8 mask) {
         u32 raw[4] = {0, 0, 0, 0};
         for (int k = 0; k < 4; ++k)
             if (mask & (8u >> k)) {
-                const float f = CF(bits2f(W(vfa, k))) + CF(bits2f(W(vfb, k)));
+                const float f = In(W(vfa, k)) + In(W(vfb, k));
                 raw[k] = f2bits(f);
-                W(vfd, k) = f2bits(CF(f));
+                W(vfd, k) = St(f);
             }
         push(raw, mask);
     };
@@ -224,9 +237,9 @@ bool RunCContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
         u32 raw[4] = {0, 0, 0, 0};
         for (int k = 0; k < 4; ++k)
             if (mask & (8u >> k)) {
-                const float f = CF(bits2f(W(vfa, k))) - CF(bits2f(W(vfb, k)));
+                const float f = In(W(vfa, k)) - In(W(vfb, k));
                 raw[k] = f2bits(f);
-                W(vfd, k) = f2bits(CF(f));
+                W(vfd, k) = St(f);
             }
         push(raw, mask);
     };
@@ -234,21 +247,21 @@ bool RunCContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
         u32 raw[4] = {0, 0, 0, 0};
         for (int k = 0; k < 4; ++k)
             if (mask & (8u >> k)) {
-                const float f = CF(bits2f(W(vfa, k))) * CF(bits2f(W(vfb, k)));
+                const float f = In(W(vfa, k)) * In(W(vfb, k));
                 raw[k] = f2bits(f);
-                W(vfd, k) = f2bits(CF(f));
+                W(vfd, k) = St(f);
             }
         push(raw, mask);
     };
     // Dest-form broadcast MUL/MULq (bc operand CLAMPED).
     auto mul_bc = [&](int vfd, int vfs, u32 bc_bits, u8 mask) {
-        const float bc = CF(bits2f(bc_bits));
+        const float bc = In(bc_bits);
         u32 raw[4] = {0, 0, 0, 0};
         for (int k = 0; k < 4; ++k)
             if (mask & (8u >> k)) {
-                const float f = CF(bits2f(W(vfs, k))) * bc;
+                const float f = In(W(vfs, k)) * bc;
                 raw[k] = f2bits(f);
-                W(vfd, k) = f2bits(CF(f));
+                W(vfd, k) = St(f);
             }
         push(raw, mask);
     };
@@ -259,9 +272,9 @@ bool RunCContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
         u32 raw[4] = {0, 0, 0, 0};
         for (int k = 0; k < 4; ++k)
             if (mask & (8u >> k)) {
-                const float f = CF(bits2f(W(vfs, k))) * bc;
+                const float f = In(W(vfs, k)) * bc;
                 raw[k] = f2bits(f);
-                r.ACC.I[k] = f2bits(CF(f));
+                r.ACC.I[k] = St(f);
             }
         push(raw, mask);
     };
@@ -270,21 +283,21 @@ bool RunCContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
         u32 raw[4] = {0, 0, 0, 0};
         for (int k = 0; k < 4; ++k)
             if (mask & (8u >> k)) {
-                const float f = VuFloat::Fma(CF(bits2f(W(vfs, k))), bc, CF(bits2f(r.ACC.I[k])));
+                const float f = VuFloat::Fma(In(W(vfs, k)), bc, In(r.ACC.I[k]));
                 raw[k] = f2bits(f);
-                r.ACC.I[k] = f2bits(CF(f));
+                r.ACC.I[k] = St(f);
             }
         push(raw, mask);
     };
     // Dest-form broadcast MADD (bc CLAMPED, reads architectural ACC).
     auto madd_bc = [&](int vfd, int vfs, u32 bc_bits, u8 mask) {
-        const float bc = CF(bits2f(bc_bits));
+        const float bc = In(bc_bits);
         u32 raw[4] = {0, 0, 0, 0};
         for (int k = 0; k < 4; ++k)
             if (mask & (8u >> k)) {
-                const float f = VuFloat::Fma(CF(bits2f(W(vfs, k))), bc, CF(bits2f(r.ACC.I[k])));
+                const float f = VuFloat::Fma(In(W(vfs, k)), bc, In(r.ACC.I[k]));
                 raw[k] = f2bits(f);
-                W(vfd, k) = f2bits(CF(f));
+                W(vfd, k) = St(f);
             }
         push(raw, mask);
     };
@@ -305,9 +318,9 @@ bool RunCContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
     {  // SUB.xyzw vf24,vf24,vf24 | XTOP vi04
         u32 raw[4];
         for (int k = 0; k < 4; ++k) {
-            const float f = CF(bits2f(W(24, k))) - CF(bits2f(W(24, k)));
+            const float f = In(W(24, k)) - In(W(24, k));
             raw[k] = f2bits(f);
-            W(24, k) = f2bits(CF(f));
+            W(24, k) = St(f);
         }
         push(raw, 0xF);
         vi(4) = (u16)in.top;
@@ -440,9 +453,9 @@ bool RunCContBody(const Vu1HleInput& in, u8* memory, Vu1HleOutput& out) {
                 {  // SUB.xyz vf24, vf24, vf24 (zero-fill, flags xyz)
                     u32 raw[4] = {0, 0, 0, 0};
                     for (int k = 0; k < 3; ++k) {
-                        const float f = CF(bits2f(W(24, k))) - CF(bits2f(W(24, k)));
+                        const float f = In(W(24, k)) - In(W(24, k));
                         raw[k] = f2bits(f);
-                        W(24, k) = f2bits(CF(f));
+                        W(24, k) = St(f);
                     }
                     push(raw, 0xE);
                 }
@@ -482,6 +495,118 @@ bool ZeroKick::RunCCont(const Vu1HleInput& in, Vu1HleOutput& out) { return RunCC
 bool ZeroKick::RunCContKicks(const Vu1HleInput& in, uint8_t* memory, Vu1HleOutput& out) {
     if (!memory || memory != in.data) return false;
     return RunCContBody<false>(in, memory, out);
+}
+
+namespace {
+// The FPU's flush-to-zero for a scope (bit 24 of the ARM VFP's FPSCR / the AArch64 FPCR: a denormal operand reads as a
+// zero of its sign and a denormal result is written as one). Off on other processors: there the unclamped form is not
+// taken.
+class FlushToZeroScope {
+public:
+    FlushToZeroScope() {
+#if defined(__arm__) && defined(__ARM_FP)
+        uint32_t fpscr;
+        asm volatile("vmrs %0, fpscr" : "=r"(fpscr));
+        if (!(fpscr & kFz)) {
+            asm volatile("vmsr fpscr, %0" : : "r"(fpscr | uint32_t(kFz)) : "memory");
+            set_ = kFz;
+        }
+        on_ = true;
+#elif defined(__aarch64__)
+        uint64_t fpcr;
+        asm volatile("mrs %0, fpcr" : "=r"(fpcr));
+        if (!(fpcr & kFz)) {
+            asm volatile("msr fpcr, %0" : : "r"(fpcr | kFz) : "memory");
+            set_ = kFz;
+        }
+        on_ = true;
+#endif
+    }
+    ~FlushToZeroScope() {
+        if (!on_ || set_ == 0) return;
+#if defined(__arm__) && defined(__ARM_FP)
+        uint32_t fpscr;
+        asm volatile("vmrs %0, fpscr" : "=r"(fpscr));
+        asm volatile("vmsr fpscr, %0" : : "r"(fpscr & ~uint32_t(kFz)) : "memory");
+#elif defined(__aarch64__)
+        uint64_t fpcr;
+        asm volatile("mrs %0, fpcr" : "=r"(fpcr));
+        asm volatile("msr fpcr, %0" : : "r"(fpcr & ~kFz) : "memory");
+#endif
+    }
+    FlushToZeroScope(const FlushToZeroScope&) = delete;
+    FlushToZeroScope& operator=(const FlushToZeroScope&) = delete;
+    bool On() const { return on_; }
+
+private:
+    [[maybe_unused]] static constexpr uint64_t kFz = 1u << 24;   // (read only by the ARM arms above)
+    uint64_t set_ = 0;   // the flush bit this scope set (0: the thread flushed already)
+    bool on_ = false;
+};
+
+// The lanes of the table the class-C body reads as FMAC operands hold finite floats (not a NaN, not an infinity): the matrix
+// (QW 79..82), the head's near clip, gravity and time (QW 83 x, y, w), the 64 steps -- a step's first quadword whole (also
+// stored raw: its colour), its second's x and y (z and w are not read) -- and the two quadwords past them that the last
+// step's look-ahead loads (88..217)
+bool FiniteTable(const u8* mem) {
+    u32 bad = 0;
+    const auto lanes = [&](u32 qw, int n) {   // the quadword's first n lanes
+        const u8* q = mem + (qw & 0x3FF) * 16;
+        for (int k = 0; k < n; ++k) {
+            u32 w;
+            std::memcpy(&w, q + k * 4, 4);
+            // exponent 0xFF: (w & 0x7F800000) + 0x00800000 carries into bit 31; any other exponent does not
+            bad |= (w & 0x7F800000u) + 0x00800000u;
+        }
+    };
+    for (u32 qw = 79; qw <= 82; ++qw) lanes(qw, 4);
+    {
+        u32 head[4];
+        std::memcpy(head, mem + 83 * 16, 16);
+        bad |= (head[0] & 0x7F800000u) + 0x00800000u;
+        bad |= (head[1] & 0x7F800000u) + 0x00800000u;
+        bad |= (head[3] & 0x7F800000u) + 0x00800000u;
+    }
+    for (u32 qw = 88; qw <= 216; qw += 2) {
+        lanes(qw, 4);
+        lanes(qw + 1, 2);
+    }
+    return (bad & 0x80000000u) == 0;
+}
+
+// The particles' 32 pairs and the pair after the last (TOP+1 .. TOP+66; an unused particle's position is all ones, a NaN)
+// clamped in place. The body reads these lanes through the operand clamp only -- LQ into vf26 / vf18, then FMAC operands
+// or FTOI0 (which clamps), never a raw store, move or compare before an FMAC result replaces them -- and the clamp is
+// idempotent, so the kicks are the ones the unclamped image gives the clamped form.
+void ClampPairs(u8* mem, u32 top) {
+    for (u32 qw = top + 1; qw <= top + 66; ++qw) {
+        u8* q = mem + (qw & 0x3FF) * 16;
+        for (int k = 0; k < 4; ++k) {
+            u32 w;
+            std::memcpy(&w, q + k * 4, 4);
+            const u32 c = VuFloat::ClampBits1(w);
+            if (c != w) std::memcpy(q + k * 4, &c, 4);
+        }
+    }
+}
+}  // namespace
+
+// The clamps of the body are the identity when every float it reads is finite and the FPU flushes denormals to zero
+// (FPSCR.FZ: the game thread's mode on the console, which every build job runs under): an operand clamp then maps a
+// normal value or a zero to itself and a denormal to the zero the FPU reads it as, and every result -- finite under
+// round-toward-zero, flushed when denormal -- is stored as the result clamp would store it; the raw results the FSAND
+// tests read keep their sign. So the arithmetic alone gives RunCContKicks' kicks byte for byte. The table must be finite
+// as it stands (its steps' first quadwords are also stored raw); the particles are clamped in place first (ClampPairs).
+// The clamped form runs when the table is not finite or the processor's flush cannot be set (`unclamped` says which ran).
+bool ZeroKick::RunCContKicksUnclamped(const Vu1HleInput& in, uint8_t* memory, Vu1HleOutput& out, bool* unclamped) {
+    if (unclamped) *unclamped = false;
+    if (!memory || memory != in.data) return false;
+    if (!FiniteTable(memory)) return RunCContBody<false>(in, memory, out);
+    FlushToZeroScope flush;
+    if (!flush.On()) return RunCContBody<false>(in, memory, out);
+    ClampPairs(memory, in.top);
+    if (unclamped) *unclamped = true;
+    return RunCContBody<false, false>(in, memory, out);
 }
 
 

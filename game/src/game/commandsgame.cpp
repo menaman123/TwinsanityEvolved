@@ -8,7 +8,9 @@
 #include "game/clock.h"
 #include "game/controllers.h"
 #include "game/cutscenereader.h"
+#include "game/cutsceneskip.h"
 #include "game/gamecontroller.h"
+#include "game/language.h"
 #include "game/layout.h"
 #include "game/objectnode.h"
 #include "game/objects.h"
@@ -17,6 +19,9 @@
 #include "game/progress.h"
 #include "game/string.h"
 #include "game/widgets.h"
+#include "platform/system.h"
+
+#include <stdio.h>
 
 // The commands that ask the game's controllers: the game controller's requests, the video controller, the music, the player, the
 // custom pickups and projectiles
@@ -94,10 +99,22 @@ void UnlinkCharactersCommand::Execute(TimeClock*, BehaviourRunner* runner, Behav
     }
 }
 
-// The watching screen shown over half the seconds given (and hidden the same way)
-void CutsceneStartCommand::Execute(TimeClock*, BehaviourRunner*, BehaviourLevel*)
+// The watching screen shown over half the seconds given (and hidden the same way). TwinsanityEvolved: the runner's agent is the
+// cutscene's director, and the graphs it runs say whether the cutscene may be skipped (game/cutsceneskip.h)
+void CutsceneStartCommand::Execute(TimeClock*, BehaviourRunner* runner, BehaviourLevel*)
 {
+    u32 state = G_GameController->State();
+    if (state == GameController::StatePlaying)
+    {
+        ForgetCutsceneAgents();
+    }
+
     G_GameController->StartCutscene(static_cast<s32>(seconds * 0.5f * g_ClockUnitsPerSecond));
+    if (state == GameController::StatePlaying || state == GameController::StateWatching)
+    {
+        NoteCutsceneDirector(runner->agentNode->owner);
+        NoteCutsceneSite(runner);
+    }
 }
 
 void CutsceneEndCommand::Execute(TimeClock*, BehaviourRunner*, BehaviourLevel*)
@@ -192,8 +209,15 @@ void QueueObjectVideoCommand::Execute(TimeClock*, BehaviourRunner* runner, Behav
     QueueObjectMovie(G_VideoController, object, instance, cutscene);
 }
 
+// TwinsanityEvolved: a skipped cutscene's speech track not queued (game/cutsceneskip.h; CutsceneMusicReady answers ready, the
+// track's StartQueuedVideo finds nothing asked)
 void QueueVideoCommand::Execute(TimeClock* clock, BehaviourRunner* runner, BehaviourLevel*)
 {
+    if (CutsceneSkips(runner->agentNode) != 0)
+    {
+        return;
+    }
+
     s32 trackNumber = track.IntWith(static_cast<ObjectNode*>(runner->agentNode)->PacketProperties());
     QueueMovie(G_VideoController, trackNumber, clock, flags.loops);
 }
@@ -223,8 +247,6 @@ extern "C"
 {
     // A colour made of three channels, alpha 1 (the floats after it)
     void MakeColour(u32* colour, f32 red, f32 green, f32 blue) RETAIL_N32(FUN_0011bea0);
-    // The bottom texts by their index (nothing sets it: the commands read a text at the index's address)
-    extern const char* const* g_BottomTexts RETAIL(D_00309B14);
 }
 
 
@@ -246,6 +268,25 @@ void ShowTextLine(const char* text, f32 x, f32 y, f32 red, f32 green, f32 blue, 
     line->place.y = y;
     line->scale.x = Scale;
     line->scale.y = Scale;
+}
+
+// A script's text by its number: a line of the scripts' text file in force (Language\AgentLab\<language>.txt; the bottom
+// texts the commands read at D_00309B14 are g_Texts[AgentLabTexts]). TwinsanityEvolved: retail read the line table unchecked,
+// so a number past the file's lines took the words after the table as a text: on the PS2 a stray address (the game stops),
+// here an out-of-bounds trap. A mod's level scripts can number texts the disc's text file does not have -- a crate made for
+// the North American disc numbers the lines its American.txt adds, which the European program never reads -- so past the
+// end the text is empty and the log names the number. Every retail number is within the file (the signs' 32..99 of 100)
+const char* ScriptText(u32 text)
+{
+    const u32 lines = g_TextLineCounts[AgentLabTexts];
+    if (text < lines)
+    {
+        return g_Texts[AgentLabTexts][text];
+    }
+
+    printf("[te.mods] tolerated: a script shows text %u, the scripts' text file has %u lines: shown empty\n",
+           static_cast<unsigned>(text), static_cast<unsigned>(lines));
+    return g_EmptyText;
 }
 
 // The model of an object's slot (none for NoModelSlot)
@@ -272,7 +313,15 @@ void AddLivesCommand::Execute(TimeClock*, BehaviourRunner* runner, BehaviourLeve
     InstanceContext* played = controller->progress.Instance(controller->progress.play.character);
     if (lives > 0 || owner == played)
     {
-        controller->oleg.AddLives(lives, 0);
+        // TwinsanityEvolved: with the platform's infinite lives on, a life taken is not taken -- the lives are shown as
+        // they are, and the checkpoint restart that follows a death never finds them gone (RestartFromCheckpoint)
+        s32 given = lives;
+        if (given < 0 && Platform::System::InfiniteLives() != 0)
+        {
+            given = 0;
+        }
+
+        controller->oleg.AddLives(given, 0);
     }
 }
 
@@ -307,7 +356,7 @@ void RaiseStoryAreaCommand::Execute(TimeClock*, BehaviourRunner* runner, Behavio
 
 void DisplayBottomTextCommand::Execute(TimeClock*, BehaviourRunner*, BehaviourLevel*)
 {
-    ShowTextLine(g_BottomTexts[text], x, y, red, green, blue, seconds);
+    ShowTextLine(ScriptText(static_cast<u32>(text)), x, y, red, green, blue, seconds);
 }
 
 // The text of the instance's first integer property (to 10 the texts from 30, past it the texts from 52)
@@ -318,7 +367,7 @@ void DisplayBottomTextInstanceCommand::Execute(TimeClock*, BehaviourRunner* runn
     constexpr u32 HighTextOffset = 41;
     u32 number = static_cast<u32>(static_cast<ObjectNode*>(runner->agentNode)->properties->GetInt(0));
     u32 index = number > LastLowNumber ? number + HighTextOffset : number + LowTextOffset;
-    ShowTextLine(g_BottomTexts[index], x, y, red, green, blue, seconds);
+    ShowTextLine(ScriptText(index), x, y, red, green, blue, seconds);
 }
 
 // The boss bar's length and health, its icon the model of the object's slot (the object of the node it takes its object from

@@ -8,6 +8,7 @@
 #include "audio_service.h"
 #include "ps2e_seam.h"
 #include "stream_service.h"
+#include "te_loading.h"
 #include "te_test.h"
 #include "te_test_adpcm.h"
 #include "te_test_iso.h"
@@ -329,6 +330,104 @@ void TestWithoutDisc() {
     CHECK_EQ(te::GuestPointer(0x00400000, 1)[0], 0);
     s.CloseFile(f);
 }
+
+// THE LOADS (te_loading.h): the game's state word at a boundary puts the stream service at the device's speed while the game
+// is in a loading state with disc.speed = device -- a read in place in the call, what was in flight landed, no frame waited,
+// the drive model's busy time untouched and its head left where the load's last read ended; LoadReadsDone 1 there and only
+// there. At the console's pace, or in another state, the drive model.
+void SetGameState(unsigned state) {
+    te_test::WriteValue<uint32_t>(0x00309888, 0x7F0000);   // G_GameController (PAL) -> a controller in the test memory
+    te_test::WriteValue<uint64_t>(0x7F0008, uint64_t(state) << 44);
+}
+
+void TestLoads() {
+    for (const bool device : {true, false}) {
+        te::Settings settings = te_test::DefaultSettings();
+        settings.iso_path = g_iso;
+        settings.stream_instant = false;
+        settings.disc_speed = device ? te::Settings::DiscSpeed::Device : te::Settings::DiscSpeed::Console;
+        te_test::Reset(settings);
+        Service().Reset();
+        te::audio::Service().Configure(false);
+        te::loading::Install();
+        auto& s = Service();
+        te::Clock& clock = te::Services::Get().clock();
+        clock.Start();
+        CHECK_EQ(s.Initialise(9, 0x400000), 0);
+        const int32_t f0 = s.OpenFile("Crash6/Data.bd");
+        const auto expected = te_test::Pattern(5000, 0x11);
+        const uint32_t dest = 0x00400000;
+        // The menu (MainMenu 8): the drive model -- a read in flight, due in frame 2
+        SetGameState(8);
+        clock.Boundary();
+        CHECK(!s.Loading());
+        CHECK(ps2e_system_load_reads_done() == 0);
+        s.Read(3, f0, 0, 1000, dest);
+        CHECK(s.PendingEndMs(3) > 42.0);
+        CHECK(s.IsReading(3));
+        // LoadingLevel (9) from the next boundary on
+        SetGameState(9);
+        clock.Boundary();
+        CHECK_EQ(s.Loading(), device);
+        if (!device) {
+            // the console's pace: the read lands at its drive end, a load's read is modelled, the loader waits
+            CHECK(s.IsReading(3));
+            CHECK(ps2e_system_load_reads_done() == 0);
+            CHECK_EQ(s.Wait(3), 0);
+            s.Read(4, f0, 1000, 3000, dest + 0x1000);
+            CHECK(s.PendingEndMs(4) > 0);
+            CHECK(ps2e_system_load_reads_done() == 0);
+            CHECK_EQ(s.Wait(4), 0);
+            continue;
+        }
+        // the read in flight as the load began was landed at that boundary (its bytes were read at its issue)
+        CHECK_EQ(s.PendingEndMs(3), 0.0);
+        CHECK(std::memcmp(te::GuestPointer(dest, 1000), expected.data(), 1000) == 0);
+        CHECK(!s.IsReading(3));
+        CHECK(ps2e_system_load_reads_done() == 1);   // nothing in flight: the loader goes on
+        // reads in the load: in place in the call, no poll charged, no frame waited, counted -- the 35 sectors of PAD.BIN
+        // (32 ms of drive) and the ELF beyond them
+        const int32_t pad = s.OpenFile("CRASH6/PAD.BIN");
+        const int32_t elf = s.OpenFile("\\SLES_525.68;1");
+        const auto pad_bytes = te_test::Pattern(70000, 0x22);
+        const uint64_t polls = s.Count().busy_polls, parks = s.Count().wait_parks, frame = clock.BoundaryCount();
+        s.Read(4, pad, 0, 70000, dest + 0x10000);
+        CHECK(std::memcmp(te::GuestPointer(dest + 0x10000, 70000), pad_bytes.data(), 70000) == 0);
+        CHECK(!s.IsReading(4));
+        CHECK_EQ(s.Wait(4), 0);
+        auto& a = te::audio::Service();
+        a.Reset();
+        a.ReserveSounds(0x100);
+        s.ReadSoundBank(2, 0x8001, s.OpenFile("CRASH6/BANK.BD"), 0, 160);   // a bank too: in the registry at once
+        CHECK(a.Audio().HasSound(0x8001));
+        s.Read(6, elf, 0, 16, dest + 0x2000);
+        CHECK(std::memcmp(te::GuestPointer(dest + 0x2000, 16), "SLES_525.68-TEST", 16) == 0);
+        CHECK_EQ(s.Count().busy_polls, polls);
+        CHECK_EQ(s.Count().wait_parks, parks);
+        CHECK_EQ(clock.BoundaryCount(), frame);
+        CHECK_EQ(s.DeviceReads().reads, 3u);
+        CHECK_EQ(s.DeviceReads().bytes, 70016u + 160u);
+        CHECK(ps2e_system_load_reads_done() == 1);
+        // two more frames of the load (the menu's read, landed at the load's start, would have ended in the second)
+        clock.Boundary();
+        clock.Boundary();
+        CHECK(s.Loading());
+        // StartingPlay (11): the drive model again. A read of the ELF seeks nothing (the head where the load's last read
+        // ended, not at the data the menu read) and waits for nothing the load read (the model's busy time was not advanced
+        // by the 32 ms of PAD.BIN and the seeks between the files: modelled, they would end past 170 ms): its end is one
+        // sector's transfer after this frame's start
+        SetGameState(11);
+        clock.Boundary();
+        CHECK(!s.Loading());
+        CHECK(ps2e_system_load_reads_done() == 0);
+        const double start = double(clock.BoundaryCount()) * StreamService::kFrameMs;
+        s.Read(5, elf, 0, 16, dest + 0x3000);
+        CHECK(s.PendingEndMs(5) > start && s.PendingEndMs(5) < start + 3.0);
+        CHECK_EQ(s.Wait(5), 0);
+        CHECK(std::memcmp(te::GuestPointer(dest + 0x3000, 16), "SLES_525.68-TEST", 16) == 0);
+        s.CloseFile(f0);
+    }
+}
 }  // namespace
 
 int main() {
@@ -348,6 +447,7 @@ int main() {
     TestSeamBodies();
     TestWithoutDisc();
     TestDriveModel();
+    TestLoads();
 
     std::remove(g_iso.c_str());
     return te_test::Finish("test_stream");

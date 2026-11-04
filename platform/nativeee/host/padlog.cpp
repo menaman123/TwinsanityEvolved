@@ -29,6 +29,9 @@ struct Timeline {
     std::string language;         // `# language=<name>`: one language for both rows (an older recording's)
     std::string text_language;    // `# text-language=<name>` / `# speech-language=<name>`: the two languages the log was
     std::string speech_language;  // recorded under (te_language.h)
+    // `# disc-speed=device|console`: how the loads read the disc in the recording (te_loading.h); a log without it was recorded
+    // at the console's pace (every log before the setting)
+    Settings::DiscSpeed disc_speed = Settings::DiscSpeed::Console;
     std::vector<Entry> entries;   // sorted by from
     Pads::Sample At(uint64_t boundary) const {
         Pads::Sample s;
@@ -103,6 +106,10 @@ bool Parse(const std::string& path, bool allow_hold, Timeline& out, std::string*
         // `# text-language=<name>` / `# speech-language=<name>`: a recording under the two languages (te_language.h)
         if (line.rfind("# text-language=", 0) == 0) out.text_language = value(16);
         if (line.rfind("# speech-language=", 0) == 0) out.speech_language = value(18);
+        // `# disc-speed=<device|console>`: a load lasts a different number of boundaries at either speed, so a recording's
+        // boundaries hold only at its own; the replay pins it unless the run named one itself
+        if (line.rfind("# disc-speed=", 0) == 0)
+            out.disc_speed = value(13) == "device" ? Settings::DiscSpeed::Device : Settings::DiscSpeed::Console;
         const size_t hash = line.find('#');
         if (hash != std::string::npos) line.erase(hash);
         std::istringstream in(line);
@@ -150,6 +157,21 @@ bool Install(Timeline&& timeline) {
             std::fprintf(stderr, "[twinsanityevolved] padlog: recorded against %s -- %s\n", what.c_str(), language::Describe().c_str());
         } else {
             std::fprintf(stderr, "[twinsanityevolved] padlog: recorded against %s, the run named its own language (the recording's boundaries may not hold)\n", what.c_str());
+        }
+    }
+    {
+        const Settings& was = GetSettings();
+        const char* name = g_play.disc_speed == Settings::DiscSpeed::Device ? "device" : "console";
+        if (!was.disc_speed_given) {
+            if (was.disc_speed != g_play.disc_speed) {
+                Settings s = was;
+                s.disc_speed = g_play.disc_speed;
+                SetSettings(s);
+            }
+            std::fprintf(stderr, "[twinsanityevolved] padlog: recorded at the %s's disc speed -- the loads replayed so\n", name);
+        } else if (was.disc_speed != g_play.disc_speed) {
+            std::fprintf(stderr, "[twinsanityevolved] padlog: recorded at the %s's disc speed, the run named another (the recording's "
+                                 "boundaries after a load may not hold)\n", name);
         }
     }
     Services::Get().pads().SetOverrideSampler([](unsigned port, unsigned slot) {
@@ -222,6 +244,8 @@ bool Record(const std::string& path, std::string* error) {
             if (t.text >= 0) std::fprintf(g_record, "# text-language=%s\n", t.texts[size_t(t.text)].name.c_str());
             if (t.speech >= 0) std::fprintf(g_record, "# speech-language=%s\n", t.speeches[size_t(t.speech)].name.c_str());
         }
+        // ... and the disc speed of its loads (te_loading.h)
+        std::fprintf(g_record, "# disc-speed=%s\n", GetSettings().disc_speed == Settings::DiscSpeed::Device ? "device" : "console");
     }
     g_have_last = false;
     std::fflush(g_record);

@@ -93,6 +93,9 @@ private:
     size_t slice_end_ = 0;
     uint64_t frame_bytes_ = 0;             // bytes this vitaGL frame uploaded (the census' per-frame peak)
     uint64_t overflows_ = 0;
+    uint32_t slice_writer_[kVitaSlices] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};   // (the GPU-lifetime audit: the
+                                                                                                  //  frame that last wrote each slice)
+    void BeginSlice(uint32_t frame);       // this frame's slice: the audit's check, then the offsets
 #endif
 };
 

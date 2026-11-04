@@ -18,3 +18,4 @@ ps2e_text_font_size	s32		text: the size of the language in force's own font file
 ps2e_text_font_read	s32	u32:out,s32:size	text: the language's own font file copied into out (size bytes); returns the bytes copied
 ps2e_text_diag	s32		text: 1 when the shaped texts are logged (TE_GFX_DIAG_TEXT)
 ps2e_text_shaped	void	u32:record	text: Font::Draw -- one shaped text's census (te::text::Diag in guest memory): the host prints its lines' boxes and glyphs
+ps2e_gfx2_resources_changed	void		graphics: the module's resource code is about to change a material, a shader, a texture or a model (the seam epoch moves: platform/nativeee/host/te_seam_epoch.h)

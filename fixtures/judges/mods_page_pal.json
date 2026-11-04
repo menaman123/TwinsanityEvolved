@@ -83,7 +83,8 @@
     "run_seconds": 600,
     "rows": [
       "level select",
-      "speedrun mode : off"
+      "speedrun mode : off",
+      "infinite lives : off"
     ],
     "row_pattern": " : (off|on)$",
     "toggled": "speedrun",
@@ -111,7 +112,7 @@
     "never_written": [
       "mods.antagony.enabled"
     ],
-    "why": "the route walks title -> main menu -> options -> mods, one row down and CROSS. The mods folder holds the order pair (order_a, order_b: ON, switched in the launcher -- the settings file), the code-changes mod (OFF), a North American mod (ON, left out on this disc by the base check) and the Arabic language pack (an earlier version's switch on, first in mods.order). The page lists ONLY the mods that apply while the game runs: 'level select' and 'speedrun mode : off|on' -- no folder mod's name, no note, nothing about the pack, and no other '<name> : off|on' row; the second row is speedrun mode, and CROSS switches it on at once (the log, the row reads 'speedrun mode : on', the settings file gets mods.speedrun.enabled = on). Nothing in the game writes a folder mod's key: the launcher's lines are as they were and none is added. The start-up log keeps the left-out line"
+    "why": "the route walks title -> main menu -> options -> mods, one row down and CROSS. The mods folder holds the order pair (order_a, order_b: ON, switched in the launcher -- the settings file), the code-changes mod (OFF), a North American mod (ON, left out on this disc by the base check) and the Arabic language pack (an earlier version's switch on, first in mods.order). The page lists ONLY the mods that apply while the game runs: 'level select', 'speedrun mode : off|on' and 'infinite lives : off|on' -- no folder mod's name, no note, nothing about the pack, and no other '<name> : off|on' row; the second row is speedrun mode, and CROSS switches it on at once (the log, the row reads 'speedrun mode : on', the settings file gets mods.speedrun.enabled = on). Nothing in the game writes a folder mod's key: the launcher's lines are as they were and none is added. The start-up log keeps the left-out line"
   },
   "applied": {
     "changed": "graphic optionb",

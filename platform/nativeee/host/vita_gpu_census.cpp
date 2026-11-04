@@ -7,13 +7,17 @@
 #include <psp2/kernel/threadmgr.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <unordered_map>
 
 #include "engine/platform/ps2e/ps2e_draw.h"
 #include "engine/render/backends/gl/gl_census.h"
+#include "engine/render/backends/gl/gl_gpu_lifetime.h"
 #include "te_graphics_hooks.h"
 
 // vitaGL r1488's globals, read only: the context it draws on (gxm.c), the fragment notification it passes to every
@@ -64,6 +68,27 @@ Timed g_gl_draw_arrays;   // vitaGL's glDrawArrays as a whole (its CPU work per 
 // so a count costs a load, an add and a store, not an atomic read-modify-write)
 enum GxmCategory { kGxmDraws, kGxmInstanced, kGxmStreams, kGxmTextures, kGxmPrograms, kGxmUniforms, kGxmState, kGxmCategories };
 uint32_t g_gxm_calls[kGxmCategories];
+// The draws GXM refused in the window (a return below 0: nothing drawn; the backend's calls do not look at it), plain and
+// instanced, with the first refusal's error and index counts (its whole count, and an instance's for an instanced draw);
+// and the instanced draws' whole index counts (an instance's indices times the instances): the window's largest, those
+// above 49152 -- the most any plain draw here asks for (vitaGL's progressive index buffer, the raw draws' bound) -- and
+// those of 64000 or more (psp2/gxm.h: 16-bit index sources "must be lower than 64000")
+uint32_t g_refused_plain = 0, g_refused_instanced = 0;
+int g_refused_error = 0;
+uint32_t g_refused_count = 0, g_refused_wrap = 0;
+uint32_t g_inst_largest = 0, g_inst_above_plain = 0, g_inst_64000 = 0;
+// (TE_GFX_VITA_KEEP_DEPTH=always) the scenes of the kept frame target the BeginScene wrapper began loading: after a break
+// that was not a screen copy (a copy switches the load on itself, before its break)
+uint32_t g_keep_loads = 0;
+inline void NoteRefused(bool instanced, int error, unsigned int count, unsigned int wrap) {
+    if (!g_refused_plain && !g_refused_instanced) {
+        g_refused_error = error;
+        g_refused_count = count;
+        g_refused_wrap = wrap;
+    }
+    if (instanced) g_refused_instanced++;
+    else g_refused_plain++;
+}
 
 // vitaGL's vglMemType: VRAM, RAM, PHYCONT, BUDGET, EXTERNAL (the newlib heap)
 constexpr int kPools = 5;
@@ -134,6 +159,11 @@ const void* te_gxm_last_stream0 = nullptr;
 // scissor masks): a raw mesh draw whose composed vertex uniforms equal the buffer it set last, while the context still
 // holds that buffer for the same program, sets none (gl_shader_library.cpp RawSetVertexUniforms)
 const void* te_gxm_last_vertex_uniforms = nullptr;
+// TE_GFX_VITA_KEEP_DEPTH=always (gl_device.cpp KeepDepthAcrossCopies): the frame target's depth/stencil surface whose depth
+// this frame stores at every scene end, and the scenes of it begun since -- every later one is begun loading what the scene
+// before stored (the wrapper below), whatever ended that scene
+void* te_gxm_keep_surface = nullptr;
+unsigned te_gxm_keep_begins = 0;
 
 // (a scene's begin and end forget them all)
 #define ForgetLastGxmSets()                                                                                \
@@ -249,6 +279,121 @@ inline SceGxmContext* VglContext() { return &gxm_context ? gxm_context : nullptr
 // the cache answers for this call: vitaGL's context, inside a scene (in_scene is only ever set with the cache on)
 inline bool Cached(SceGxmContext* c) { return g_gxm.in_scene && c && c == VglContext(); }
 
+// ---- THE GXM STREAM'S HASH (TE_GFX_GXMHASH=1; diagnosis) --------------------------------------------------------------
+// Every call on vitaGL's context that reaches the library, by CONTENT and in order: the programs (the patcher's addresses,
+// the same run to run), the fragment textures' four control words, the vertex streams, the depth / stencil / raster sets,
+// the scenes, each draw's arguments and -- at the draw -- the bytes of the default uniform buffers it reads (its programs'
+// sizes) and an instanced draw's instance rows (stream 1, 64 bytes an instance): the uniform ring's addresses never enter.
+// One value a presented picture ("[te.gxmhash] present N: ...", OnPresented), so two runs of one deterministic route
+// compare what the GPU was handed picture for picture -- whatever path the drawing thread took to hand it over.
+// Off: a load and a branch a call.
+int g_gxmhash = -1;   // -1 unread, 0 off, 1 on
+uint64_t g_gh = 1469598103934665603ull;
+uint32_t g_gh_draws = 0, g_gh_calls = 0;
+// TE_GFX_GXMHASH_AT=N: picture N's calls listed one a line with the running hash after the call before it (the first line
+// two runs differ at names the call)
+long g_gh_at = -1;
+uint64_t g_gh_present = 1;   // (the picture being handed over: presents so far + 1)
+const void* g_gh_vub = nullptr;   // the default uniform buffers the context reads (set, or reserved by GXM)
+const void* g_gh_fub = nullptr;
+uint32_t g_gh_vsize = 0, g_gh_fsize = 0;   // the bound programs' default uniform buffer sizes (bytes)
+const void* g_gh_stream1 = nullptr;        // vertex stream 1 as the context holds it
+constexpr uint32_t kGhRowBytes = 64;       // an instanced draw's row (gl_shader_library.cpp kInstanceRowBytes)
+inline bool GxmHashOn() {
+    if (__builtin_expect(g_gxmhash < 0, 0)) {
+        const char* e = std::getenv("TE_GFX_GXMHASH");
+        g_gxmhash = e && e[0] == '1' ? 1 : 0;
+        if (const char* a = std::getenv("TE_GFX_GXMHASH_AT")) g_gh_at = std::atol(a);
+        if (g_gxmhash)
+            std::fprintf(stderr, "[te.gxmhash] on (TE_GFX_GXMHASH=1): every GXM call on vitaGL's context hashed by content, one "
+                         "line a presented picture\n");
+    }
+    return g_gxmhash > 0;
+}
+inline void GhBytes(const void* p, size_t n) {
+    const uint8_t* q = static_cast<const uint8_t*>(p);
+    uint64_t h = g_gh;
+    for (size_t i = 0; i < n; ++i) h = (h ^ q[i]) * 1099511628211ull;
+    g_gh = h;
+}
+inline void GhWord(uint32_t w) { GhBytes(&w, sizeof w); }
+// The stream's objects by NAME, not address, named afresh every picture: each address (a program, a surface, a stream's
+// data, the indices) and each texture record by the order they first reach the hash in the picture -- the GPU memory a
+// picture uses is alive throughout it, so two runs name a picture's objects alike wherever their allocations landed (vitaGL
+// frees on its own thread: the addresses differ run to run); and a newly named object's CONTENT is hashed with its name --
+// a stream's first 64 bytes, a texture's control words without its texels' address and its first 64 texel bytes -- so
+// another object in the same place still changes the hash. (The indices a draw reads are hashed whole at the draw.)
+struct GhNames {
+    std::unordered_map<uint32_t, uint32_t> addresses;
+    std::map<std::array<uint32_t, 4>, uint32_t> textures;
+};
+GhNames& Names() {
+    static GhNames* n = new GhNames;   // (never destroyed: the wrappers may run during exit)
+    return *n;
+}
+// `head`: the bytes at the address to fingerprint it by when it is new in the picture (0: none)
+inline void GhPtr(const void* p, size_t head = 0) {
+    if (!p) {
+        GhWord(0);
+        return;
+    }
+    auto& a = Names().addresses;
+    const auto r = a.emplace(uint32_t(reinterpret_cast<uintptr_t>(p)), uint32_t(a.size() + 1));
+    GhWord(r.first->second);
+    if (r.second && head) GhBytes(p, head);
+}
+inline void GhTexture(const SceGxmTexture* t) {
+    std::array<uint32_t, 4> w;
+    std::memcpy(w.data(), t, sizeof w);
+    auto& m = Names().textures;
+    const auto r = m.emplace(w, uint32_t(m.size() + 1));
+    GhWord(r.first->second);
+    if (r.second) {
+        // (new in the picture: what it is -- type, format, size, levels, filters, address modes, LOD bias -- and its first
+        // texels, its palette's first entries: not where it lies)
+        const uint32_t props[12] = {uint32_t(sceGxmTextureGetType(t)), uint32_t(sceGxmTextureGetFormat(t)), sceGxmTextureGetWidth(t),
+                                    sceGxmTextureGetHeight(t), sceGxmTextureGetMipmapCount(t), uint32_t(sceGxmTextureGetMinFilter(t)),
+                                    uint32_t(sceGxmTextureGetMagFilter(t)), uint32_t(sceGxmTextureGetMipFilter(t)),
+                                    uint32_t(sceGxmTextureGetUAddrMode(t)), uint32_t(sceGxmTextureGetVAddrMode(t)),
+                                    sceGxmTextureGetLodBias(t), sceGxmTextureGetStride(t)};
+        GhBytes(props, sizeof props);
+        // (at most the texture's own bytes at 4 bits a texel: never past a small texture's storage)
+        const size_t texel_bytes = std::min<size_t>(64, size_t(props[2]) * size_t(props[3]) / 2);
+        if (const void* texels = sceGxmTextureGetData(t)) GhBytes(texels, texel_bytes);
+        const uint32_t base = props[1] & 0x9F000000u;   // (the base format: the top bit and bits 24-28)
+        if (base == SCE_GXM_TEXTURE_BASE_FORMAT_P8 || base == SCE_GXM_TEXTURE_BASE_FORMAT_P4)
+            if (const void* palette = sceGxmTextureGetPalette(t)) GhBytes(palette, 64);
+    }
+}
+// a call's tag and arguments (vitaGL's context only)
+inline bool GhCall(SceGxmContext* c, uint32_t tag) {
+    if (!GxmHashOn() || !c || c != VglContext()) return false;
+    g_gh_calls++;
+    if (long(g_gh_present) == g_gh_at)
+        std::fprintf(stderr, "[te.gxmcall] %u %08x after %016llx\n", g_gh_calls, tag, (unsigned long long)g_gh);
+    GhWord(tag);
+    return true;
+}
+// (the traced picture: a block's own FNV-1a, to say which part of a draw differs)
+inline uint64_t GhOf(const void* p, size_t n) {
+    const uint8_t* q = static_cast<const uint8_t*>(p);
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < n; ++i) h = (h ^ q[i]) * 1099511628211ull;
+    return h;
+}
+inline bool GhTracing() { return long(g_gh_present) == g_gh_at; }
+// a draw: what it reads of the default uniform buffers
+inline void GhUniforms() {
+    GhWord(g_gh_vsize);
+    if (g_gh_vub && g_gh_vsize) GhBytes(g_gh_vub, g_gh_vsize);
+    GhWord(g_gh_fsize);
+    if (g_gh_fub && g_gh_fsize) GhBytes(g_gh_fub, g_gh_fsize);
+    if (GhTracing())
+        std::fprintf(stderr, "[te.gxmdraw] %u: vertex uniforms %u B %016llx, fragment uniforms %u B %016llx\n", g_gh_calls, g_gh_vsize,
+                     (unsigned long long)(g_gh_vub ? GhOf(g_gh_vub, g_gh_vsize) : 0), g_gh_fsize,
+                     (unsigned long long)(g_gh_fub ? GhOf(g_gh_fub, g_gh_fsize) : 0));
+}
+
 }  // namespace
 
 extern "C" {
@@ -272,9 +417,26 @@ int __wrap_sceGxmBeginScene(SceGxmContext* context, unsigned int flags, const Sc
         if (g_gxm.in_scene && g_state_dirty) FlushGxmState(context);
         ForgetGxmAll();
         g_gxm.in_scene = false;
+        if (depthStencil && depthStencil == te_gxm_keep_surface) {
+            // TE_GFX_VITA_KEEP_DEPTH=always: a later scene of the frame's kept surface (its modes are read here) begins
+            // loading what the scene before stored -- a screen copy has switched the load on already
+            auto* ds = const_cast<SceGxmDepthStencilSurface*>(depthStencil);
+            if (te_gxm_keep_begins++ > 0 &&
+                sceGxmDepthStencilSurfaceGetForceStoreMode(ds) == SCE_GXM_DEPTH_STENCIL_FORCE_STORE_ENABLED &&
+                sceGxmDepthStencilSurfaceGetForceLoadMode(ds) != SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_ENABLED) {
+                sceGxmDepthStencilSurfaceSetForceLoadMode(ds, SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_ENABLED);
+                g_keep_loads++;
+            }
+        }
     }
     const int r = __real_sceGxmBeginScene(context, flags, renderTarget, validRegion, vertexSyncObject, fragmentSyncObject,
                                           colorSurface, depthStencil);
+    if (GhCall(context, 0x42530000u)) {   // (the scene's target: the surfaces' addresses, the same run to run)
+        GhWord(flags);
+        GhPtr(renderTarget);
+        GhPtr(colorSurface);
+        GhPtr(depthStencil);
+    }
     // (the cache opens with the scene: every value unknown, so each first set of the scene is made)
     if (vgl && r == 0 && GxmCacheOn()) g_gxm.in_scene = true;
     g_begin_scene.Note(NowUs() - t0);
@@ -298,6 +460,7 @@ int __wrap_sceGxmEndScene(SceGxmContext* context, const SceGxmNotification* vert
     if (&query_fence && fragmentNotification == &query_fence)
         g_scene_arm[query_fence.value & (kSceneArms - 1)].store(int8_t(ps2r::render::Census().gpu_ab_arm + 1), std::memory_order_relaxed);
     const int r = __real_sceGxmEndScene(context, vertexNotification, fragmentNotification);
+    GhCall(context, 0x45530000u);
     g_end_scene.Note(NowUs() - t0);
     return r;
 }
@@ -339,6 +502,8 @@ int __wrap_sceGxmShaderPatcherCreateFragmentProgram(SceGxmShaderPatcher* shaderP
     const int r = __real_sceGxmShaderPatcherCreateFragmentProgram(shaderPatcher, programId, outputFormat, multisampleMode,
                                                                   blendInfo, vertexProgram, fragmentProgram);
     g_patch_fragment.Note(NowUs() - t0);
+    if (ps2r::render::gpu_lifetime::On())
+        ps2r::render::gpu_lifetime::ProgramCreated(fragmentProgram ? *fragmentProgram : nullptr, programId, true, r);
     return r;
 }
 
@@ -354,6 +519,8 @@ int __wrap_sceGxmShaderPatcherCreateVertexProgram(SceGxmShaderPatcher* shaderPat
     const int r = __real_sceGxmShaderPatcherCreateVertexProgram(shaderPatcher, programId, attributes, attributeCount, streams,
                                                                 streamCount, vertexProgram);
     g_patch_vertex.Note(NowUs() - t0);
+    if (ps2r::render::gpu_lifetime::On())
+        ps2r::render::gpu_lifetime::ProgramCreated(vertexProgram ? *vertexProgram : nullptr, programId, false, r);
     return r;
 }
 
@@ -364,10 +531,26 @@ int __wrap_sceGxmDraw(SceGxmContext* context, SceGxmPrimitiveType primType, SceG
     static uint32_t n = 0;   // (the drawing thread's: vitaGL draws from one thread)
     if (g_state_dirty && Cached(context)) FlushGxmState(context);   // (the draw's own state first)
     g_gxm_calls[kGxmDraws]++;
-    if (++n % Timed::kSample) return __real_sceGxmDraw(context, primType, indexType, indexData, indexCount);
+    if (GhCall(context, 0x44520000u)) {
+        GhWord(uint32_t(primType));
+        GhWord(uint32_t(indexType));
+        GhPtr(indexData);
+        GhWord(indexCount);
+        // (the indices it reads, whole: 16 or 32 bits each)
+        if (indexData) GhBytes(indexData, size_t(indexCount) * (indexType == SCE_GXM_INDEX_FORMAT_U32 ? 4u : 2u));
+        GhPtr(g_gh_stream1, 64);
+        GhUniforms();
+        g_gh_draws++;
+    }
+    if (++n % Timed::kSample) {
+        const int r = __real_sceGxmDraw(context, primType, indexType, indexData, indexCount);
+        if (r < 0) NoteRefused(false, r, indexCount, 0);
+        return r;
+    }
     const uint64_t t0 = NowUs();
     const int r = __real_sceGxmDraw(context, primType, indexType, indexData, indexCount);
     g_draw.NoteSampled(NowUs() - t0);
+    if (r < 0) NoteRefused(false, r, indexCount, 0);
     return r;
 }
 
@@ -382,17 +565,47 @@ int __wrap_sceGxmDrawInstanced(SceGxmContext* c, SceGxmPrimitiveType p, SceGxmIn
                                unsigned int w) {
     if (g_state_dirty && Cached(c)) FlushGxmState(c);   // (the draw's own state first)
     TE_GXM_MADE(kGxmInstanced);
-    return __real_sceGxmDrawInstanced(c, p, t, d, n, w);
+    if (GhCall(c, 0x49440000u)) {
+        GhWord(uint32_t(p));
+        GhWord(uint32_t(t));
+        GhPtr(d);
+        GhWord(n);
+        GhWord(w);
+        // (the indices an instance reads -- the wrap's -- whole)
+        if (d && w) GhBytes(d, size_t(w) * (t == SCE_GXM_INDEX_FORMAT_U32 ? 4u : 2u));
+        // the instance rows (stream 1) by their bytes: n / w instances
+        if (g_gh_stream1 && w) GhBytes(g_gh_stream1, size_t(n / w) * kGhRowBytes);
+        if (GhTracing() && g_gh_stream1 && w) {
+            std::fprintf(stderr, "[te.gxmdraw] %u: instanced %u indices, %u an instance, rows %016llx:", g_gh_calls, n, w,
+                         (unsigned long long)GhOf(g_gh_stream1, size_t(n / w) * kGhRowBytes));
+            for (unsigned i = 0; i < n / w && i < 64; ++i)
+                std::fprintf(stderr, " %08x", uint32_t(GhOf(static_cast<const uint8_t*>(g_gh_stream1) + i * kGhRowBytes, kGhRowBytes)));
+            std::fprintf(stderr, "\n");
+        }
+        GhUniforms();
+        g_gh_draws++;
+    }
+    if (n > g_inst_largest) g_inst_largest = n;
+    if (n > 0xC000u) g_inst_above_plain++;
+    if (n >= 64000u) g_inst_64000++;
+    const int r = __real_sceGxmDrawInstanced(c, p, t, d, n, w);
+    if (r < 0) NoteRefused(true, r, n, w);
+    return r;
 }
 int __real_sceGxmSetVertexStream(SceGxmContext* c, unsigned int i, const void* d);
 int __wrap_sceGxmSetVertexStream(SceGxmContext* c, unsigned int i, const void* d) {
     const bool cached = Cached(c) && i < 16;
+    if (i == 1 && c && c == VglContext()) g_gh_stream1 = d;   // (hashed at the draw: an instanced one's rows by their bytes)
     if (cached && d && g_gxm.stream[i] == d) {
         TE_GXM_SKIPPED(kGxmStreams);
         if (i == 0) te_gxm_last_stream0 = d;
         return 0;
     }
     TE_GXM_MADE(kGxmStreams);
+    if (i != 1 && GhCall(c, 0x56530000u)) {
+        GhWord(i);
+        GhPtr(d, 64);   // (a stream new in the picture: its first 64 bytes -- a mesh's first vertices)
+    }
     const int r = __real_sceGxmSetVertexStream(c, i, d);
     if (i == 0) te_gxm_last_stream0 = r == 0 ? d : nullptr;
     if (cached) g_gxm.stream[i] = r == 0 ? d : nullptr;
@@ -411,6 +624,11 @@ int __wrap_sceGxmSetFragmentTexture(SceGxmContext* c, unsigned int i, const SceG
         return 0;
     }
     TE_GXM_MADE(kGxmTextures);
+    if (GhCall(c, 0x46540000u)) {
+        GhWord(i);
+        if (t) GhTexture(t);   // (the record's four control words -- format, size, levels, the texels' address -- by name)
+        else GhWord(0);
+    }
     const int r = __real_sceGxmSetFragmentTexture(c, i, t);
     if (i == 0) {
         if (r == 0 && t) {
@@ -432,6 +650,8 @@ int __wrap_sceGxmSetFragmentTexture(SceGxmContext* c, unsigned int i, const SceG
 }
 void __real_sceGxmSetVertexProgram(SceGxmContext* c, const SceGxmVertexProgram* p);
 void __wrap_sceGxmSetVertexProgram(SceGxmContext* c, const SceGxmVertexProgram* p) {
+    // (vitaGL's context only: the boot splash screen draws on its own and drains it before its programs go)
+    if (ps2r::render::gpu_lifetime::On() && c && c == VglContext()) ps2r::render::gpu_lifetime::ProgramUsed(p, false);
     const bool cached = Cached(c);
     if (cached && p && g_gxm.vprog == p) {
         TE_GXM_SKIPPED(kGxmPrograms);
@@ -443,6 +663,10 @@ void __wrap_sceGxmSetVertexProgram(SceGxmContext* c, const SceGxmVertexProgram* 
     // across a program change, nor is any buffer the shadow holds)
     if (te_gxm_last_vertex_program != p) te_gxm_last_vertex_uniforms = nullptr;
     te_gxm_last_vertex_program = p;
+    if (GhCall(c, 0x56500000u)) {
+        GhPtr(p);
+        g_gh_vsize = p ? sceGxmProgramGetDefaultUniformBufferSize(sceGxmVertexProgramGetProgram(p)) : 0;
+    }
     __real_sceGxmSetVertexProgram(c, p);
     if (cached) {
         if (g_gxm.vprog != p) g_gxm.vuni = nullptr;
@@ -451,6 +675,8 @@ void __wrap_sceGxmSetVertexProgram(SceGxmContext* c, const SceGxmVertexProgram* 
 }
 void __real_sceGxmSetFragmentProgram(SceGxmContext* c, const SceGxmFragmentProgram* p);
 void __wrap_sceGxmSetFragmentProgram(SceGxmContext* c, const SceGxmFragmentProgram* p) {
+    // (vitaGL's context only: the boot splash screen draws on its own and drains it before its programs go)
+    if (ps2r::render::gpu_lifetime::On() && c && c == VglContext()) ps2r::render::gpu_lifetime::ProgramUsed(p, true);
     const bool cached = Cached(c);
     if (cached && p && g_gxm.fprog == p) {
         TE_GXM_SKIPPED(kGxmPrograms);
@@ -459,6 +685,10 @@ void __wrap_sceGxmSetFragmentProgram(SceGxmContext* c, const SceGxmFragmentProgr
     }
     TE_GXM_MADE(kGxmPrograms);
     te_gxm_last_fragment_program = p;
+    if (GhCall(c, 0x46500000u)) {
+        GhPtr(p);
+        g_gh_fsize = p ? sceGxmProgramGetDefaultUniformBufferSize(sceGxmFragmentProgramGetProgram(p)) : 0;
+    }
     __real_sceGxmSetFragmentProgram(c, p);
     if (cached) {
         if (g_gxm.fprog != p) g_gxm.funi = nullptr;
@@ -468,6 +698,7 @@ void __wrap_sceGxmSetFragmentProgram(SceGxmContext* c, const SceGxmFragmentProgr
 int __real_sceGxmSetVertexDefaultUniformBuffer(SceGxmContext* c, const void* b);
 int __wrap_sceGxmSetVertexDefaultUniformBuffer(SceGxmContext* c, const void* b) {
     const bool cached = Cached(c);
+    if (c && c == VglContext()) g_gh_vub = b;   // (the hash reads its bytes at the draw)
     if (cached && b && g_gxm.vuni == b) {
         TE_GXM_SKIPPED(kGxmUniforms);
         te_gxm_last_vertex_uniforms = b;
@@ -482,6 +713,7 @@ int __wrap_sceGxmSetVertexDefaultUniformBuffer(SceGxmContext* c, const void* b) 
 int __real_sceGxmSetFragmentDefaultUniformBuffer(SceGxmContext* c, const void* b);
 int __wrap_sceGxmSetFragmentDefaultUniformBuffer(SceGxmContext* c, const void* b) {
     const bool cached = Cached(c);
+    if (c && c == VglContext()) g_gh_fub = b;
     if (cached && b && g_gxm.funi == b) {
         TE_GXM_SKIPPED(kGxmUniforms);
         te_gxm_last_fragment_uniforms = b;
@@ -501,7 +733,10 @@ int __real_sceGxmReserveVertexDefaultUniformBuffer(SceGxmContext* c, void** b);
 int __wrap_sceGxmReserveVertexDefaultUniformBuffer(SceGxmContext* c, void** b) {
     const int r = __real_sceGxmReserveVertexDefaultUniformBuffer(c, b);
     te_gxm_last_vertex_uniforms = nullptr;
-    if (c && c == VglContext()) g_gxm.vuni = nullptr;
+    if (c && c == VglContext()) {
+        g_gxm.vuni = nullptr;
+        if (r == 0 && b) g_gh_vub = *b;   // (filled by the caller before the draw: the hash reads it there)
+    }
     return r;
 }
 int __real_sceGxmReserveFragmentDefaultUniformBuffer(SceGxmContext* c, void** b);
@@ -510,7 +745,10 @@ int __wrap_sceGxmReserveFragmentDefaultUniformBuffer(SceGxmContext* c, void** b)
     // (also the raw draws' record: the context holds GXM's buffer now, not the last raw draw's -- until vitaGL restores
     // its own through sceGxmSetFragmentDefaultUniformBuffer)
     te_gxm_last_fragment_uniforms = nullptr;
-    if (c && c == VglContext()) g_gxm.funi = nullptr;
+    if (c && c == VglContext()) {
+        g_gxm.funi = nullptr;
+        if (r == 0 && b) g_gh_fub = *b;
+    }
     return r;
 }
 constexpr unsigned kDefaultUniformContainer = 14;   // SCE_GXM_DEFAULT_UNIFORM_BUFFER_CONTAINER_INDEX
@@ -519,7 +757,13 @@ int __wrap_sceGxmSetVertexUniformBuffer(SceGxmContext* c, unsigned int i, const 
     const int r = __real_sceGxmSetVertexUniformBuffer(c, i, d);
     if (i == kDefaultUniformContainer) {
         te_gxm_last_vertex_uniforms = nullptr;
-        if (c && c == VglContext()) g_gxm.vuni = nullptr;
+        if (c && c == VglContext()) {
+            g_gxm.vuni = nullptr;
+            g_gh_vub = d;
+        }
+    } else if (GhCall(c, 0x56550000u)) {
+        GhWord(i);
+        GhPtr(d);
     }
     return r;
 }
@@ -528,7 +772,13 @@ int __wrap_sceGxmSetFragmentUniformBuffer(SceGxmContext* c, unsigned int i, cons
     const int r = __real_sceGxmSetFragmentUniformBuffer(c, i, d);
     if (i == kDefaultUniformContainer) {
         te_gxm_last_fragment_uniforms = nullptr;
-        if (c && c == VglContext()) g_gxm.funi = nullptr;
+        if (c && c == VglContext()) {
+            g_gxm.funi = nullptr;
+            g_gh_fub = d;
+        }
+    } else if (GhCall(c, 0x46550000u)) {
+        GhWord(i);
+        GhPtr(d);
     }
     return r;
 }
@@ -537,6 +787,7 @@ void __wrap_sceGxmSetTwoSidedEnable(SceGxmContext* c, SceGxmTwoSidedMode m) {
     // (the values asked before it reach the context before it, as they would have; then neither the context's front / back
     // state nor the values asked are assumed)
     if (g_state_dirty && Cached(c)) FlushGxmState(c);
+    if (GhCall(c, 0x54530000u)) GhWord(uint32_t(m));
     __real_sceGxmSetTwoSidedEnable(c, m);
     if (c && c == VglContext()) {
         ForgetGxmState(g_gxm);
@@ -554,21 +805,25 @@ void __wrap_sceGxmSetTwoSidedEnable(SceGxmContext* c, SceGxmTwoSidedMode m) {
 int __real_sceGxmShaderPatcherReleaseVertexProgram(SceGxmShaderPatcher* s, SceGxmVertexProgram* p);
 int __wrap_sceGxmShaderPatcherReleaseVertexProgram(SceGxmShaderPatcher* s, SceGxmVertexProgram* p) {
     TE_GXM_FORGET_PROGRAMS();
+    if (ps2r::render::gpu_lifetime::On()) ps2r::render::gpu_lifetime::ProgramReleased(p, false);
     return __real_sceGxmShaderPatcherReleaseVertexProgram(s, p);
 }
 int __real_sceGxmShaderPatcherReleaseFragmentProgram(SceGxmShaderPatcher* s, SceGxmFragmentProgram* p);
 int __wrap_sceGxmShaderPatcherReleaseFragmentProgram(SceGxmShaderPatcher* s, SceGxmFragmentProgram* p) {
     TE_GXM_FORGET_PROGRAMS();
+    if (ps2r::render::gpu_lifetime::On()) ps2r::render::gpu_lifetime::ProgramReleased(p, true);
     return __real_sceGxmShaderPatcherReleaseFragmentProgram(s, p);
 }
 int __real_sceGxmShaderPatcherUnregisterProgram(SceGxmShaderPatcher* s, SceGxmShaderPatcherId id);
 int __wrap_sceGxmShaderPatcherUnregisterProgram(SceGxmShaderPatcher* s, SceGxmShaderPatcherId id) {
     TE_GXM_FORGET_PROGRAMS();
+    if (ps2r::render::gpu_lifetime::On()) ps2r::render::gpu_lifetime::ProgramIdUnregistered(id, false);
     return __real_sceGxmShaderPatcherUnregisterProgram(s, id);
 }
 int __real_sceGxmShaderPatcherForceUnregisterProgram(SceGxmShaderPatcher* s, SceGxmShaderPatcherId id);
 int __wrap_sceGxmShaderPatcherForceUnregisterProgram(SceGxmShaderPatcher* s, SceGxmShaderPatcherId id) {
     TE_GXM_FORGET_PROGRAMS();
+    if (ps2r::render::gpu_lifetime::On()) ps2r::render::gpu_lifetime::ProgramIdUnregistered(id, true);
     return __real_sceGxmShaderPatcherForceUnregisterProgram(s, id);
 }
 #undef TE_GXM_FORGET_PROGRAMS
@@ -586,6 +841,7 @@ int __wrap_sceGxmShaderPatcherForceUnregisterProgram(SceGxmShaderPatcher* s, Sce
             return;                                              \
         }                                                        \
         TE_GXM_MADE(kGxmState);                                  \
+        if (GhCall(c, 0x53540000u | (bit))) GhWord(uint32_t(v)); \
         __real_##name(c, v);                                     \
     }
 TE_GXM_STATE1(sceGxmSetFrontDepthFunc, SceGxmDepthFunc, depth_func[0], kSlotDepthFuncF)
@@ -630,6 +886,10 @@ void __wrap_sceGxmSetFrontStencilFunc(SceGxmContext* c, SceGxmStencilFunc f, Sce
         return;
     }
     TE_GXM_MADE(kGxmState);
+    if (GhCall(c, 0x53540000u | kSlotStencilF)) {
+        const uint32_t w[6] = {uint32_t(f), uint32_t(a), uint32_t(b), uint32_t(d), uint32_t(cm), uint32_t(wm)};
+        GhBytes(w, sizeof w);
+    }
     __real_sceGxmSetFrontStencilFunc(c, f, a, b, d, cm, wm);
 }
 void __real_sceGxmSetBackStencilFunc(SceGxmContext* c, SceGxmStencilFunc f, SceGxmStencilOp a, SceGxmStencilOp b, SceGxmStencilOp d,
@@ -643,6 +903,10 @@ void __wrap_sceGxmSetBackStencilFunc(SceGxmContext* c, SceGxmStencilFunc f, SceG
         return;
     }
     TE_GXM_MADE(kGxmState);
+    if (GhCall(c, 0x53540000u | kSlotStencilB)) {
+        const uint32_t w[6] = {uint32_t(f), uint32_t(a), uint32_t(b), uint32_t(d), uint32_t(cm), uint32_t(wm)};
+        GhBytes(w, sizeof w);
+    }
     __real_sceGxmSetBackStencilFunc(c, f, a, b, d, cm, wm);
 }
 void __real_sceGxmSetFrontDepthBias(SceGxmContext* c, int f, int u);
@@ -655,6 +919,7 @@ void __wrap_sceGxmSetFrontDepthBias(SceGxmContext* c, int f, int u) {
         return;
     }
     TE_GXM_MADE(kGxmState);
+    if (GhCall(c, 0x53540000u | kSlotBiasF)) { GhWord(uint32_t(f)); GhWord(uint32_t(u)); }
     __real_sceGxmSetFrontDepthBias(c, f, u);
 }
 void __real_sceGxmSetBackDepthBias(SceGxmContext* c, int f, int u);
@@ -667,6 +932,7 @@ void __wrap_sceGxmSetBackDepthBias(SceGxmContext* c, int f, int u) {
         return;
     }
     TE_GXM_MADE(kGxmState);
+    if (GhCall(c, 0x53540000u | kSlotBiasB)) { GhWord(uint32_t(f)); GhWord(uint32_t(u)); }
     __real_sceGxmSetBackDepthBias(c, f, u);
 }
 void __real_sceGxmSetRegionClip(SceGxmContext* c, SceGxmRegionClipMode m, unsigned int x0, unsigned int y0, unsigned int x1,
@@ -686,6 +952,10 @@ void __wrap_sceGxmSetRegionClip(SceGxmContext* c, SceGxmRegionClipMode m, unsign
         return;
     }
     TE_GXM_MADE(kGxmState);
+    if (GhCall(c, 0x53540000u | kSlotClip)) {
+        const uint32_t w[5] = {uint32_t(m), x0, y0, x1, y1};
+        GhBytes(w, sizeof w);
+    }
     __real_sceGxmSetRegionClip(c, m, x0, y0, x1, y1);
 }
 // The pending slots' calls, each with the value asked last (the next draw's state); the context then holds them
@@ -698,6 +968,21 @@ void FlushGxmState(SceGxmContext* c) {
         const int bit = __builtin_ctz(d);
         d &= d - 1;
         TE_GXM_MADE(kGxmState);
+        if (GhCall(c, 0x53540000u | uint32_t(bit))) {
+            // (the slot's values as the call below hands them over: the same words as the uncached setters hash)
+            switch (bit) {
+                case kSlotDepthFuncF: case kSlotDepthFuncB: GhWord(w.depth_func[bit - kSlotDepthFuncF]); break;
+                case kSlotDepthWriteF: case kSlotDepthWriteB: GhWord(w.depth_write[bit - kSlotDepthWriteF]); break;
+                case kSlotFpEnableF: case kSlotFpEnableB: GhWord(w.fp_enable[bit - kSlotFpEnableF]); break;
+                case kSlotStencilRefF: case kSlotStencilRefB: GhWord(w.stencil_ref[bit - kSlotStencilRefF]); break;
+                case kSlotPolygonF: case kSlotPolygonB: GhWord(w.polygon[bit - kSlotPolygonF]); break;
+                case kSlotCull: GhWord(w.cull); break;
+                case kSlotStencilF: case kSlotStencilB: GhBytes(w.stencil[bit - kSlotStencilF], sizeof w.stencil[0]); break;
+                case kSlotBiasF: case kSlotBiasB: GhBytes(w.bias[bit - kSlotBiasF], sizeof w.bias[0]); break;
+                case kSlotClip: GhBytes(w.clip, sizeof w.clip); break;
+                default: break;
+            }
+        }
         switch (bit) {
             case kSlotDepthFuncF: __real_sceGxmSetFrontDepthFunc(c, SceGxmDepthFunc(w.depth_func[0])); h.depth_func[0] = w.depth_func[0]; break;
             case kSlotDepthFuncB: __real_sceGxmSetBackDepthFunc(c, SceGxmDepthFunc(w.depth_func[1])); h.depth_func[1] = w.depth_func[1]; break;
@@ -838,6 +1123,16 @@ int __wrap_sceGxmTransferDownscale(SceGxmTransferFormat srcFormat, const void* s
     return r;
 }
 
+// vitaGL's uniform ring (utils/gxm_utils.c vglReserveUniformCircularPoolBuffer: 2 MB, wrapped to its start when full,
+// no fence): every default uniform buffer of vitaGL's shader draws and of the GL backend's raw draws. The call unchanged;
+// the GPU-lifetime audit (TE_GFX_GPU_LIFETIME=1) sees each reservation.
+void* __real_vglReserveUniformCircularPoolBuffer(uint32_t size);
+void* __wrap_vglReserveUniformCircularPoolBuffer(uint32_t size) {
+    void* const p = __real_vglReserveUniformCircularPoolBuffer(size);
+    if (ps2r::render::gpu_lifetime::On()) ps2r::render::gpu_lifetime::UniformsReserved(p, size);
+    return p;
+}
+
 }  // extern "C"
 
 namespace te::vita_gpu {
@@ -859,6 +1154,16 @@ void OnPresented() {
                          "twice); the GPU's lag at each swap is measured without a drain\n");
     }
     ++g_presents;
+    if (GxmHashOn()) {
+        // the picture's GXM stream (everything since the previous present: its scenes, sets and draws)
+        std::fprintf(stderr, "[te.gxmhash] present %llu: %016llx (%u draws, %u calls)\n", (unsigned long long)g_presents,
+                     (unsigned long long)g_gh, g_gh_draws, g_gh_calls);
+        g_gh = 1469598103934665603ull;
+        g_gh_draws = g_gh_calls = 0;
+        g_gh_present = g_presents + 1;
+        Names().addresses.clear();
+        Names().textures.clear();
+    }
     {
         // the per-present GPU A/B: the frame just presented was drawn in this arm (the next frame's BeginFrame sets its own)
         const int arm = ps2r::render::Census().gpu_ab_arm;
@@ -1033,6 +1338,19 @@ std::string WindowLines(double frames) {
                       total / frames, n[kGxmDraws] / frames, n[kGxmInstanced] / frames, n[kGxmStreams] / frames,
                       n[kGxmTextures] / frames, n[kGxmPrograms] / frames, n[kGxmUniforms] / frames, n[kGxmState] / frames);
         c += e;
+        // the draws GXM refused (nothing drawn) and the instanced draws' sizes, in the window
+        char rf[440];
+        std::snprintf(rf, sizeof rf, "\n[te.gfx.vita] gxm draws refused in the window: plain %u, instanced %u (the first: error %#x, "
+                      "%u indices, %u an instance); instanced draws' indices: the largest %u, above 49152 (a plain draw's most) %u, "
+                      "64000 or more %u; frame target scenes begun loading the depth after a break that was not a screen copy %u",
+                      g_refused_plain, g_refused_instanced, unsigned(g_refused_error), g_refused_count, g_refused_wrap,
+                      g_inst_largest, g_inst_above_plain, g_inst_64000, g_keep_loads);
+        c += rf;
+        g_refused_plain = g_refused_instanced = 0;
+        g_refused_error = 0;
+        g_refused_count = g_refused_wrap = 0;
+        g_inst_largest = g_inst_above_plain = g_inst_64000 = 0;
+        g_keep_loads = 0;
         // the calls the last-state cache did not make (they would have handed the context what it held), and the
         // raw mesh draws' vertex uniforms re-used (their composed contents = the buffer the context held for their program)
         uint32_t k[kGxmCategories];

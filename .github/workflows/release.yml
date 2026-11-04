@@ -2,21 +2,20 @@
 # downloads, built by the same scripts and presets a developer runs locally, attached to ONE draft GitHub release:
 #
 #   twinsanityevolved-<tag>-<target>.zip   the game: macos-arm64, macos-x86_64, linux-x86_64, linux-aarch64, windows-x64
-#   twinsanityevolved-<tag>-vita.vpk       the PS Vita package
+#   twinsanityevolved-<tag>-vita.vpk       the PS Vita package (the game's code compiled natively for the console)
 #   twinsanityevolved-launcher-*           the launcher: windows-x64.zip, macos-arm64.dmg, linux-x86_64.AppImage, and
 #                                          <tag>-macos-arm64.zip (the bundle zipped: what a running launcher replaces
 #                                          itself with on macOS; the Windows zip and the AppImage serve both purposes)
-#   twinsanityevolved-<tag>-vita-native.vpk the PS Vita package with the game's code compiled natively (to try)
 #   SHA256SUMS                             every file above (the launcher installs nothing whose name is not in it)
 #
 #   build     tools/ci/release_dist.sh (macOS / Linux: the pinned wasm32 toolchain, the engine's static LGPL FFmpeg and
 #             static SDL2, configure + build, stage dist/<target>/ with the mod tool and mods/arabic, asset scan, zip) and
 #             tools/ci/release_dist.ps1 (Windows: clang-cl + Ninja through the preset, SDL2 + FFmpeg from vcpkg.json, the
 #             unit tests on Mesa's llvmpipe, the same staging)
-#   vita      in the vitasdk/vitasdk image (pinned by digest): the pinned wasm32 toolchain (tools/fetch_toolchain.sh), the
-#             vita-release preset -- whose build cross-compiles FFmpeg with tools/vita/ffmpeg_vita.sh from the release
-#             tarball pinned by URL + sha256 -- then the .vpk's content checked (the program, its package metadata and the
-#             shipped shader set only) and the asset scan over everything in it but the program
+#   vita      in the vitasdk/vitasdk image (pinned by digest): the vita-release preset -- the game's code compiled natively
+#             for the console's ARM processor by the SDK's GCC, FFmpeg cross-compiled with tools/vita/ffmpeg_vita.sh from
+#             the release tarball pinned by URL + sha256 -- then the .vpk's content checked (the program, its package
+#             metadata and the shipped shader set only) and the asset scan over everything in it but the program
 #   launcher  .github/workflows/launcher.yml, called here (tools/ci/release_launcher.ps1 / .sh / _linux.sh)
 #   release   SHA256SUMS over everything that was built, the notes (RELEASE-NOTES.txt, then the tag's file table and the
 #             checksums; a target that failed is named as missing and the others are still attached), the tag's DRAFT
@@ -197,10 +196,11 @@ jobs:
   # The PS Vita package, in the VitaSDK's own image: Ubuntu 24.04 with cmake, ninja, python3, curl, git, xz and the SDK
   # with its packages at /usr/local/vitasdk (VITASDK). The image is pinned by digest: vitasdk/vitasdk:2026.08-20261027 =
   # the 2026.08 SDK series, the series of the local SDK the package was tested with (vitasdk-core 2026.08.1,
-  # arm-vita-eabi-gcc 15.2.0). The wasm32 half of the game is compiled with the pinned toolchain fetched for the image's
-  # Linux x86_64; the eboot is cross-compiled; the build's te_ffmpeg_vita step cross-compiles FFmpeg
-  # (tools/vita/ffmpeg_vita.sh: the release tarball by its pinned URL, checked against its sha256) -- the same commands
-  # as a local Vita build.
+  # arm-vita-eabi-gcc 15.2.0). The whole eboot is cross-compiled, the game's code included: the vita-release preset
+  # compiles the decompilation natively for the console's ARM processor (tools/te_cxx_arm.py, cmake/native_lane.cmake),
+  # so the pinned wasm32 toolchain is not needed here (vita-module-release, the wasm2c build kept for A/B, would need it);
+  # the build's te_ffmpeg_vita step cross-compiles FFmpeg (tools/vita/ffmpeg_vita.sh: the release tarball by its pinned
+  # URL, checked against its sha256) -- the same commands as a local Vita build.
   vita:
     name: vita
     needs: guard
@@ -209,20 +209,6 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v7
-      - name: unzip (the toolchain's libclang wheel; the image has bsdtar but not unzip)
-        shell: bash
-        run: apt-get update && apt-get install -y --no-install-recommends unzip
-      - name: Toolchain cache (wasi-sdk, wabt, libclang -- pinned tarballs)
-        uses: actions/cache@v6
-        with:
-          path: |
-            tools/toolchain/*.tar.gz
-            tools/toolchain/*.tar.xz
-            tools/toolchain/*.whl
-          key: te-toolchain-vita-${{ hashFiles('tools/toolchain/PINS.sha256') }}
-      - name: The pinned wasm32 toolchain (sha256 against tools/toolchain/PINS.sha256)
-        shell: bash
-        run: tools/fetch_toolchain.sh
       # the cross-compiled FFmpeg (~3 min): kept between tags by its recipe; ffmpeg_vita.sh still checks the restored
       # prefix's record (version, sha256, every configure argument) and rebuilds when it differs
       - name: FFmpeg for the Vita (cache)
@@ -236,18 +222,6 @@ jobs:
           set -euo pipefail
           cmake --preset vita-release
           cmake --build --preset vita-release -j 4
-      # the second package: the game's code compiled natively for the console's ARM processor (the vita-native-release
-      # preset) -- identical in game state, sound and picture sequence to the module build
-      # on every emulator route; attached beside the main package for players to try until the console's own figures
-      # make it the default. It shares the cross-compiled FFmpeg with the main build.
-      - name: Configure + build the native .vpk (the vita-native-release preset)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build-vita-native/third_party
-          cp -R build-vita-release/third_party/ffmpeg build-vita-native/third_party/ffmpeg
-          cmake --preset vita-native-release
-          cmake --build --preset vita-native-release -j 4
       # the package: the program (eboot.bin), the Vita's metadata (sce_sys/) and the port's own GPU programs, compiled
       # once (shaders/<key>.tegxp: tools/vita/shader_cache_seed.sh) -- nothing else; the asset scan over all but the program
       - name: The .vpk holds the program, its metadata and the port's compiled shaders only (asset scan over the rest)
@@ -255,7 +229,7 @@ jobs:
         run: |
           python3 - <<'EOF'
           import re, subprocess, sys, tempfile, zipfile
-          for vpk in ("build-vita-release/twinsanityevolved.vpk", "build-vita-native/twinsanityevolved.vpk"):
+          for vpk in ("build-vita-release/twinsanityevolved.vpk",):
               z = zipfile.ZipFile(vpk)
               names = sorted(n for n in z.namelist() if not n.endswith("/"))
               print("%s: %d entries" % (vpk, len(names)))
@@ -276,14 +250,12 @@ jobs:
         run: |
           mkdir -p dist
           cp build-vita-release/twinsanityevolved.vpk dist/twinsanityevolved-vita.vpk
-          cp build-vita-native/twinsanityevolved.vpk dist/twinsanityevolved-vita-native.vpk
-          (cd dist && sha256sum twinsanityevolved-vita.vpk twinsanityevolved-vita-native.vpk | tee twinsanityevolved-vita.sha256)
+          (cd dist && sha256sum twinsanityevolved-vita.vpk | tee twinsanityevolved-vita.sha256)
       - uses: actions/upload-artifact@v7
         with:
           name: twinsanityevolved-vita
           path: |
             dist/twinsanityevolved-vita.vpk
-            dist/twinsanityevolved-vita-native.vpk
             dist/twinsanityevolved-vita.sha256
           if-no-files-found: error
 
@@ -331,7 +303,6 @@ jobs:
           take twinsanityevolved-linux-x86_64.zip  "twinsanityevolved-${tag}-linux-x86_64.zip"  "Linux x86_64"
           take twinsanityevolved-linux-aarch64.zip "twinsanityevolved-${tag}-linux-aarch64.zip" "Linux ARM64"
           take twinsanityevolved-vita.vpk          "twinsanityevolved-${tag}-vita.vpk"          "PS Vita (install with VitaShell)"
-          take twinsanityevolved-vita-native.vpk   "twinsanityevolved-${tag}-vita-native.vpk"   "PS Vita, the game's code compiled natively for its processor (to try; same title, installs over the other)"
           take twinsanityevolved-launcher-windows-x64.zip      twinsanityevolved-launcher-windows-x64.zip      "The launcher for Windows"
           take twinsanityevolved-launcher-macos-arm64.dmg      twinsanityevolved-launcher-macos-arm64.dmg      "The launcher for macOS (Apple silicon)"
           take twinsanityevolved-launcher-linux-x86_64.AppImage twinsanityevolved-launcher-linux-x86_64.AppImage "The launcher for Linux x86_64"

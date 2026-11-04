@@ -16,6 +16,7 @@
 #include "engine/render/backends/gl/gl_census.h"
 #include "engine/render/backends/gl/gl_draw_executor.h"
 #include "engine/render/backends/gl/gl_fill_census.h"
+#include "engine/render/backends/gl/gl_gpu_lifetime.h"
 #include "engine/render/mesh_index.h"
 
 #if PS2R_HOST_VITA
@@ -37,6 +38,11 @@ extern GLboolean dirty_scissor_state __attribute__((weak));
 // transfers run and are waited for.
 extern int te_gxm_skip_downscale __attribute__((weak));
 extern unsigned te_gxm_downscales_skipped __attribute__((weak));
+// the platform's sceGxmBeginScene wrapper (vita_gpu_census.cpp): a depth/stencil surface whose depth the frame stores at
+// every scene end (TE_GFX_VITA_KEEP_DEPTH=always); each later scene of it begun in the frame is begun loading what the scene
+// before stored, whatever ended that scene. Weak: without the wrapper only the screen copies load it (CopyRect).
+extern void* te_gxm_keep_surface __attribute__((weak));
+extern unsigned te_gxm_keep_begins __attribute__((weak));
 }
 #endif
 
@@ -49,6 +55,7 @@ GlDevice::~GlDevice() { Shutdown(); }
 
 bool GlDevice::Init(std::function<void()> swap) {
     Shutdown();
+    gpu_lifetime::Init();   // (TE_GFX_GPU_LIFETIME: the GPU-lifetime audit, off by default)
     swap_ = std::move(swap);
     state_.InvalidateAll();
     // Window depth is z / 2^32 either way; with clip control (GL 4.5 or ARB_clip_control, which 4.1 contexts carry
@@ -239,6 +246,20 @@ bool GlDevice::Init(std::function<void()> swap) {
                      : vita_ps2_lean_ab_ ? "on, switched off / on in turns (A/B)" : "on");
         const char* k = std::getenv("TE_GFX_VITA_KEEP_DEPTH");
         vita_keep_depth_ = !(k && k[0] == '0');
+        // =always: every frame's depth/stencil kept across ANY scene break of its target, not only a screen copy's (stored
+        // at each scene end, loaded at each later scene of the frame: vita_gpu_census.cpp's sceGxmBeginScene wrapper) --
+        // what the sky drawn after the opaque scene needs should anything end the frame's scene before it is drawn
+        vita_keep_always_ = k && std::strcmp(k, "always") == 0 && &te_gxm_keep_surface && &te_gxm_keep_begins;
+        // TE_GFX_VITA_INSTANCE_INDICES=N: no instanced packet draw of more than N indices (an instance's times the
+        // instances); a longer run is drawn as several instanced draws in its order. 0 / unset: no bound. (A plain draw
+        // here never asks for more than 49152: vitaGL's progressive index buffer, the raw draws' own bound.)
+        if (const char* ii = std::getenv("TE_GFX_VITA_INSTANCE_INDICES")) {
+            const long v = std::atol(ii);
+            vita_instance_indices_ = v > 0 ? uint32_t(std::min(v, 0x7FFFFFFFL)) : 0u;
+        }
+        if (vita_instance_indices_)
+            std::fprintf(stderr, "[gl] instanced packet draws: at most %u indices each (TE_GFX_VITA_INSTANCE_INDICES): a longer run "
+                         "drawn as several instanced draws in its order\n", vita_instance_indices_);
         const char* rs = std::getenv("TE_GFX_VITA_COPY_RESTORE");
         vita_copy_restore_ = !(rs && rs[0] == '0');
         vita_copy_continue_ = !rs || !rs[0] || std::strcmp(rs, "auto") == 0;
@@ -260,7 +281,9 @@ bool GlDevice::Init(std::function<void()> swap) {
                                              "restore; else restored from the copy) -- TE_GFX_VITA_COPY_RESTORE=1: always restored"
                                        : vita_copy_restore_ ? ", the frame restored from it after the switch back"
                                                             : ", no restore (TE_GFX_VITA_COPY_RESTORE=0)") : "",
-                     vita_keep_depth_ ? "kept (force store, then force load, in frames with copies)"
+                     vita_keep_always_ ? "kept in EVERY frame across any break of its scene (TE_GFX_VITA_KEEP_DEPTH=always: "
+                                         "force store at each scene end, force load at each later scene)"
+                     : vita_keep_depth_ ? "kept (force store, then force load, in frames with copies)"
                                       : "lost (TE_GFX_VITA_KEEP_DEPTH=0: background depth 1.0 / stencil 0 after a copy)");
     }
 #endif
@@ -298,6 +321,7 @@ void GlDevice::Shutdown() {
     if (copy_fbo_) { state_.DeleteFramebuffers(1, &copy_fbo_); copy_fbo_ = 0; }
     copy_fbo_tex_ = 0;
     vita_keep_fbo_ = 0;
+    if (vita_keep_always_) te_gxm_keep_surface = nullptr;
     if (movie_quad_vbo_) { state_.DeleteBuffers(1, &movie_quad_vbo_); movie_quad_vbo_ = 0; }
     if (movie_quad_vao_) { state_.DeleteVertexArrays(1, &movie_quad_vao_); movie_quad_vao_ = 0; }
 #endif
@@ -437,7 +461,10 @@ SurfaceId GlDevice::CreateSurface(const SurfaceDesc& desc) {
 
 void GlDevice::ReleaseSurface(GlSurface& s) {
 #if PS2R_HOST_VITA
-    if (s.fbo && vita_keep_fbo_ == s.fbo) vita_keep_fbo_ = 0;
+    if (s.fbo && vita_keep_fbo_ == s.fbo) {
+        vita_keep_fbo_ = 0;
+        if (vita_keep_always_) te_gxm_keep_surface = nullptr;
+    }
 #endif
     if (s.fbo) { state_.DeleteFramebuffers(1, &s.fbo); s.fbo = 0; }
     if (s.rbo) {
@@ -457,6 +484,9 @@ void GlDevice::ReleaseSurface(GlSurface& s) {
             pool_.Retire(s.tex, static_cast<int>(s.desc.width), static_cast<int>(s.desc.height),
                          state_);
         } else {
+            if (gpu_lifetime::On())
+                gpu_lifetime::Texture(s.tex, s.desc.width, s.desc.height, gpu_lifetime::Event::Free,
+                                      s.desc.renderable ? "a render target destroyed" : "a texture destroyed");
             state_.DeleteTextures(1, &s.tex);
         }
         s.tex = 0;
@@ -530,6 +560,8 @@ void GlDevice::Upload(SurfaceId id, const Rect& rect, const void* bytes, size_t 
     // with levels keeps glTexSubImage2D (a level-0 glTexImage2D would drop vitaGL's chain).
     if (full && !depth && !s.desc.renderable && s.desc.format == SurfaceFormat::Rgba8 && s.levels == 0 &&
         s.synth_levels == 0 && (stride == 0 || stride == size_t(rect.w) * 4)) {
+        if (gpu_lifetime::On())
+            gpu_lifetime::Texture(s.tex, s.desc.width, s.desc.height, gpu_lifetime::Event::Respecify, "a whole image uploaded");
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rect.w, rect.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, bytes);
         CheckVitaStorage(uint32_t(rect.w), uint32_t(rect.h), 0);
         s.respecify = false;
@@ -542,9 +574,14 @@ void GlDevice::Upload(SurfaceId id, const Rect& rect, const void* bytes, size_t 
     if (s.respecify && full && s.desc.format == SurfaceFormat::Rgba8) {
         // busy pooled storage (always RGBA8): re-specifying with data orphans the old
         // allocation
+        if (gpu_lifetime::On())
+            gpu_lifetime::Texture(s.tex, s.desc.width, s.desc.height, gpu_lifetime::Event::Respecify, "a busy pooled storage refilled");
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rect.w, rect.h, 0, ext, GL_UNSIGNED_BYTE, bytes);
         s.respecify = false;
     } else {
+        // (vitaGL copies a storage drawn in its last 4 frames before writing it: textures.c _glTexSubImage2D)
+        if (gpu_lifetime::On())
+            gpu_lifetime::Texture(s.tex, s.desc.width, s.desc.height, gpu_lifetime::Event::CpuWrite, "a sub-image uploaded", true);
         glTexSubImage2D(GL_TEXTURE_2D, 0, rect.x, rect.y, rect.w, rect.h, ext, type,
                         bytes);
     }
@@ -596,6 +633,8 @@ SurfaceId GlDevice::CreateTextureWithData(const SurfaceDesc& desc, const void* b
         s.pooled = s.tex != 0;
         s.respecify = s.pooled && !idle;
         if (!s.tex) glGenTextures(1, &s.tex);
+        else if (gpu_lifetime::On())
+            gpu_lifetime::Texture(s.tex, desc.width, desc.height, gpu_lifetime::Event::Respecify, "the pool's storage given to a new texture");
         state_.BindTex2D(s.tex);
         // (as Upload's whole-image path: the storage specified with the texels, one allocation)
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
@@ -656,6 +695,12 @@ void GlDevice::UploadLevel(SurfaceId id, int level, int w, int h, const void* rg
 #endif
     state_.ActiveTexture(GL_TEXTURE0);
     state_.BindTex2D(it->second.tex);
+#if PS2R_HOST_VITA
+    // (vitaGL grows the storage to the whole chain: gpu_alloc_mipmaps' vgl_realloc frees the old one itself, at once)
+    if (gpu_lifetime::On())
+        gpu_lifetime::Texture(it->second.tex, it->second.desc.width, it->second.desc.height, gpu_lifetime::Event::Respecify,
+                              "a level below the first made", false, true);
+#endif
     glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     state_.BindTex2D(0);
 }
@@ -699,6 +744,9 @@ void GlDevice::FinishMipChain(SurfaceId id, int authored_levels, bool synthesize
             const bool skip = &te_gxm_skip_downscale != nullptr;
             const unsigned skipped0 = skip && &te_gxm_downscales_skipped ? te_gxm_downscales_skipped : 0;
             if (skip) te_gxm_skip_downscale = 1;
+            if (gpu_lifetime::On())
+                gpu_lifetime::Texture(s.tex, s.desc.width, s.desc.height, gpu_lifetime::Event::Respecify,
+                                      "the level chain made (vitaGL's realloc frees the old storage at once)", false, true);
             glTexImage2D(GL_TEXTURE_2D, top, GL_RGBA8, std::max(int(s.desc.width) >> top, 1), std::max(int(s.desc.height) >> top, 1),
                          0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
             if (skip) te_gxm_skip_downscale = 0;
@@ -719,6 +767,9 @@ void GlDevice::FinishMipChain(SurfaceId id, int authored_levels, bool synthesize
                         Census().tex_levels_beyond_chain++;
                         continue;
                     }
+                    if (gpu_lifetime::On())
+                        gpu_lifetime::Texture(s.tex, s.desc.width, s.desc.height, gpu_lifetime::Event::CpuWrite,
+                                              "a level written into the chain", true);
                     glTexSubImage2D(GL_TEXTURE_2D, l.level, 0, 0, l.w, l.h, GL_RGBA, GL_UNSIGNED_BYTE, l.rgba.data());
                     Census().tex_level_bytes += l.rgba.size();
                 }
@@ -1216,6 +1267,11 @@ void GlDevice::DestroyMesh(uint32_t mesh) {
     auto it = meshes_.find(mesh);
     if (it == meshes_.end()) return;
     if (mesh_slots_[mesh & (kMeshSlots - 1)].id == mesh) mesh_slots_[mesh & (kMeshSlots - 1)] = MeshSlot{};
+    if (gpu_lifetime::On()) {
+        const GlMesh& m = it->second;
+        for (const uint32_t b : {m.vbo, m.ibo, m.list_ibo, m.vbo_idx})
+            if (b) gpu_lifetime::Buffer(b, 0, gpu_lifetime::Event::Free, "a mesh destroyed");
+    }
     state_.DeleteBuffers(1, &it->second.vbo);
     if (it->second.ibo) {
         // (the element binding is the vertex array's state, deleted with it below; the state cache never binds it)
@@ -1414,10 +1470,42 @@ bool GlDevice::DrawMeshPacketInstances(uint32_t packet, uint32_t mesh, uint32_t 
     // (DrawMeshPacket's form of the mesh and its range)
     const bool use_idx = m->vao_idx ? vita_mesh_ab_on_ : m->list_ibo != 0;
     const uint32_t vbo = m->vao_idx && use_idx ? m->vbo_idx : m->vbo;
+    const uint32_t ibo = use_idx ? m->list_ibo : 0;
     MeshDrawParams range;
     range.first = first;
     range.count = count;
-    return executor_->DrawMeshPacketInstances(packet, vbo, use_idx ? m->list_ibo : 0, MeshRange(m->count, range), first, inst, n);
+    const size_t per = MeshRange(m->count, range);
+    const size_t per_draw = per / 3 * 3;   // the indices an instance repeats (the executor's)
+    if (!vita_instance_indices_ || !per_draw || size_t(n) * per_draw <= vita_instance_indices_)
+        return executor_->DrawMeshPacketInstances(packet, vbo, ibo, per, first, inst, n);
+    // TE_GFX_VITA_INSTANCE_INDICES: no instanced draw of more indices than that -- the run drawn as instanced draws of at
+    // most `most` instances each, in its order (the same draws, the same order: the same picture); a run whose instance
+    // alone is over half the bound is declined (the caller draws it one by one)
+    const int most = int(vita_instance_indices_ / per_draw);
+    if (most < 2) return false;
+    int s = 0;
+    while (s < n) {
+        const int k = std::min(most, n - s);
+        if (k >= 2 && executor_->DrawMeshPacketInstances(packet, vbo, ibo, per, first, inst + s, k)) {
+            s += k;
+            continue;
+        }
+        if (s == 0) return false;   // (nothing drawn yet: the caller's one by one)
+        // a last single member, or a chunk the device declined after the run's first was drawn: its members as the
+        // packet replays they stand for
+        for (int i = s; i < s + k; ++i) {
+            MeshDrawParams mp;
+            std::memcpy(mp.screen, inst[i].screen, sizeof mp.screen);
+            std::memcpy(mp.offset, inst[i].offset, sizeof mp.offset);
+            std::memcpy(mp.scroll, inst[i].scroll, sizeof mp.scroll);
+            if (inst[i].box) std::memcpy(mp.box, inst[i].box, sizeof mp.box);
+            mp.first = first;
+            mp.count = count;
+            executor_->DrawMeshPacket(packet, vbo, ibo, use_idx ? m->shaded : 1.f, per, mp);
+        }
+        s += k;
+    }
+    return true;
 }
 #endif
 
@@ -1583,6 +1671,7 @@ void GlDevice::VitaDropKeep(const char* why) {
     if (vita_keep_fbo_) VitaDepthModes(vita_keep_fbo_, false, false);
     vita_keep_fbo_ = 0;
     vita_keep_loading_ = false;
+    if (vita_keep_always_) te_gxm_keep_surface = nullptr;
     static const char* said[8] = {};
     for (const char*& s : said) {
         if (s == why) return;
@@ -1606,12 +1695,13 @@ void GlDevice::VitaDropKeep(const char* why) {
 void GlDevice::KeepDepthAcrossCopies(SurfaceId color, bool keep) {
     const GlSurface* c = Surface(color);
     const uint32_t fbo = c ? c->fbo : 0;
-    keep = keep && vita_keep_depth_ && !vita_copy_none_ && fbo;
+    keep = (keep || vita_keep_always_) && vita_keep_depth_ && !vita_copy_none_ && fbo;
     if (vita_keep_fbo_ && (vita_keep_fbo_ != fbo || !keep)) {
         VitaDepthModes(vita_keep_fbo_, false, false);
         vita_keep_fbo_ = 0;
     }
     vita_keep_loading_ = false;
+    if (vita_keep_always_) te_gxm_keep_surface = nullptr;   // (armed again below for the frame it keeps)
     if (!keep) return;
     if (vita_vgl_ != 1) {
         VitaDropKeep(vita_vgl_ < 0 ? "vitaGL's framebuffers are not the r1488 ones: see the line above"
@@ -1633,6 +1723,11 @@ void GlDevice::KeepDepthAcrossCopies(SurfaceId color, bool keep) {
     vita_keep_data_ = ds->depthData;
     VitaDepthModes(fbo, true, false);
     vita_kept_frames_++;
+    if (vita_keep_always_) {
+        // (the frame's first scene of the target begins storing, loading nothing; the wrapper loads every later one)
+        te_gxm_keep_surface = ds;
+        te_gxm_keep_begins = 0;
+    }
 }
 
 // The source texture drawn into the destination texture's framebuffer: a scene of its own (vitaGL ends the source's
@@ -2001,6 +2096,7 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         const auto t_swap = std::chrono::steady_clock::now();
         swap_();
         const auto t_done = std::chrono::steady_clock::now();
+        gpu_lifetime::OnSwap();   // (the audit's mark of this frame's scenes; nothing when off)
 #if PS2R_HOST_VITA
         FillCensusAfterSwap();   // (outside a scene here: the fill census's visibility buffer is set at the first swap after it is wanted)
 #endif

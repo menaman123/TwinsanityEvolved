@@ -10,7 +10,8 @@ definitions before the symbols go local).
 
 The object's remaining UNDEFINED symbols are checked: each must be a seam body (ps2e_*: platform/nativeee/host), the
 runner's trampolines (CallEabiTrampoline / CallEabiTrampolineF: runner/te_native.cpp), the profiler's section array
-(te_prof_section: a TE_PROF_SEAM build's forwarders mark it) or a C runtime function of the
+(te_prof_section: a TE_PROF_SEAM build's forwarders mark it), the host's seam epoch (te_seam_epoch: the native game's
+resource code moves it, platform/nativeee/host/te_seam_epoch.h) or a C runtime function of the
 allowed list (newlib's string functions and sprintf family, libgcc's __aeabi_* helpers). Anything else -- a retail data
 symbol the guest block does not define, a game function with no body -- fails the build with its name.
 
@@ -26,7 +27,9 @@ from pathlib import Path
 KEEP = ["entry", "te_retail_functions", "te_retail_function_count", "te_guest_block"]
 RUNTIME = re.compile(r"^(__aeabi_\w+|__gnu_\w+|memset|memcpy|memmove|memcmp|memchr|strlen|strcmp|strncmp|strcpy|strncpy|strcat|"
                      r"strncat|strchr|strrchr|strstr|sprintf|snprintf|vsprintf|vsnprintf|abort|__cxa_pure_virtual|__stack_chk_fail)$")
-SEAM = re.compile(r"^(ps2e_\w+|CallEabiTrampoline|CallEabiTrampolineF|te_prof_section)$")   # te_prof_section: TE_PROF_SEAM's markers
+SEAM = re.compile(r"^(ps2e_\w+|CallEabiTrampoline|CallEabiTrampolineF|te_prof_section|te_seam_epoch)$")   # te_prof_section: TE_PROF_SEAM's
+                                                                                                       # markers; te_seam_epoch: the host's
+                                                                                                       # seam epoch the native game moves (te_seam_epoch.h)
 
 
 def run(cmd, **kw):

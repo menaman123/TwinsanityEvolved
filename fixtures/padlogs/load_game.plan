@@ -1,0 +1,19 @@
+# load_game plan (the autopilot; fixtures/padlogs/load_game.padlog's presses anchored on the GameController states, so the
+# route replays at either disc speed and on the PS Vita): the title (7) -> START, the main menu (8) -> LOAD GAME -> the card's
+# first save -> LoadingLevel (9) -> Playing (12). Needs the hub card hub_entry.padlog writes (--stop-at 2700 on an empty card).
+until-gstate 7 9000
+idle 11
+hold START 5
+until-gstate 8 600
+idle 78
+hold DOWN 3
+idle 47
+hold CROSS 5
+idle 395
+hold DOWN 3
+idle 97
+hold CROSS 3
+until-gstate 9 3000
+until-gstate 12 9000
+idle 60
+stop

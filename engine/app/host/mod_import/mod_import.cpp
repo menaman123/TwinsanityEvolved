@@ -635,7 +635,7 @@ std::string MakeId(const std::string& name) {
     }
     if (id.empty()) id = "mod";
     // the built-in mods' ids (mods/<id>/mod.json kind builtin): a folder may not take them
-    if (id == "level_select" || id == "speedrun") id += "_mod";
+    if (id == "level_select" || id == "speedrun" || id == "infinite_lives") id += "_mod";
     return id;
 }
 

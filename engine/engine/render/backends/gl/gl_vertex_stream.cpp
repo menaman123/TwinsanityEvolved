@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "engine/render/backends/gl/gl_census.h"
+#include "engine/render/backends/gl/gl_gpu_lifetime.h"
 #if PS2R_HOST_VITA
 #include <psp2/kernel/processmgr.h>   // (the sampled copy timing)
 #endif
@@ -102,7 +103,9 @@ int GlVertexStream::UploadRaw(const void* verts, size_t bytes, size_t stride) {
     if (!vita_orphan_ring_ && bytes <= kVitaSliceSize) {
         if (!ready_) {
             // the storage, once (vitaGL: gpu_alloc_mapped_for_cpu, the RAM pool first)
+            if (gpu_lifetime::On()) gpu_lifetime::Buffer(vbo_, 0, gpu_lifetime::Event::Respecify, "the vertex ring made");
             glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(kRingSize), nullptr, GL_STREAM_DRAW);
+            for (uint32_t& w : slice_writer_) w = 0xFFFFFFFFu;   // (a new storage: no slice of it written)
             ready_ = true;
             slice_frame_ = 0xFFFFFFFFu;
             generation_++;
@@ -111,12 +114,7 @@ int GlVertexStream::UploadRaw(const void* verts, size_t bytes, size_t stride) {
         }
         // this vitaGL frame's slice (see the header: a slice is rewritten kVitaSlices swaps after it was last written)
         const uint32_t frame = vglGetFrameNumber();
-        if (frame != slice_frame_) {
-            slice_frame_ = frame;
-            offset_ = size_t(frame % uint32_t(kVitaSlices)) * kVitaSliceSize;
-            slice_end_ = offset_ + kVitaSliceSize;
-            frame_bytes_ = 0;
-        }
+        if (frame != slice_frame_) BeginSlice(frame);
         size_t off = (offset_ + stride - 1) / stride * stride;
         if (off + bytes > slice_end_) {
             // more than a slice this frame: a new storage (vitaGL keeps the old one until the GPU is past its last draw:
@@ -126,7 +124,10 @@ int GlVertexStream::UploadRaw(const void* verts, size_t bytes, size_t stride) {
                 std::fprintf(stderr, "[gl] vertex ring: frame %u uploaded more than its %u KB slice (%llu bytes so far, "
                              "%llu more): the storage re-specified (%llu so far)\n", frame, unsigned(kVitaSliceSize >> 10),
                              (unsigned long long)frame_bytes_, (unsigned long long)bytes, (unsigned long long)overflows_);
+            if (gpu_lifetime::On()) gpu_lifetime::Buffer(vbo_, 0, gpu_lifetime::Event::Respecify, "the vertex ring outgrown by a frame");
             glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(kRingSize), nullptr, GL_STREAM_DRAW);
+            for (uint32_t& w : slice_writer_) w = 0xFFFFFFFFu;
+            slice_writer_[frame % uint32_t(kVitaSlices)] = frame;
             generation_++;
             Census().ring_respecs++;
             Census().ring_respec_bytes += kRingSize;
@@ -157,6 +158,7 @@ int GlVertexStream::UploadRaw(const void* verts, size_t bytes, size_t stride) {
     const size_t one_off = kRingSize;
 #endif
     if (bytes > one_off) {
+        if (gpu_lifetime::On()) gpu_lifetime::Buffer(vbo_, 0, gpu_lifetime::Event::Respecify, "the vertex ring given one larger draw");
         glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(bytes), verts, GL_STREAM_DRAW);
         ready_ = false;
         offset_ = 0;
@@ -166,6 +168,7 @@ int GlVertexStream::UploadRaw(const void* verts, size_t bytes, size_t stride) {
         return 0;
     }
     if (!ready_) {
+        if (gpu_lifetime::On()) gpu_lifetime::Buffer(vbo_, 0, gpu_lifetime::Event::Respecify, "the vertex ring made");
         glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(kRingSize), nullptr, GL_STREAM_DRAW);
         ready_ = true;
         offset_ = 0;
@@ -184,6 +187,7 @@ int GlVertexStream::UploadRaw(const void* verts, size_t bytes, size_t stride) {
             fence_ = nullptr;
         }
 #endif
+        if (gpu_lifetime::On()) gpu_lifetime::Buffer(vbo_, 0, gpu_lifetime::Event::Respecify, "the vertex ring wrapped");
         glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(kRingSize), nullptr, GL_STREAM_DRAW);
         generation_++;
         Census().ring_respecs++;
@@ -219,6 +223,19 @@ uint64_t GlVertexStream::InPlaceBytes() { return g_inplace_bytes; }
 void GlVertexStream::NoteInPlace(size_t bytes) { g_inplace_bytes += bytes; }
 void GlVertexStream::NoteCopied(size_t bytes) { g_copied_bytes += bytes; }
 
+// vitaGL frame `frame`'s slice: F % kVitaSlices from its start (the GPU-lifetime audit first: the frame that wrote it last)
+void GlVertexStream::BeginSlice(uint32_t frame) {
+    slice_frame_ = frame;
+    const uint32_t slice = frame % uint32_t(kVitaSlices);
+    if (gpu_lifetime::On()) {
+        gpu_lifetime::RingSlice(frame, slice_writer_[slice], int(slice), kVitaSliceSize);
+        slice_writer_[slice] = frame;
+    }
+    offset_ = size_t(slice) * kVitaSliceSize;
+    slice_end_ = offset_ + kVitaSliceSize;
+    frame_bytes_ = 0;
+}
+
 bool GlVertexStream::InRing(const void* p, size_t bytes, size_t stride, int* first) const {
     if (!p || !first || !ready_ || !vbo_ || !stride) return false;
     const uint8_t* const base = *reinterpret_cast<const uint8_t* const*>(uintptr_t(vbo_));   // vitaGL's record: storage, size
@@ -246,12 +263,7 @@ void* GlVertexStream::ReserveRaw(size_t bytes, size_t stride, int* first) {
     if (bytes == 0 || !first || vita_orphan_ring_ || !ready_ || !vbo_ || bytes > kVitaSliceSize) return nullptr;
     // UploadRaw's steps without its GL calls: this vitaGL frame's slice, the next multiple of the stride in it
     const uint32_t frame = vglGetFrameNumber();
-    if (frame != slice_frame_) {
-        slice_frame_ = frame;
-        offset_ = size_t(frame % uint32_t(kVitaSlices)) * kVitaSliceSize;
-        slice_end_ = offset_ + kVitaSliceSize;
-        frame_bytes_ = 0;
-    }
+    if (frame != slice_frame_) BeginSlice(frame);
     const size_t off = (offset_ + stride - 1) / stride * stride;
     if (off + bytes > slice_end_) return nullptr;   // (UploadRaw re-specifies the storage: the frame continues there)
     uint8_t* const base = *reinterpret_cast<uint8_t* const*>(uintptr_t(vbo_));   // vitaGL's buffer record: the storage at 0

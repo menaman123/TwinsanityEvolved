@@ -20,6 +20,9 @@
 #include <memory>
 #include <optional>
 #include <vector>
+#if defined(__vita__)
+#include <arm_neon.h>
+#endif
 
 #include "games/slus_20909_crash_twinsanity/hle/math/collision_math.h"
 #include "games/slus_20909_crash_twinsanity/hle/math/joint_math.h"
@@ -57,21 +60,40 @@ std::optional<Matrix> ReadMatrix(uint32_t address) {
     return out;
 }
 void WriteVector(uint32_t address, const Vector& v) {
+#if defined(__vita__)
+    float* out = reinterpret_cast<float*>(te::GuestSpan(address, 16));
+#else
     float* out = reinterpret_cast<float*>(te::GuestPointer(address, 16));
+#endif
+#if defined(__vita__)
+    // (the four floats' bits as one NEON quadword: the joint seams write ~4000 vectors and matrices a picture)
+    if (out) vst1q_u32(reinterpret_cast<uint32_t*>(out), vld1q_u32(reinterpret_cast<const uint32_t*>(v.data())));
+#else
     if (out) std::memcpy(out, v.data(), 16);
+#endif
 }
 void WriteMatrix(uint32_t address, const Matrix& m) {
+#if defined(__vita__)
+    float* out = reinterpret_cast<float*>(te::GuestSpan(address, 64));
+#else
     float* out = reinterpret_cast<float*>(te::GuestPointer(address, 64));
+#endif
     if (!out) return;
+#if defined(__vita__)
+    // (the rows as four NEON quadword loads and stores: the copy was ~40 core instructions)
+    for (int r = 0; r < 4; ++r)
+        vst1q_u32(reinterpret_cast<uint32_t*>(out + r * 4), vld1q_u32(reinterpret_cast<const uint32_t*>(m[r].data())));
+#else
     for (int r = 0; r < 4; ++r) std::memcpy(out + r * 4, m[r].data(), 16);
+#endif
 }
 float* Floats(uint32_t address, size_t count) { return reinterpret_cast<float*>(te::GuestPointer(address, count * 4)); }
 #if defined(__vita__)
 // a guest vector / matrix READ IN PLACE: Vector is float[4], Matrix float[4][4] (std::array, no padding), the guest
 // memory holds the game's floats as it wrote them -- the joint seams' ReadVector / ReadMatrix copies (an optional each) were
 // the bulk of their memory traffic (~300 joint, ~370 parent and ~290 Euler calls a hub frame on the device)
-const Vector* InPlaceVector(uint32_t address) { return reinterpret_cast<const Vector*>(te::GuestPointer(address, 16)); }
-const Matrix* InPlaceMatrix(uint32_t address) { return reinterpret_cast<const Matrix*>(te::GuestPointer(address, 64)); }
+const Vector* InPlaceVector(uint32_t address) { return reinterpret_cast<const Vector*>(te::GuestSpan(address, 16)); }
+const Matrix* InPlaceMatrix(uint32_t address) { return reinterpret_cast<const Matrix*>(te::GuestSpan(address, 64)); }
 static_assert(sizeof(Vector) == 16 && sizeof(Matrix) == 64, "the in-place forms read 4 / 16 consecutive floats");
 #endif
 
@@ -208,27 +230,31 @@ void RayMicro::Report() {
 struct MathStubs {
     bool read = false;
     bool collision = false, rays = false, joints = false, particles = false;
-};
-MathStubs g_mathStubs;
-bool Stubbed(const char* group) {
-    if (!g_mathStubs.read) {
-        g_mathStubs.read = true;
+    __attribute__((noinline, cold)) void Read() {
+        read = true;
         if (const char* v = std::getenv("TE_MATH_STUB")) {
-            g_mathStubs.collision = std::strstr(v, "collision") != nullptr;
-            g_mathStubs.rays = std::strstr(v, "rays") != nullptr;
-            g_mathStubs.joints = std::strstr(v, "joints") != nullptr;
-            g_mathStubs.particles = std::strstr(v, "particles") != nullptr;
+            collision = std::strstr(v, "collision") != nullptr;
+            rays = std::strstr(v, "rays") != nullptr;
+            joints = std::strstr(v, "joints") != nullptr;
+            particles = std::strstr(v, "particles") != nullptr;
         }
     }
+};
+MathStubs g_mathStubs;
+__attribute__((noinline, cold)) bool StubbedOther(const char* group) {
+    const char* v = std::getenv("TE_MATH_STUB");
+    return v && std::strstr(v, group) != nullptr;
+}
+// (inline: a flag load where the seams ask -- an out-of-line call of ~15 instructions on each of ~7000 joint, collision and
+// ray seam calls a picture at the rooftop's far view)
+__attribute__((always_inline)) inline bool Stubbed(const char* group) {
+    if (__builtin_expect(!g_mathStubs.read, 0)) g_mathStubs.Read();
     switch (group[0]) {
         case 'c': return g_mathStubs.collision;
         case 'r': return g_mathStubs.rays;
         case 'j': return g_mathStubs.joints;
         case 'p': return g_mathStubs.particles;
-        default: {
-            const char* v = std::getenv("TE_MATH_STUB");
-            return v && std::strstr(v, group) != nullptr;
-        }
+        default: return StubbedOther(group);
     }
 }
 
@@ -243,7 +269,13 @@ ps2e_f32 ps2e_math_min(ps2e_f32 first, ps2e_f32 second) { return FpuKey(first) <
 void ps2e_math_slerp_rotations(ps2e_u32 from, ps2e_u32 to, ps2e_f32 share, ps2e_u32 out) {
     TE_SEAM(kSeamJoints);
     if (Stubbed("joints")) return;
+#if defined(__vita__)
+    // the operands read in place (InPlaceVector); the rotation is made before `out` (which may be an operand) is written
+    const Vector* f = InPlaceVector(from);
+    const Vector* t = InPlaceVector(to);
+#else
     const auto f = ReadVector(from), t = ReadVector(to);
+#endif
     if (!f || !t) return;
     WriteVector(out, title::JointMath::Interpolate(*f, *t, share).rotation);
 }
@@ -276,7 +308,13 @@ void ps2e_math_euler_rotation(ps2e_u32 anglesNow, ps2e_u32 anglesNext, ps2e_u32 
 void ps2e_math_turn_rotation(ps2e_u32 by, ps2e_u32 rotation) {
     TE_SEAM(kSeamJoints);
     if (Stubbed("joints")) return;
+#if defined(__vita__)
+    // read in place; Turn's result is made before `rotation` (an operand) is written
+    const Vector* b = InPlaceVector(by);
+    const Vector* r = InPlaceVector(rotation);
+#else
     const auto b = ReadVector(by), r = ReadVector(rotation);
+#endif
     if (!b || !r) return;
     WriteVector(rotation, title::JointMath::Turn(*b, *r));
 }
@@ -285,10 +323,22 @@ void ps2e_math_lerp(ps2e_u32 from, ps2e_u32 to, ps2e_f32 share, ps2e_u32 out) {
     TE_SEAM(kSeamJoints);
     te::gfx::CountCall(te::gfx::kCallLerp);
     if (Stubbed("joints")) return;
+#if defined(__vita__)
+    // read in place; the clamps left out when they cannot act (te_unclamped.h Lerp: every operand finite, the thread
+    // rounding toward zero -- the same bits), else the engine's clamped form; the result made before `out` is written
+    const Vector* f = InPlaceVector(from);
+    const Vector* t = InPlaceVector(to);
+    if (!f || !t) return;
+    if (te::gfx::g_repeatCensus) te::gfx::NoteRepeat(te::gfx::kCallLerp, f->data(), 16, t->data(), 16, &share, 4);
+    const Vector result = te::gfx::SeamLean() && te::unclamped::LerpApplies(*f, *t, share) ? te::unclamped::Lerp(*f, *t, share)
+                                                                                          : title::JointMath::Lerp(*f, *t, share);
+    WriteVector(out, result);
+#else
     const auto f = ReadVector(from), t = ReadVector(to);
     if (!f || !t) return;
     if (te::gfx::g_repeatCensus) te::gfx::NoteRepeat(te::gfx::kCallLerp, f->data(), 16, t->data(), 16, &share, 4);
     WriteVector(out, title::JointMath::Lerp(*f, *t, share));
+#endif
 }
 
 // JointMatrix (math.cpp): the rotation's basis (the identity without one), divided by the parent's scale and scaled by its own
@@ -634,26 +684,37 @@ std::atomic<uint32_t> g_unclamped_fast{0}, g_unclamped_clamped{0};
 void ps2e_vu0_start_triangle_edge_tests(ps2e_u32 start, ps2e_u32 end, ps2e_u32 triangle, ps2e_u32 values) {
     TE_SEAM(kSeamCollision);
     if (Stubbed("collision")) return;
+#if defined(__vita__)
+    // the operands read in place (no optional copies; the triangle's three vertices are its first 12 floats), the set-up
+    // written into the kept one (the 296-byte result zeroed and then copied into the optional were a memset and a memcpy
+    // a call); the same arithmetic without the PS2 FPU clamps when they cannot act (te_unclamped.h): bit-identical
+    const Vector* s = InPlaceVector(start);
+    const Vector* e = InPlaceVector(end);
+    const auto* tri = reinterpret_cast<const title::CollisionMath::Triangle*>(te::GuestSpan(triangle, 48));
+    float* out = reinterpret_cast<float*>(te::GuestSpan(values, 8));
+    if (!s || !e || !tri || !out) return;
+    static_assert(sizeof(title::CollisionMath::Triangle) == 48, "the triangle read in place is 12 floats");
+    if (te::unclamped::StartEdgesApply(*s, *e, *tri)) {
+        if (!g_edges) g_edges.emplace();
+        te::unclamped::StartEdgesInto(*s, *e, *tri, *g_edges);
+        g_unclamped_fast.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_edges = title::CollisionMath::EvaluateStartEdges(*s, *e, *tri);
+        g_unclamped_clamped.fetch_add(1, std::memory_order_relaxed);
+    }
+    out[0] = g_edges->plane_values[0];
+    out[1] = g_edges->plane_values[1];
+#else
     const auto s = ReadVector(start), e = ReadVector(end);
     const float* t = Floats(triangle, 12);   // CollisionHit: its three vertices first
     float* out = Floats(values, 2);
     if (!s || !e || !t || !out) return;
     title::CollisionMath::Triangle tri;
     for (int i = 0; i < 3; ++i) tri[i] = {t[i * 4], t[i * 4 + 1], t[i * 4 + 2], t[i * 4 + 3]};
-#if defined(__vita__)
-    // the same arithmetic without the PS2 FPU clamps when they cannot act (te_unclamped.h): bit-identical
-    if (te::unclamped::StartEdgesApply(*s, *e, tri)) {
-        g_edges = te::unclamped::StartEdges(*s, *e, tri);
-        g_unclamped_fast.fetch_add(1, std::memory_order_relaxed);
-    } else {
-        g_edges = title::CollisionMath::EvaluateStartEdges(*s, *e, tri);
-        g_unclamped_clamped.fetch_add(1, std::memory_order_relaxed);
-    }
-#else
     g_edges = title::CollisionMath::EvaluateStartEdges(*s, *e, tri);
-#endif
     out[0] = g_edges->plane_values[0];
     out[1] = g_edges->plane_values[1];
+#endif
 }
 
 void ps2e_vu0_finish_triangle_edge_tests(ps2e_u32 values) {

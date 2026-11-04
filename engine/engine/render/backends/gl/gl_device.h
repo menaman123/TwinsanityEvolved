@@ -292,6 +292,8 @@ private:
     void VitaDropKeep(const char* why);   // this frame keeps no depth from here on (one log line per reason)
     uint32_t copy_fbo_ = 0, copy_fbo_tex_ = 0;
     bool vita_gpu_copy_ = true, vita_keep_depth_ = true;
+    bool vita_keep_always_ = false;   // TE_GFX_VITA_KEEP_DEPTH=always: every frame, across any break (the BeginScene wrapper)
+    uint32_t vita_instance_indices_ = 0;   // TE_GFX_VITA_INSTANCE_INDICES: the most indices one instanced draw carries (0: any)
     bool vita_copy_restore_ = true;   // the frame drawn back from the copy after the switch (TE_GFX_VITA_COPY_RESTORE=0: not)
     // TE_GFX_VITA_COPY_RESTORE unset / auto: the frame's scene CONTINUED after the copy when it can be -- vitaGL told the
     // frame's framebuffer was its last scene's (old_framebuffer), so it begins the next scene without its scene-start mask

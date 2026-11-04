@@ -38,6 +38,15 @@ file(MAKE_DIRECTORY "${TE_GEN}/mods")
 file(WRITE "${TE_GEN}/mods/mods_manifests.cpp.in" "${_te_mods_cpp}")
 configure_file("${TE_GEN}/mods/mods_manifests.cpp.in" "${TE_GEN}/mods/mods_manifests.cpp" COPYONLY)
 list(APPEND TE_HOST_SOURCES "${TE_GEN}/mods/mods_manifests.cpp")
+# the scripted cutscenes the cross button may skip (Platform::System::CutsceneSkippable, host/cutscene_skip.cpp): the table made
+# of the cutscene skip judge's fixture (each cutscene's graphs and whether its skip leaves the watched state)
+set(TE_CUTSCENE_SKIP_FIXTURE "${CMAKE_SOURCE_DIR}/fixtures/judges/cutscene_skip_pal.json")
+add_custom_command(OUTPUT "${TE_GEN}/cutscenes/cutscene_skip_table.cpp"
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/cutscenes/skip_table.py" --fixture "${TE_CUTSCENE_SKIP_FIXTURE}"
+            --out "${TE_GEN}/cutscenes/cutscene_skip_table.cpp"
+    DEPENDS "${CMAKE_SOURCE_DIR}/tools/cutscenes/skip_table.py" "${TE_CUTSCENE_SKIP_FIXTURE}"
+    COMMENT "skip_table: the cutscenes the cross button may skip")
+list(APPEND TE_HOST_SOURCES "${TE_GEN}/cutscenes/cutscene_skip_table.cpp")
 add_library(te_platform_host STATIC ${TE_HOST_SOURCES})
 target_include_directories(te_platform_host PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/host" "${CMAKE_CURRENT_SOURCE_DIR}" "${TE_GEN}/seam" "${TE_ENGINE}")
 target_compile_options(te_platform_host PRIVATE -Wall -Wextra)

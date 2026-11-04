@@ -1,0 +1,21 @@
+{
+  "judge": "loading_screen_judge",
+  "description": "LOAD GAME on the hub card (fixtures/padlogs/load_game.plan: the presses anchored on the game states) at the device's speed (disc.speed = device): the title's load (LoadingTitle: the hub chunk the title stands on) and the hub's (LoadingLevel) in fast_min..fast_max boundaries, the loading picture fading in as the console's and held picture_min presents (picture_min_play in a window), at most max_wall_s each in play mode with vsync off and on, every boundary paced, the level after the hub's load the console's; at the console's pace (disc.speed = console) the loads keep their console boundaries and at least paced_min_wall_s.",
+  "plan": "fixtures/padlogs/load_game.plan",
+  "loads": [
+    {"state": "LoadingTitle", "from": 531, "to": 1260},
+    {"state": "LoadingLevel", "from": 2153, "to": 2883}
+  ],
+  "stop_at": 2960,
+  "stop_at_fast": 1600,
+  "probe_every": 30,
+  "probe_samples": 3,
+  "fast_min": 35,
+  "fast_max": 60,
+  "picture_min": 5,
+  "picture_min_play": 3,
+  "max_wall_s": 1.0,
+  "paced_min_wall_s": 10.0,
+  "why": "A console load is 729-730 boundaries: the modelled DVD reading 19.9 MB (about 10.5 s) and the streaming loader's two one-second waits. At the device's speed what is left is the picture's 0.5 s fade-in (30 boundaries), the frames that read and parse the level (the host's own work) and StartingPlay: 41 and 41 on the build that froze this fixture.",
+  "frozen": "2026-11-02: GREEN on the device-speed build (41 and 41 boundaries, the picture held 12 and 9 presents, 0.68-0.70 s in a window with vsync off and on, the level after the load the console's: 233 probe lines); RED on 1b79481 (the runner refuses --disc-speed; in play its loads ran unpaced -- 868 parks and 3 late of 1600 boundaries -- with no loading picture)."
+}

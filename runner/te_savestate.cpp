@@ -507,6 +507,10 @@ bool Load(const std::string& path, std::string* err) {
     // through them), the graphics' textures last; the services' system section constructs the rest.
     te::savestate::PrepareOwners();
     te::Services::Get().PrepareForRestore(sections);
+    // A fiber that has not run yet (--load-state) waits in te_run_entry with this process's trap handler armed before its
+    // stack is replaced: the handler a trap after the load unwinds through is this process's, never the saving one's
+    // (te_run.h). An in-place load (F8) keeps the handler the game started with.
+    te::game::HoldForLoad();
     std::vector<uint32_t> known = te::savestate::Registry().KnownTags();
     for (const Blob& b : sections) {
         bool owned = false;

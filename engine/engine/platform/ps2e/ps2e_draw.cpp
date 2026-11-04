@@ -37,6 +37,9 @@
 #include "engine/platform/sdl/window.h"
 #include "engine/render/backend.h"
 #include "engine/render/mesh_index.h"
+#if PS2R_HOST_VITA
+#include <arm_neon.h>   // (the sky's depth test: ps2e_draw_mesh_depth_far_above)
+#endif
 
 using namespace ps2r;
 
@@ -228,6 +231,9 @@ struct ps2e_draw {
     bool far_background = false;  // ps2e_draw_set_far_background: the moved sky (never a caster)
     bool record_casters = true;   // TE_GFX_VITA_CASTERS=0 (or TE_GFX_VITA_STENCIL=0): no re-stamp
     bool shadow_fix = true;       // TE_GFX_VITA_SHADOW_FIX=0: the composite's FIX left to the backend's source-alpha stand-in
+    bool sky_neon = true;         // TE_GFX_VITA_SKY_NEON=0: the sky's depth test per draw the scalar way (ps2e_draw_mesh_depth_far_above)
+    bool sky_check = false;       // TE_GFX_VITA_SKY_NEON=2: both forms asked, their answers compared
+    uint64_t sky_checked = 0, sky_differ = 0;
     bool replaying = false;
     std::vector<ps2e_draw_vertex> fix_scratch;
     long census_every = 0;        // TE_GFX_CASTER_CENSUS=N: a census line every N brackets / presents
@@ -518,6 +524,11 @@ ps2e_draw* ps2e_draw_create(const ps2e_draw_config* config) {
         d->record_casters = !off("TE_GFX_VITA_CASTERS") && !off("TE_GFX_VITA_STENCIL");
         d->shadow_fix = !off("TE_GFX_VITA_SHADOW_FIX");
         d->packets = !off("TE_GFX_VITA_PACKETS");   // (=abN: the backend switches them in turns)
+        d->sky_neon = !off("TE_GFX_VITA_SKY_NEON");
+        if (const char* e = std::getenv("TE_GFX_VITA_SKY_NEON")) d->sky_check = e[0] == '2';
+        if (!d->sky_neon || d->sky_check)
+            std::fprintf(stderr, "[ps2e] the sky's depth test per draw: %s\n", d->sky_check ? "both forms, compared "
+                         "(TE_GFX_VITA_SKY_NEON=2)" : "the scalar loop (TE_GFX_VITA_SKY_NEON=0)");
         if (const char* e = std::getenv("TE_GFX_CASTER_CENSUS")) d->census_every = std::atol(e);
         if (const char* e = std::getenv("TE_GFX_VITA_CASTERS_KEEP"))
             if (std::atol(e) > 0) d->max_casters = size_t(std::min(std::atol(e), 65536L));
@@ -1312,11 +1323,9 @@ void RecordCaster(ps2e_draw* d, const ps2e_draw_state* st, const ps2e_draw_verte
 
 // a mesh's bounds (null: none kept) through the direct-mapped slots
 
-void RecordCasterMesh(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh, const ps2e_draw_mesh_params* mp,
-                      const float* bones = nullptr, int joints = 0, const float* disp = nullptr, int disp_count = 0) {
-    const CasterNeed n = CasterNeedOf(d, st);
-    if (!n.caster || !CasterRoom(d)) return;
-    const ps2e_draw::MeshBounds* mb = FindBounds(d, mesh);
+// a mesh draw kept as a caster (RecordCasterMesh's record, `n` its state's need and `mb` its mesh's bounds asked already)
+void KeepCasterMesh(ps2e_draw* d, const ps2e_draw_state* st, const CasterNeed& n, const ps2e_draw::MeshBounds* mb, uint32_t mesh,
+                    const ps2e_draw_mesh_params* mp, const float* bones, int joints, const float* disp, int disp_count) {
     if (n.need_av > 0) {
         const int av = !mb ? 0xFF : (mp->lit ? mb->la : mb->a);
         if (av < n.need_av) return;
@@ -1342,6 +1351,28 @@ void RecordCasterMesh(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh, co
     c.disp = disp;
     c.disp_count = disp_count;
     d->casters.push_back(c);
+}
+
+void RecordCasterMesh(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh, const ps2e_draw_mesh_params* mp,
+                      const float* bones = nullptr, int joints = 0, const float* disp = nullptr, int disp_count = 0) {
+    const CasterNeed n = CasterNeedOf(d, st);
+    if (!n.caster || !CasterRoom(d)) return;
+    KeepCasterMesh(d, st, n, FindBounds(d, mesh), mesh, mp, bones, joints, disp, disp_count);
+}
+// RecordCasterMesh for each draw of a run of one state and one mesh (ps2e_draw_submit_mesh_instances): the state's need
+// and the mesh's bounds are the run's, asked once; each draw is kept as RecordCasterMesh keeps it, in its order, while the
+// room lasts
+void RecordCasterMeshRun(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh, const ps2e_draw_mesh_params* const* params, int m) {
+    const CasterNeed n = CasterNeedOf(d, st);
+    if (!n.caster) return;
+    const ps2e_draw::MeshBounds* const mb = m > 0 && CasterRoom(d) ? FindBounds(d, mesh) : nullptr;
+    // KeepCasterMesh's first test (the mesh's alpha against the state's need) is every member's the same: a run is of one
+    // state, one mesh and unlit (ps2e_draw_submit_mesh_instances' caller) -- refused for one, refused for all
+    if (n.need_av > 0 && (!mb ? 0xFF : int(mb->a)) < n.need_av) return;
+    for (int i = 0; i < m; ++i) {
+        if (!CasterRoom(d)) return;
+        KeepCasterMesh(d, st, n, mb, mesh, params[i], nullptr, 0, nullptr, 0);
+    }
 }
 
 // two states the executor sets the same GL fixed-function context for: equal but for the texture, the alpha test and the
@@ -1887,16 +1918,30 @@ void KeepPacket(ps2e_draw* d, const ps2e_draw_state* st, const ps2e_draw_mesh_pa
 }
 // a mesh draw drawn from `packet`: the run's count, the repeats census (the same packet and mesh range as the draw just
 // before: an instanced draw's candidates)
-void NotePacketDraw(ps2e_draw* d, uint32_t packet, uint32_t mesh, const render::MeshDrawParams& m) {
+void NotePacketDrawRange(ps2e_draw* d, uint32_t packet, uint32_t mesh, uint32_t first, uint32_t count) {
     if (d->last_packet_draws == d->counters.draws && d->last_packet == packet && d->last_packet_mesh == mesh &&
-        d->last_packet_first == m.first && d->last_packet_count == m.count)
+        d->last_packet_first == first && d->last_packet_count == count)
         d->packet_repeats++;
     d->counters.draws++;
     d->mesh_run_draws = d->counters.draws;
     d->last_packet = packet;
     d->last_packet_mesh = mesh;
-    d->last_packet_first = m.first;
-    d->last_packet_count = m.count;
+    d->last_packet_first = first;
+    d->last_packet_count = count;
+    d->last_packet_draws = d->counters.draws;
+}
+void NotePacketDraw(ps2e_draw* d, uint32_t packet, uint32_t mesh, const render::MeshDrawParams& m) {
+    NotePacketDrawRange(d, packet, mesh, m.first, m.count);
+}
+// `m` draws of one packet and mesh range one after the other: what m NotePacketDrawRange calls leave -- the first one's
+// repeat test, then each later one a repeat of the one before it
+void NotePacketDraws(ps2e_draw* d, uint32_t packet, uint32_t mesh, uint32_t first, uint32_t count, int m) {
+    if (m <= 0) return;
+    NotePacketDrawRange(d, packet, mesh, first, count);
+    if (m == 1) return;
+    d->packet_repeats += uint64_t(m - 1);
+    d->counters.draws += uint64_t(m - 1);
+    d->mesh_run_draws = d->counters.draws;
     d->last_packet_draws = d->counters.draws;
 }
 }  // namespace
@@ -2055,11 +2100,13 @@ int ps2e_draw_submit_mesh(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh
     return r;
 }
 
-int ps2e_draw_submit_mesh_instances(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh,
-                                    const ps2e_draw_mesh_params* const* params, int n) {
-    int refused = 0;
-    if (!params || n <= 0) return 0;
 #if PS2R_HOST_VITA
+namespace {
+// ps2e_draw_submit_mesh_instances / _views: `views` (null: params') each draw's transform; `first` / `count` the run's range
+// when views are given (params[0]'s otherwise)
+int SubmitMeshRun(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh, const ps2e_draw_mesh_params* const* params,
+                  const ps2e_draw_mesh_view* views, int first, int count, int n) {
+    int refused = 0;
     int k = 0;
     bool declined = false;   // (the device declined this run once: the rest one by one)
     while (k < n) {
@@ -2073,7 +2120,8 @@ int ps2e_draw_submit_mesh_instances(ps2e_draw* d, const ps2e_draw_state* st, uin
         const int rest = n - k;
         const ps2e_draw_mesh_params* const p0 = params[k];
         const bool live = d && d->mesh_run && (d->mesh_run_draws == d->counters.draws || d->packet_run_draws == d->counters.draws);
-        if (rest >= 2 && !declined && d && st && mesh && p0 && !p0->lit && d->in_frame && d->packets && live &&
+        // (the views' run is unlit by its caller's account: its draws' records are not read for it)
+        if (rest >= 2 && !declined && d && st && mesh && p0 && (views || !p0->lit) && d->in_frame && d->packets && live &&
             st->stencil == PS2E_DRAW_STENCIL_OFF) {
             uint32_t packet = 0;
             bool from_cache = false;
@@ -2101,12 +2149,21 @@ int ps2e_draw_submit_mesh_instances(ps2e_draw* d, const ps2e_draw_state* st, uin
             }
             const int m = std::min(rest, ps2e_draw::kMaxInstances);
             render::MeshInstance inst[ps2e_draw::kMaxInstances];
-            for (int i = 0; i < m; ++i) {
-                const ps2e_draw_mesh_params* p = params[k + i];
-                inst[i] = render::MeshInstance{p->screen, p->offset, p->scroll, p->box};
+            if (views) {
+                for (int i = 0; i < m; ++i) {
+                    const ps2e_draw_mesh_view& v = views[k + i];
+                    inst[i] = render::MeshInstance{v.screen, v.offset, v.scroll, v.box};
+                }
+            } else {
+                for (int i = 0; i < m; ++i) {
+                    const ps2e_draw_mesh_params* p = params[k + i];
+                    inst[i] = render::MeshInstance{p->screen, p->offset, p->scroll, p->box};
+                }
             }
-            const render::MeshDrawParams m0 = MeshParams(p0);   // (the range: the run's first / count)
-            if (d->device->DrawMeshPacketInstances(packet, mesh, m0.first, m0.count, inst, m)) {
+            // (the range: the run's first / count, as MeshParams takes them)
+            const int f0 = views ? first : p0->first, c0 = views ? count : p0->count;
+            const uint32_t r_first = f0 > 0 ? uint32_t(f0) : 0u, r_count = c0 > 0 ? uint32_t(c0) : 0u;
+            if (d->device->DrawMeshPacketInstances(packet, mesh, r_first, r_count, inst, m)) {
                 if (from_cache) {
                     // the memo of this choice, as the first draw's DrawMeshPacket would have left it
                     d->pk_memo = true;
@@ -2115,15 +2172,14 @@ int ps2e_draw_submit_mesh_instances(ps2e_draw* d, const ps2e_draw_state* st, uin
                     d->pk_memo_packet = packet;
                     d->pk_memo_gen = d->run_gen;
                 }
-                for (int i = 0; i < m; ++i) {
-                    d->frame_draws++;
-                    if (st->blend && st->blend_c == 2) {
-                        d->frame_fix_blends++;
-                        if (st->texture) d->frame_fix_blends_textured++;
-                    }
-                    if (d->record_casters && !d->replaying) RecordCasterMesh(d, st, mesh, params[k + i]);
-                    NotePacketDraw(d, packet, mesh, m0);
+                const bool fix = st->blend && st->blend_c == 2;
+                d->frame_draws += uint64_t(m);
+                if (fix) {
+                    d->frame_fix_blends += uint64_t(m);
+                    if (st->texture) d->frame_fix_blends_textured += uint64_t(m);
                 }
+                if (d->record_casters && !d->replaying) RecordCasterMeshRun(d, st, mesh, params + k, m);
+                NotePacketDraws(d, packet, mesh, r_first, r_count, m);
                 k += m;
                 continue;
             }
@@ -2132,11 +2188,33 @@ int ps2e_draw_submit_mesh_instances(ps2e_draw* d, const ps2e_draw_state* st, uin
         if (ps2e_draw_submit_mesh(d, st, mesh, params[k]) < 0) refused++;
         ++k;
     }
+    return refused;
+}
+}  // namespace
+#endif
+
+int ps2e_draw_submit_mesh_instances(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh,
+                                    const ps2e_draw_mesh_params* const* params, int n) {
+    if (!params || n <= 0) return 0;
+#if PS2R_HOST_VITA
+    return SubmitMeshRun(d, st, mesh, params, nullptr, 0, 0, n);
 #else
+    int refused = 0;
     for (int k = 0; k < n; ++k)
         if (ps2e_draw_submit_mesh(d, st, mesh, params[k]) < 0) refused++;
-#endif
     return refused;
+#endif
+}
+
+int ps2e_draw_submit_mesh_views(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh, int first, int count,
+                                const ps2e_draw_mesh_params* const* params, const ps2e_draw_mesh_view* views, int n) {
+    if (!params || n <= 0) return 0;
+#if PS2R_HOST_VITA
+    return SubmitMeshRun(d, st, mesh, params, views, first, count, n);
+#else
+    (void)views; (void)first; (void)count;
+    return ps2e_draw_submit_mesh_instances(d, st, mesh, params, n);
+#endif
 }
 
 int ps2e_draw_mesh_instancing(const ps2e_draw* d) { return d && d->device && d->device->InstancedPacketDraws() ? 1 : 0; }
@@ -2256,22 +2334,63 @@ int ps2e_draw_mesh_depth_far_above(ps2e_draw* d, uint32_t mesh, const ps2e_draw_
     // ps2e_draw_mesh_depth_range's corners (the same products and sums); a corner is above when its z / w is: z >= z_min * w
     // says so without the division when z_min is a power of two (the product exact, the rounding of z / w monotonic), the
     // division decides the rest -- the same answer as z_far >= z_min, for every corner valid
-    int exp = 0;
-    const bool pow2 = z_min > 0.f && std::frexp(z_min, &exp) == 0.5f;
     const float zx[2] = {b.lo[0] * m[2], b.hi[0] * m[2]}, zy[2] = {b.lo[1] * m[6], b.hi[1] * m[6]};
     const float zz[2] = {b.lo[2] * m[10], b.hi[2] * m[10]};
     const float wx[2] = {b.lo[0] * m[3], b.hi[0] * m[3]}, wy[2] = {b.lo[1] * m[7], b.hi[1] * m[7]};
     const float wz[2] = {b.lo[2] * m[11], b.hi[2] * m[11]};
-    bool below = false;
+#if PS2R_HOST_VITA
+    // The sky's wait asks this of every scene draw before its stop (3000 a picture across the rooftops). For z_min a power of
+    // two >= 1 (the sky's 1024) the corners' tests are NEON lanes: the loop below was three VFP compares and flag transfers a
+    // corner on the Cortex-A9. The corners' z and w are the loop's (the same sums on the VFP); valid = w > 1e-6 (|w| > 1e-6,
+    // sign clear) and z finite (|z| <= FLT_MAX), NEON's denormal flush changing neither answer; above = z - z_min * w with its
+    // sign clear: the product is exact (a power of two times a normal w), and the difference of z and a product >= 1e-6 is 0
+    // or at least a normal ulp -- never flushed -- so its sign is z >= z_min * w's answer. Every corner valid and above: 1
+    // (the loop's answer then); a corner not valid: -1; else the loop decides.
+    uint32_t zbits;
+    std::memcpy(&zbits, &z_min, sizeof zbits);
+    int fast = -2;   // (-2: not decided here)
+    if (d->sky_neon && (zbits & 0x807FFFFFu) == 0 && zbits >= 0x3F800000u && zbits < 0x7F800000u) {
+        alignas(16) float cz8[8], cw8[8];
+        for (int k = 0; k < 8; ++k) {
+            const int ix = k & 1, iy = (k >> 1) & 1, iz = (k >> 2) & 1;
+            cz8[k] = m[14] + zx[ix] + zy[iy] + zz[iz];
+            cw8[k] = m[15] + wx[ix] + wy[iy] + wz[iz];
+        }
+        const float32x4_t za = vld1q_f32(cz8), zb = vld1q_f32(cz8 + 4), wa = vld1q_f32(cw8), wb = vld1q_f32(cw8 + 4);
+        const float32x4_t eps = vdupq_n_f32(1e-6f), top = vdupq_n_f32(3.40282347e38f);
+        auto negative = [](float32x4_t x) { return vreinterpretq_u32_s32(vshrq_n_s32(vreinterpretq_s32_f32(x), 31)); };
+        const uint32x4_t valid = vandq_u32(vandq_u32(vbicq_u32(vcagtq_f32(wa, eps), negative(wa)), vbicq_u32(vcagtq_f32(wb, eps), negative(wb))),
+                                           vandq_u32(vcaleq_f32(za, top), vcaleq_f32(zb, top)));
+        const uint32x4_t above = vandq_u32(valid, vbicq_u32(vmvnq_u32(negative(vsubq_f32(za, vmulq_n_f32(wa, z_min)))),
+                                                            negative(vsubq_f32(zb, vmulq_n_f32(wb, z_min)))));
+        const uint32x2_t r = vpmin_u32(vand_u32(vget_low_u32(valid), vget_high_u32(valid)), vand_u32(vget_low_u32(above), vget_high_u32(above)));
+        const uint64_t both = vget_lane_u64(vreinterpret_u64_u32(r), 0);
+        fast = uint32_t(both >> 32) ? 1 : !uint32_t(both) ? -1 : -2;
+    }
+    if (fast != -2 && !d->sky_check) return fast;
+#endif
+    int exp = 0;
+    const bool pow2 = z_min > 0.f && std::frexp(z_min, &exp) == 0.5f;
+    bool below = false, valid = true;
     for (int k = 0; k < 8; ++k) {
         const int ix = k & 1, iy = (k >> 1) & 1, iz = (k >> 2) & 1;
         const float cz = m[14] + zx[ix] + zy[iy] + zz[iz];
         const float cw = m[15] + wx[ix] + wy[iy] + wz[iz];
-        if (!(cw > 1e-6f) || !std::isfinite(cz)) return -1;   // (depth_range: not known, whatever the other corners)
+        if (!(cw > 1e-6f) || !std::isfinite(cz)) { below = false; valid = false; break; }   // (depth_range: not known, whatever the other corners)
         if (below || (pow2 && cz >= z_min * cw)) continue;
         if (!(cz / cw >= z_min)) below = true;
     }
-    return below ? 0 : 1;
+    const int answer = !valid ? -1 : below ? 0 : 1;
+#if PS2R_HOST_VITA
+    if (d->sky_check && fast != -2) {
+        d->sky_checked++;
+        if (fast != answer) d->sky_differ++;
+        if ((d->sky_checked & 0xFFFFF) == 0 || (fast != answer && d->sky_differ <= 8))
+            std::fprintf(stderr, "[ps2e] the sky's depth test CHECK (TE_GFX_VITA_SKY_NEON=2): %llu answers of the NEON form compared "
+                         "with the loop's, %llu differ\n", (unsigned long long)d->sky_checked, (unsigned long long)d->sky_differ);
+    }
+#endif
+    return answer;
 }
 
 int ps2e_draw_skin_depth_far(ps2e_draw* d, uint32_t mesh, const ps2e_draw_mesh_params* mp, const float* bones, int joints,

@@ -39,7 +39,9 @@
 #include "te_load_census.h"
 #include "te_mesh_builder.h"
 #include "te_prof.h"
+#include "te_seam_epoch.h"
 #if defined(__vita__)
+#include <arm_neon.h>
 #include <psp2/kernel/processmgr.h>
 #endif
 // The engine's skin path (SkinGeometry).
@@ -84,6 +86,7 @@ constexpr uint32_t kViewPlanes = 0x003B4900;           // D_003B4900 g_ViewPlane
 constexpr uint32_t kFarViewPlanes = 0x003B4960;        // D_003B4960 g_FarViewPlanes[6]
 constexpr uint32_t kShadowToCamera = 0x003B0770;       // D_003B0770 g_ShadowToCamera
 constexpr uint32_t kShadowToScreen = 0x003B07B0;       // D_003B07B0 g_ShadowToScreen
+constexpr uint32_t kLinkedChunkViewVTable = 0x002FBF60; // ChunkRenderingRelated__Type0_Methods (g_LinkedChunkViewVTable)
 constexpr uint32_t DrawUnclipped = 1;
 constexpr uint32_t BucketSky = 0, BucketOpaque = 2, BucketShadows = 21;
 
@@ -132,6 +135,7 @@ struct SceneOptions {
     bool noDraw = false;          // TE_GFX_NO_DRAW
     bool firstPassOnly = false;   // TE_GFX_NO_PASSES
     bool cullAllOut = false, cullAllIn = false, cullBoxesOut = false;   // TE_GFX_CULL_ALL_OUT / _ALL_IN / _BOXES_OUT
+    bool cullDiag = false;   // any of the three (CullResult asks once)
     std::string skipBuckets;      // TE_GFX_DIAG_SKIP_BUCKET=a,b -> ",a,b,"
     // TE_GAMECPU2=0: the game thread's seams in their earlier form (the in-run A/B: TE_AB=gamecpu2, graphics.cpp AbToggle)
     bool fast = true;
@@ -155,6 +159,7 @@ struct SceneOptions {
         cullAllOut = std::getenv("TE_GFX_CULL_ALL_OUT") != nullptr;
         cullAllIn = std::getenv("TE_GFX_CULL_ALL_IN") != nullptr;
         cullBoxesOut = std::getenv("TE_GFX_CULL_BOXES_OUT") != nullptr;
+        cullDiag = cullAllOut || cullAllIn || cullBoxesOut;
         if (const char* v = std::getenv("TE_GFX_DIAG_SKIP_BUCKET")) skipBuckets = std::string(",") + v + ",";
         if (const char* v = std::getenv("TE_GAMECPU2")) fast = v[0] != '0';
         if (const char* v = std::getenv("TE_VITA_LATE_SEAMS")) lateSeams = v[0] != '0';
@@ -186,6 +191,9 @@ inline bool FastSeams() { return Opts().fast; }
 struct SeamCensus {
     uint64_t placed = 0, rigid = 0, nativeDraws = 0, boxTests = 0, boxVisible = 0, boxClipped = 0, screenMade = 0, clipMade = 0,
              modelLoads = 0, cellTests = 0, results = 0, matrixReads = 0, materialHits = 0, materialMisses = 0;
+    uint64_t placedShort = 0;        // placements drawn in short (PlaceShort)
+    uint64_t unusedClipSpecial = 0;  // placements wholly in view whose (unused) clip matrix holds an infinity or a NaN
+    uint64_t materialCompares = 0;   // material slots' bytes compared (StillSame: once per material and seam epoch)
 } g_seams;
 void SeamCensusLine();
 }  // namespace
@@ -324,8 +332,14 @@ std::optional<Vector> ReadVector(uint32_t address) {
 void WriteMatrix(uint32_t address, const Matrix& m) {
     auto* out = reinterpret_cast<float(*)[4]>(te::GuestPointer(address, 64));
     if (!out) return;
+#if defined(__vita__)
+    // (the rows' bits as four NEON quadword loads and stores: CullMatrices writes two matrices a visible instance)
+    for (int r = 0; r < 4; ++r)
+        vst1q_u32(reinterpret_cast<uint32_t*>(out[r]), vld1q_u32(reinterpret_cast<const uint32_t*>(m[r].data())));
+#else
     for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 4; ++c) out[r][c] = m[r][c];
+#endif
 }
 // Row-vector matrix product (the game's VuMultiplyMatrices: out = a * b, p' = p * a * b)
 Matrix Multiply(const Matrix& a, const Matrix& b) {
@@ -381,6 +395,42 @@ std::optional<Vector> EyeIn(const Matrix& world, const float (*toCamera)[4]) {
 bool Finite(const Matrix& m) {
     // (FiniteBits: std::isfinite on the stored bits, without a VFP flag transfer per element)
     return FiniteBits(m[0].data(), 4) && FiniteBits(m[1].data(), 4) && FiniteBits(m[2].data(), 4) && FiniteBits(m[3].data(), 4);
+}
+#if defined(__vita__)
+// x != 0.f without a VFP compare (VCMP + VMRS, a flag transfer that waits for the VFP pipeline on the Cortex-A9: two a part
+// drawn for the scroll test). A zero of either sign compares equal; a value with an exponent (normal, infinity, NaN) does
+// not; a denormal compares equal exactly when the thread flushes denormals (FPSCR.FZ: the compare sees zero) -- the one
+// case that reads the FPSCR
+inline bool NonzeroFloat(float x) {
+    uint32_t bits;
+    std::memcpy(&bits, &x, sizeof bits);
+    if ((bits & 0x7fffffffu) == 0) return false;
+    if (bits & 0x7f800000u) return true;
+    uint32_t fpscr;
+    asm volatile("vmrs %0, fpscr" : "=r"(fpscr));
+    return ((fpscr >> 24) & 1u) == 0;
+}
+#endif
+// Which of a placed model's two matrices hold an infinity or a NaN, on 16 + 16 floats as they lie: bit 0 the first, bit 1 the
+// second (Finite's 4 + 4 row tests, their branches and the two calls were ~106 instructions of every placement). The Vita: the
+// exponents on NEON integer lanes -- bit tests only, no floating-point operation -- each matrix folded to one lane, and one
+// NEON-to-core transfer for the answer
+uint32_t SpecialMatrices(const float* a, const float* b) {
+#if defined(__vita__)
+    const uint32x4_t exponent = vdupq_n_u32(0x7F800000u);
+    uint32x4_t specialA = vdupq_n_u32(0), specialB = vdupq_n_u32(0);
+    for (int k = 0; k < 4; ++k) {
+        specialA = vorrq_u32(specialA, vceqq_u32(vandq_u32(vld1q_u32(reinterpret_cast<const uint32_t*>(a) + 4 * k), exponent), exponent));
+        specialB = vorrq_u32(specialB, vceqq_u32(vandq_u32(vld1q_u32(reinterpret_cast<const uint32_t*>(b) + 4 * k), exponent), exponent));
+    }
+    // lane 0 a's lanes together, lane 1 b's (all ones where a lane held one)
+    const uint32x2_t folded = vpmax_u32(vorr_u32(vget_low_u32(specialA), vget_high_u32(specialA)),
+                                        vorr_u32(vget_low_u32(specialB), vget_high_u32(specialB)));
+    const uint64_t lanes = vget_lane_u64(vreinterpret_u64_u32(folded), 0);
+    return (uint32_t(lanes) & 1u) | (uint32_t(lanes >> 32) & 2u);
+#else
+    return (FiniteBits(a, 16) ? 0u : 1u) | (FiniteBits(b, 16) ? 0u : 2u);
+#endif
 }
 
 const RenderView* CurrentView() {
@@ -472,16 +522,17 @@ struct NativeChunk {
 // byte of each word, the lit models' normals and their separate colour bytes). Kept as the engine's Mesh (its Build consumes
 // it) plus the normals and the static colours it needs when lit.
 struct Part {
+    // (first: what every draw of the part reads -- one line, where they lay two lines apart past the geometry's vectors)
+    bool decoded = false;
+    mutable uint8_t meshState = 0;  // 0 not asked for, 1 asked for this picture, 2 made (or declined), 3 being made (a batch)
+    uint32_t native = 0;            // the native mesh (te::gfx::NativeMeshes): 0 until made
     Geometry::Mesh mesh;                                      // the decoded strips (the prepared form's source)
     te::gfx::MeshPrepared prepared;                           // prepared once per decode for every instance's build
     std::vector<std::vector<std::array<float, 3>>> normals;   // per strip, per vertex; empty when the packet has none
     std::vector<std::vector<std::array<uint8_t, 4>>> colours; // the V4-8 colour stream (lit models); empty when none
-    bool decoded = false;
     uint32_t vertices = 0;
     size_t triangles = 0;
-    uint32_t native = 0;            // the native mesh (te::gfx::NativeMeshes): 0 until made
     std::array<float, 6> nativeBox{};   // its model-space bounds (x0 y0 z0 x1 y1 z1): the draws' screen boxes
-    mutable uint8_t meshState = 0;  // 0 not asked for, 1 asked for this picture, 2 made (or declined), 3 being made (a batch)
     // the Vita: the native mesh's chunks (made with the mesh, never changed after; empty for a small part, which is one
     // chunk), and whether they are there -- a build posted before they were made does not read them (it took `chunked`)
     std::vector<NativeChunk> chunks;
@@ -523,27 +574,35 @@ struct PartPrep : te::gfx::PreparedMesh {
 };
 void InstallPrep(Part& part, PartPrep& prep);
 std::unordered_map<uint32_t, Model> g_models;   // RigidModelData guest address -> its parts
-// g_models' lookups through a direct-mapped cache (every instance's draw looked its model up: the bucket index is a
-// division, a software routine on the Cortex-A9). An element's address is stable for its life in the map (rehashing moves
-// no node); the cache forgets an address when its element is erased, everything when the map is cleared.
+// g_models' lookups through a two-way set-associative cache (every instance's draw looked its model up: the bucket index
+// is a division, a software routine on the Cortex-A9; the rooftop's far view places ~140 models ~1500 times a picture, and
+// a direct-mapped cache let two models of one slot evict each other: a fifth of the placements walked the map). The
+// way last used first. An element's address is stable for its life in the map (rehashing moves no node); the cache
+// forgets an address when its element is erased, everything when the map is cleared.
 struct ModelSlot {
     uint32_t key = 0;
     Model* model = nullptr;
 };
-std::array<ModelSlot, 512> g_modelSlots;
-ModelSlot& ModelSlotOf(uint32_t address) { return g_modelSlots[((address >> 4) ^ (address >> 13)) & (g_modelSlots.size() - 1)]; }
+constexpr uint32_t kModelSets = 512;
+std::array<ModelSlot, 2 * kModelSets> g_modelSlots;
+ModelSlot* ModelSetOf(uint32_t address) { return &g_modelSlots[2 * (((address >> 4) ^ (address >> 13)) & (kModelSets - 1))]; }
 Model* FindModel(uint32_t address) {
-    ModelSlot& slot = ModelSlotOf(address);
-    if (address && slot.key == address) return slot.model;
+    ModelSlot* set = ModelSetOf(address);
+    if (address && set[0].key == address) return set[0].model;
+    if (address && set[1].key == address) {
+        std::swap(set[0], set[1]);
+        return set[0].model;
+    }
     const auto it = g_models.find(address);
     if (it == g_models.end()) return nullptr;
-    slot.key = address;
-    slot.model = &it->second;
-    return slot.model;
+    set[1] = set[0];
+    set[0] = ModelSlot{address, &it->second};
+    return set[0].model;
 }
 void ForgetModel(uint32_t address) {
-    ModelSlot& slot = ModelSlotOf(address);
-    if (slot.key == address) slot = ModelSlot{};
+    ModelSlot* set = ModelSetOf(address);
+    for (int way = 0; way < 2; ++way)
+        if (set[way].key == address) set[way] = ModelSlot{};
 }
 void ForgetModels() { g_modelSlots.fill(ModelSlot{}); }
 
@@ -553,14 +612,43 @@ void ForgetModels() { g_modelSlots.fill(ModelSlot{}); }
 // (magic, kind, bucket, shaderCount, shaders[]), its first shader's first 32 (magic, type, settings, texture, colour, page,
 // lodK, lodL; the scroll after them is read per draw as before), that shader's texture's header bytes 0x14..0x1B (levels,
 // formats, hasAlpha, function) and the texture's device handle -- so it answers what they would answer.
-struct MaterialSlot {
+// Laid out in 32-byte lines (the Cortex-A9's): line 0 is everything a hit reads -- the test (the address, the memory, the
+// counters, the epoch) and what the placement's short form takes from it (the pool entry, the shader, the bucket, the
+// blend) -- so a part's material costs one line, not the four or five the members were spread over.
+struct alignas(32) MaterialSlot {
+    // ---- line 0
     uint32_t address = 0;           // 0: empty
+    uint32_t pool = 0;              // the Vita's state pool entry of `state` (te::gfx::PoolState; 0 none)
+    // The hit path's shortcuts (each answers what the full test answers): the texture map's and the pool's change counters
+    // when `handle` and `pool` were last confirmed (te::gfx::g_texture_epoch / g_pool_epoch: unmoved, TextureHandleAt and
+    // PoolCurrent answer as then), and the memory's base where the slot's making found its bytes -- the memory never moves
+    // or shrinks, so the bounds test passed then passes now. The material cache's hit was ~190 instructions a part (three
+    // bounds tests, two calls each a hash slot away).
+    uint32_t textureEpoch = 0, poolEpoch = 0;
+    // The seam epoch (te_seam_epoch.h) in which the words below were last found to be the material's, the shader's and the
+    // texture's bytes (made from them, or compared): while it stands, nothing has written those bytes since, so the
+    // comparison would find them the same again -- made once per material and epoch instead of once per part (the rooftop's
+    // far view draws ~2700 parts a picture through 84 materials, between which only the culling's seams run)
+    unsigned verified = 0;
+    const uint8_t* base = nullptr;
+    // What the placement's short form (PlaceShort) takes, of the same bytes: view.shader, view.bucket, state.blend, and
+    // whether the part may take the short form at all -- one pass only and no screen copy (the material's shader count, its
+    // first shader's type)
+    const te_gfx_shader* shortShader = nullptr;
+    uint8_t shortBucket = 0;
+    bool shortPart = false;
+    bool shortBlend = false;
+    // ---- the rest
     uint32_t shader = 0, texture = 0, handle = 0;
-    uint32_t pool = 0, poolGeneration = 0;   // the Vita's state pool entry of `state` (te::gfx::PoolState; 0 none)
+    uint32_t poolGeneration = 0;
+    const uint8_t* shaderBytes = nullptr;
+    const uint8_t* textureBytes = nullptr;
     uint32_t materialWords[8], shaderWords[8], textureWords[2];
     MaterialView view;
     ps2e_draw_state state;
 };
+static_assert(sizeof(void*) != 4 || offsetof(MaterialSlot, shortBlend) < 32, "a hit reads line 0 only (32-bit pointers: the Vita)");
+static_assert(TE_GFX_BUCKET_COUNT <= 255, "a bucket in a byte");
 std::array<MaterialSlot, 512> g_materialSlots;
 inline bool SameWords(const uint32_t* kept, const uint8_t* bytes, int words) {
     uint32_t differ = 0;
@@ -574,6 +662,38 @@ inline bool SameWords(const uint32_t* kept, const uint8_t* bytes, int words) {
     }
     return differ == 0;
 }
+// The slot's words still its material's, shader's and texture's bytes: compared once per seam epoch (above)
+inline bool StillSame(MaterialSlot& slot, const uint8_t* mat) {
+    if (slot.verified == te_seam_epoch) return true;
+    g_seams.materialCompares++;
+    if (!SameWords(slot.materialWords, mat, 8) || (slot.shader && !SameWords(slot.shaderWords, slot.shaderBytes, 8)) ||
+        (slot.texture && !SameWords(slot.textureWords, slot.textureBytes + 0x14, 2)))
+        return false;
+    slot.verified = te_seam_epoch;
+    return true;
+}
+// the slot's texture handle confirmed against the map (the change counter moved since the last confirmation)
+__attribute__((noinline)) bool HandleStill(MaterialSlot& slot) {
+    if (te::gfx::TextureHandleAt(slot.texture) != slot.handle) return false;
+    slot.textureEpoch = te::gfx::g_texture_epoch;
+    return true;
+}
+#if defined(__vita__)
+// CachedMaterial's lean hit in line, for the compact records' parts (~5000 a picture at the rooftop's far view: the call,
+// its 196-byte frame and the slot's address made again and again were ~100 of its ~180 instructions a part): the same test,
+// taken only when it needs nothing more -- the slot's texture handle and pool entry confirmed under the current change
+// counters (else null, and CachedMaterial asks as before). On a hit, CachedMaterial's hit answers: the view, the slot's
+// state and pool entry, the census
+__attribute__((always_inline)) inline MaterialSlot* MaterialHitInline(const Mem& mem, uint32_t address) {
+    if (!address) return nullptr;
+    const uint8_t* mat = mem.Bytes(address, sizeof(te_gfx_material));
+    MaterialSlot& slot = g_materialSlots[((address >> 4) ^ (address >> 13)) & (g_materialSlots.size() - 1)];
+    if (!mat || slot.address != address || slot.base != mem.base || !slot.pool || slot.poolEpoch != te::gfx::g_pool_epoch ||
+        slot.textureEpoch != te::gfx::g_texture_epoch || !StillSame(slot, mat))
+        return nullptr;
+    return &slot;
+}
+#endif
 // Fills `view` for the material at `address` (as ReadMaterial would) and answers its first shader's state (as StateOf would):
 // the cache slot's (valid until the next CachedMaterial call) or `scratch`, filled. `pool` (the Vita's compact records; null:
 // not asked): the state pool's entry of the answered state's bytes, 0 when there is none
@@ -581,7 +701,24 @@ const ps2e_draw_state* CachedMaterial(const Mem& mem, uint32_t address, Material
                                       uint32_t* pool = nullptr) {
     const uint8_t* mat = address ? mem.Bytes(address, sizeof(te_gfx_material)) : nullptr;
     MaterialSlot& slot = g_materialSlots[((address >> 4) ^ (address >> 13)) & (g_materialSlots.size() - 1)];
-    if (mat && slot.address == address && SameWords(slot.materialWords, mat, 8)) {
+    if (te::gfx::SeamLean()) {
+        if (mat && slot.address == address && slot.base == mem.base && StillSame(slot, mat) &&
+            (slot.textureEpoch == te::gfx::g_texture_epoch || HandleStill(slot))) {
+            view = slot.view;
+            g_seams.materialHits++;
+            if (pool) {
+                // (the pool may have remade the entry for other bytes since: the generation says -- asked again when the
+                // pool's counter has moved, or when the slot has no entry yet)
+                if (!slot.pool || slot.poolEpoch != te::gfx::g_pool_epoch) {
+                    if (!te::gfx::PoolCurrent(slot.pool, slot.poolGeneration)) slot.pool = te::gfx::PoolState(slot.state, &slot.poolGeneration);
+                    slot.poolEpoch = te::gfx::g_pool_epoch;
+                }
+                *pool = slot.pool;
+            }
+            return &slot.state;
+        }
+    } else if (mat && slot.address == address && SameWords(slot.materialWords, mat, 8)) {
+        // (the earlier hit test: every pointer's bounds again, the handle and the pool entry asked every time)
         const uint8_t* sh = slot.shader ? mem.Bytes(slot.shader, sizeof(te_gfx_shader)) : nullptr;
         const uint8_t* tx = slot.texture ? mem.Bytes(slot.texture, sizeof(te_gfx_texture)) : nullptr;
         if ((!slot.shader || (sh && SameWords(slot.shaderWords, sh, 8))) && (!slot.texture || (tx && SameWords(slot.textureWords, tx + 0x14, 2))) &&
@@ -589,7 +726,6 @@ const ps2e_draw_state* CachedMaterial(const Mem& mem, uint32_t address, Material
             view = slot.view;
             g_seams.materialHits++;
             if (pool) {
-                // (the pool may have remade the entry for other bytes since: the generation says)
                 if (!te::gfx::PoolCurrent(slot.pool, slot.poolGeneration)) slot.pool = te::gfx::PoolState(slot.state, &slot.poolGeneration);
                 *pool = slot.pool;
             }
@@ -619,12 +755,23 @@ const ps2e_draw_state* CachedMaterial(const Mem& mem, uint32_t address, Material
     if (sh) std::memcpy(slot.shaderWords, sh, 32);
     slot.texture = texture;
     if (tx) std::memcpy(slot.textureWords, tx + 0x14, 8);
+    slot.base = mem.base;
+    slot.shaderBytes = sh;
+    slot.textureBytes = tx;
     slot.handle = te::gfx::TextureHandleAt(texture);
+    slot.textureEpoch = te::gfx::g_texture_epoch;
     slot.view = view;
+    slot.verified = te_seam_epoch;   // (the words just read from the bytes)
+    slot.shortPart = m->shaderCount <= 1 && !(view.shader && (view.shader->type == 0x10 || view.shader->type == 0x11)) &&
+                     view.bucket <= 255;
+    slot.shortShader = view.shader;
+    slot.shortBucket = uint8_t(view.bucket);
+    slot.shortBlend = state.blend != 0;
     std::memcpy(&slot.state, &state, sizeof state);   // (byte for byte: the pool keys on the bytes)
     slot.pool = 0;
     slot.poolGeneration = 0;
     if (pool) *pool = slot.pool = te::gfx::PoolState(slot.state, &slot.poolGeneration);
+    slot.poolEpoch = te::gfx::g_pool_epoch;
     return &scratch;
 }
 // The shadow meshes' geometry as the type-0B program saw it (title::ShadowGeometry: each strip emitted twice, the
@@ -1858,6 +2005,9 @@ bool PassDrawable(uint32_t type, bool haveEye) {
 }
 bool ScreenCopyType(uint32_t type) { return type == 0x10 || type == 0x11; }
 
+// (the game thread's emitters and skin scratch at namespace scope: a function-local static's guard is an acquire load and a
+// DMB on every call on the Vita)
+Emitter g_instanceEmitter;
 void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, const InstanceState& inst, uint64_t& counter) {
     auto& scene = te::gfx::Scene();
     const SceneOptions& opts = Opts();
@@ -1887,8 +2037,23 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
     // the Vita's compact mesh records (te::gfx::RecordMeshCompact): decided once per instance (the tag, the presenter)
     const bool compact = opts.fast && !inst.overrideState && te::gfx::CompactMeshes();
     const bool compactCheck = compact && te::gfx::CompactCheck();
-    static Emitter emitter;
-    for (uint32_t i = 0; i < count && i < entry.parts.size(); ++i) {
+    Emitter& emitter = g_instanceEmitter;
+    // (the parts the loop draws: the model's part list does not change within the loop -- its size was a division by the
+    // part's size, a multiply-by-reciprocal sequence, on every iteration)
+    const uint32_t partCount = std::min<uint32_t>(count, uint32_t(entry.parts.size()));
+#if defined(__vita__)
+    // the instance's parts may take the short path below: compact records (the fast arm, no override state), an unclipped
+    // instance (the native mesh drawn whole), no diagnosis that the pass loop tests per pass (these do not change within
+    // the instance)
+    const bool lean = te::gfx::SeamLean();
+    const bool fastParts = lean && compact && !view.clipped && !g_diag.Logging() && !g_diag.flat && opts.skipBuckets.empty();
+    // (their parameters through the instance's block of their scroll -- te::gfx::NewBlock, made at the first part that
+    // takes it -- each part's record its line 0; not under TE_GFX_COMPACT_CHECK, which compares whole records)
+    const bool blocks = fastParts && !compactCheck && te::gfx::CompactBlocks();
+    const ps2e_draw_mesh_params* block = nullptr;
+    uint32_t blockScroll[2] = {0u, 0u};
+#endif
+    for (uint32_t i = 0; i < partCount; ++i) {
         const Part& part = entry.parts[i];
         if (!part.decoded) continue;
         if (part.meshState == 3) ResolveMeshBatches();   // its mesh, made since the last hand-over: the handle first
@@ -1899,6 +2064,16 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
         ps2e_draw_state firstScratch;   // (filled when the answer is not a cache slot's)
         const ps2e_draw_state* firstState = &firstScratch;
         uint32_t firstPool = 0;         // the first shader's state's pool entry (compact records)
+#if defined(__vita__)
+        const MaterialSlot* inlineHit = fastParts ? MaterialHitInline(mem, materialAddress ? *materialAddress : 0) : nullptr;
+        if (inlineHit) {
+            // (CachedMaterial's hit, its answers and its census, in line)
+            material = inlineHit->view;
+            firstState = &inlineHit->state;
+            firstPool = inlineHit->pool;
+            g_seams.materialHits++;
+        } else
+#endif
         if (opts.fast && !inst.overrideState) {
             firstState = CachedMaterial(mem, materialAddress ? *materialAddress : 0, material, firstScratch, compact ? &firstPool : nullptr);
         } else {
@@ -1910,6 +2085,60 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
         // ones when their type is drawable as a pass -- the crystals' [0x10 screen copy] [0x02 lit] pairs)
         const uint32_t passes = inst.overrideState || firstPassOnly || !material.material
                                     ? 1u : std::max<uint32_t>(1u, std::min<uint32_t>(material.material->shaderCount, TE_GFX_MAX_SHADERS));
+#if defined(__vita__)
+        // THE COMMON PART IN SHORT (the rooftop's far view: ~5000 a picture, nearly every part drawn): one pass, the first
+        // shader's pooled state, an unclipped instance's native mesh, unlit, no screen copy, no scrolled blend built on the
+        // CPU -- the pass loop's steps for such a part in its order (the mesh asked for when never asked, the compact record,
+        // its screen / origin / scroll / lit, the census), without the loop's machinery (a pass's view and state copies,
+        // the per-pass diagnosis tests and the long native condition: ~300 instructions a part on the A9). Anything else --
+        // and a part whose mesh is not made yet -- takes the loop below, untouched.
+        const te_gfx_shader* shader = material.shader;
+        if (fastParts && passes == 1 && firstPool && material.material && part.native &&
+            !(inst.lights && shader && (shader->type == 0x02 || shader->type == 0x10 || shader->type == 0x16)) &&
+            !(shader && ScreenCopyType(shader->type)) && te::gfx::NativeMeshes()) {
+            std::array<float, 2> scroll{0.f, 0.f};
+            if (shader && FiniteBits(shader->scroll, 2)) scroll = {shader->scroll[0], shader->scroll[1]};
+            const ps2e_draw_state& state = *firstState;
+            if (!(state.blend && (NonzeroFloat(scroll[0]) || NonzeroFloat(scroll[1])) && !g_nativeScrolled.load(std::memory_order_relaxed))) {
+                if (part.meshState == 0) {
+                    part.meshState = 1;
+                    g_meshRequests.emplace_back(rigid->model, i);
+                }
+                if (blocks) {
+                    uint32_t bits[2];
+                    std::memcpy(bits, scroll.data(), sizeof bits);
+                    if (!block || bits[0] != blockScroll[0] || bits[1] != blockScroll[1]) {
+                        block = te::gfx::NewBlock(&view.screen[0][0], originX, originY, scroll.data());
+                        blockScroll[0] = bits[0];
+                        blockScroll[1] = bits[1];
+                    }
+                    te::gfx::RecordMeshBlock(material.bucket, firstPool, part.native, block);
+                    g_seams.nativeDraws++;
+                    continue;
+                }
+                ps2e_draw_mesh_params& mp = te::gfx::RecordMeshCompact(material.bucket, firstPool, state, part.native);
+                const uint32_t* from = reinterpret_cast<const uint32_t*>(view.screen.data());
+                uint32_t* to = reinterpret_cast<uint32_t*>(mp.screen);
+                vst1q_u32(to, vld1q_u32(from));
+                vst1q_u32(to + 4, vld1q_u32(from + 4));
+                vst1q_u32(to + 8, vld1q_u32(from + 8));
+                vst1q_u32(to + 12, vld1q_u32(from + 12));
+                mp.offset[0] = originX;
+                mp.offset[1] = originY;
+                mp.scroll[0] = scroll[0];
+                mp.scroll[1] = scroll[1];
+                if (compactCheck) {
+                    mp.box[0] = mp.box[1] = -1e9f;
+                    mp.box[2] = mp.box[3] = 1e9f;
+                    mp.first = 0;
+                    mp.count = 0;
+                }
+                mp.lit = 0;
+                g_seams.nativeDraws++;
+                continue;
+            }
+        }
+#endif
         for (uint32_t pass = 0; pass < passes; ++pass) {
             // the pass's state: the override's, the first shader's (the cache slot's: no copy), or this pass's own copy
             // (a later shader's, or the screen copy's changes)
@@ -1967,7 +2196,11 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
             // ExpandBucket resets `mesh` since) -- the shader's (S + scroll) / w is MeshGeometry's, and stamped recordings
             // of the hub and the arena show the two paths' pictures alike within the recordings' noise
             const bool logging = g_diag.Logging();
+#if defined(__vita__)
+            const bool scrolled = lean ? NonzeroFloat(subScroll[0]) || NonzeroFloat(subScroll[1]) : subScroll[0] != 0.f || subScroll[1] != 0.f;
+#else
             const bool scrolled = subScroll[0] != 0.f || subScroll[1] != 0.f;
+#endif
             const bool scrolledBlendCpu = state.blend && scrolled && !g_nativeScrolled.load(std::memory_order_relaxed);
             if ((!view.clipped || NativeInFront(part, view)) && !screenCopy && !envMap && !logging && !g_diag.flat &&
                 !scrolledBlendCpu && te::gfx::NativeMeshes()) {
@@ -1985,7 +2218,21 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
                     if (compact && !pool) te::gfx::NoteWholeMeshRecord();
                     ps2e_draw_mesh_params& mp = pool ? te::gfx::RecordMeshCompact(bucket, pool, state, part.native)
                                                      : te::gfx::RecordMeshInPlace(bucket, state, part.native);
+#if defined(__vita__)
+                    // (the 16 floats' bits as four NEON quadword loads and stores: the copy was a ~44-instruction loop a part)
+                    if (lean) {
+                        const uint32_t* from = reinterpret_cast<const uint32_t*>(view.screen.data());
+                        uint32_t* to = reinterpret_cast<uint32_t*>(mp.screen);
+                        vst1q_u32(to, vld1q_u32(from));
+                        vst1q_u32(to + 4, vld1q_u32(from + 4));
+                        vst1q_u32(to + 8, vld1q_u32(from + 8));
+                        vst1q_u32(to + 12, vld1q_u32(from + 12));
+                    } else {
+                        std::memcpy(mp.screen, view.screen.data(), sizeof mp.screen);
+                    }
+#else
                     std::memcpy(mp.screen, view.screen.data(), sizeof mp.screen);   // (std::array rows: 16 floats, row-major)
+#endif
                     mp.offset[0] = originX;
                     mp.offset[1] = originY;
                     mp.scroll[0] = subScroll[0];
@@ -2199,17 +2446,27 @@ struct Culling {
     bool screenPending = false, clipPending = false;
     Matrix screenModel{}, clipModel{};
     uint32_t screenAddress = 0;   // the pending screen matrix's model (its guest address: the Vita's culling memo place)
+#if defined(__vita__)
+    // the Vita: the pending screen matrix's box test in the culling log (below) when it went through the log -- its model's
+    // words are the entry's (checked equal at the test, or written from it), so screenModel is not copied, and the entry
+    // may hold the matrix already
+    struct CullLogBox* screenLog = nullptr;
+#endif
 } g_cull;
 
 #if defined(__vita__)
 bool MemoScreenInto(uint32_t address, const Matrix& model, Matrix& out);   // the culling memo (below)
+void ScreenFromLog(CullLogBox& entry);                                    // the culling log (below)
 #endif
 void MakeCullMatrices() {
     if (g_cull.screenPending) {
 #if defined(__vita__)
-        if (!MemoScreenInto(g_cull.screenAddress, g_cull.screenModel, g_cull.toScreen))
-#endif
+        if (g_cull.screenLog) ScreenFromLog(*g_cull.screenLog);
+        else if (!MemoScreenInto(g_cull.screenAddress, g_cull.screenModel, g_cull.toScreen))
             g_cull.toScreen = title::CullingMath::ScreenMatrix(*g_cull.link, g_cull.screenModel);
+#else
+        g_cull.toScreen = title::CullingMath::ScreenMatrix(*g_cull.link, g_cull.screenModel);
+#endif
         g_cull.screenPending = false;
         g_seams.screenMade++;
     }
@@ -2405,11 +2662,95 @@ bool MemoScreenInto(uint32_t address, const Matrix& model, Matrix& out) {
     out = e->screen;
     return true;
 }
+
+// ---- the culling log (the Vita): the memo's first level while the camera stands --------------------------------------------
+// An unmoved camera's pictures make the same box tests and model loads in the same order (the rooftop's far view: 1132 box
+// tests and 373 model loads a picture, every one at the same place of the sequence as the picture before's, measured), and
+// the memo's tables answered each from a slot of a 1 MB table -- four or five lines fetched from memory per answer, the
+// biggest part of the culling's time on the device. The log keeps each picture's box tests and model loads in call order
+// with their inputs' words and answers -- and a visible box's or a loaded model's matrix to the screen once made -- and
+// the next picture's k-th call looks at the k-th entry first: the same addresses, the same frustum and link (their ids by
+// content), the same FPSCR mode and the same input words -> the answer the pure function gives, by construction, read in
+// order (the next entries fetched ahead). A call whose entry differs takes the memo's tables as before and is logged in
+// that entry for the next picture. Looked at and kept only while the memo looks (the frustum and the link unmoved).
+struct CullLogBox {   // 32-byte lines: what a look compares and answers, the box, the model, the screen matrix
+    uint32_t box = 0, model = 0, fid = 0, lid = 0, fpctl = 0;
+    title::CullingMath::Classification visibility{};
+    int32_t distance = 0;
+    uint32_t boxWords[8] = {};
+    uint32_t modelWords[16] = {};
+    uint32_t screenLid = 0, screenFpctl = 0;   // the link and the mode `screen` was made with (lid 0: not made)
+    uint32_t pad[6] = {};
+    Matrix screen{};
+};
+struct CullLogLoad {
+    uint32_t model = 0, lid = 0, fpctl = 0;
+    int32_t distance = 0;
+    uint32_t pad[4] = {};
+    uint32_t modelWords[16] = {};
+    Matrix screen{};
+};
+static_assert(sizeof(CullLogBox) == 224 && sizeof(CullLogLoad) == 160, "the entries in whole 32-byte lines");
+struct CullLog {
+    static constexpr uint32_t kBoxes = 3072, kLoads = 2048;
+    // (allocated at the first look and never reallocated: a pending screen matrix points into `boxes`)
+    std::vector<CullLogBox> boxes;
+    std::vector<CullLogLoad> loads;
+    uint32_t boxAt = 0, loadAt = 0;   // this picture's box tests and model loads so far: the next one's entry
+    uint64_t boxHits = 0, loadHits = 0, screenHits = 0;   // the census
+    void Allocate() {
+        boxes.assign(kBoxes, CullLogBox{});
+        loads.assign(kLoads, CullLogLoad{});
+    }
+    CullLogLoad* Loads() {
+        if (loads.empty()) Allocate();
+        return loads.data();
+    }
+} g_cullLog;
+// The words at `now` (n of them, a multiple of 4) equal to `kept`: on NEON integer lanes, one transfer to the core at the end
+// (the 24 words of a box test were 72 core loads and operations)
+inline bool SameQuads(const uint32_t* kept, const float* now, int n) {
+    const uint32_t* w = reinterpret_cast<const uint32_t*>(now);
+    uint32x4_t d = veorq_u32(vld1q_u32(kept), vld1q_u32(w));
+    for (int k = 4; k < n; k += 4) d = vorrq_u32(d, veorq_u32(vld1q_u32(kept + k), vld1q_u32(w + k)));
+    const uint32x2_t h = vorr_u32(vget_low_u32(d), vget_high_u32(d));
+    return vget_lane_u64(vreinterpret_u64_u32(h), 0) == 0;
+}
+inline void CopyQuads(uint32_t* to, const float* from, int n) {
+    const uint32_t* w = reinterpret_cast<const uint32_t*>(from);
+    for (int k = 0; k < n; k += 4) vst1q_u32(to + k, vld1q_u32(w + k));
+}
+// A pending screen matrix of a logged box test made: the entry's, when it was made through this link in this mode; else as
+// MakeCullMatrices makes it (the memo's tables, else ScreenMatrix) from the entry's model words, then kept with the entry
+void ScreenFromLog(CullLogBox& e) {
+    if (e.screenLid && e.screenLid == g_cullMemo.lid && e.screenFpctl == e.fpctl) {
+        g_cull.toScreen = e.screen;
+        g_cullLog.screenHits++;
+        if (g_cullMemo.check) {
+            Matrix model;
+            std::memcpy(&model, e.modelWords, sizeof model);
+            const Matrix made = title::CullingMath::ScreenMatrix(*g_cull.link, model);
+            g_cullMemo.checked++;
+            if (std::memcmp(&made, &e.screen, sizeof made) != 0) g_cullMemo.differ++;
+        }
+        return;
+    }
+    Matrix model;
+    std::memcpy(&model, e.modelWords, sizeof model);   // (the words as the floats they are)
+    if (!MemoScreenInto(e.model, model, g_cull.toScreen)) g_cull.toScreen = title::CullingMath::ScreenMatrix(*g_cull.link, model);
+    e.screen = g_cull.toScreen;
+    e.screenLid = g_cullMemo.lid;
+    e.screenFpctl = CullMemo::FpControl();
+}
 #endif
 
 }  // namespace
 
 extern "C" {
+
+// ---- the seam epoch (te_seam_epoch.h): moved by the host thunks and by the module's resource code ----------------------------
+unsigned te_seam_epoch = 1;
+void ps2e_gfx2_resources_changed(void) { ++te_seam_epoch; }   // (the module lane's thunk moves it too: twice is as good)
 
 // ---- the models' geometry (wasm side ReadModel -> the packet bytes) -------------------------------------------------------
 void ps2e_gfx2_model_loaded(ps2e_u32 model, ps2e_s32 index, ps2e_s32 count, ps2e_u32 packet, ps2e_s32 size, ps2e_s32 vertices) {
@@ -2605,14 +2946,16 @@ void SeamCensusLine() {
     auto per = [&](uint64_t now, uint64_t before) { return double(now - before) / n; };
     std::fprintf(stderr, "[te.gfx.seams] presents %llu-%llu per present (%s): placed %.1f, rigid %.1f, native draws %.1f; box tests %.1f "
                  "(visible %.1f, clipped %.1f; matrices made %.1f to the screen + %.1f to the clip space, read %.1f times), model loads "
-                 "%.1f, cell tests %.1f, results %.1f; decals aged %.1f (unclamped %.1f); materials cached %.1f, read %.1f\n",
+                 "%.1f, cell tests %.1f, results %.1f; decals aged %.1f (unclamped %.1f); materials cached %.1f, read %.1f; placements in short "
+                 "%.1f, material slots compared %.1f; placements wholly in view past an unused clip matrix not finite %llu in the window\n",
                  (unsigned long long)(from + 1), (unsigned long long)presents, FastSeams() ? "TE_GAMECPU2 on" : "TE_GAMECPU2=0",
                  per(s.placed, last.placed), per(s.rigid, last.rigid), per(s.nativeDraws, last.nativeDraws), per(s.boxTests, last.boxTests),
                  per(s.boxVisible, last.boxVisible), per(s.boxClipped, last.boxClipped), per(s.screenMade, last.screenMade),
                  per(s.clipMade, last.clipMade), per(s.matrixReads, last.matrixReads), per(s.modelLoads, last.modelLoads),
                  per(s.cellTests, last.cellTests), per(s.results, last.results), per(te::gfx::Scene().decals_aged, lastDecals),
                  per(te::gfx::DecalsUnclamped(), lastDecalsUnclamped), per(s.materialHits, last.materialHits),
-                 per(s.materialMisses, last.materialMisses));
+                 per(s.materialMisses, last.materialMisses), per(s.placedShort, last.placedShort),
+                 per(s.materialCompares, last.materialCompares), (unsigned long long)(s.unusedClipSpecial - last.unusedClipSpecial));
     // the other costly seams' calls (graphics_internal.h SeamCall)
     static uint32_t lastCalls[te::gfx::kCallCount] = {};
     const uint32_t* c = te::gfx::g_seamCalls;
@@ -2657,19 +3000,22 @@ void SeamCensusLine() {
         struct Counts {
             uint64_t frustumsLoaded = 0, frustumsStable = 0, linksLoaded = 0, linksStable = 0, boxLooked = 0, boxHits = 0,
                      loadLooked = 0, loadHits = 0, screenLooked = 0, screenHits = 0, cellLooked = 0, cellHits = 0;
+            uint64_t logBoxes = 0, logLoads = 0, logScreens = 0;
         };
         static Counts last;
         const CullMemo& m = g_cullMemo;
         auto d = [&](uint64_t now, uint64_t before) { return double(now - before) / n; };
         std::fprintf(stderr, "[te.gfx.vita] presents %llu-%llu culling memo%s per present: frustums loaded %.1f (%.1f unmoved), links %.1f "
                      "(%.1f unmoved); box tests looked at %.1f, answered %.1f; model loads %.1f / %.1f; box matrices %.1f / %.1f; "
-                     "cell tests %.1f / %.1f\n",
+                     "cell tests %.1f / %.1f; answered from the picture before's place in the log: box tests %.1f, model loads %.1f, "
+                     "box matrices %.1f\n",
                      (unsigned long long)(from + 1), (unsigned long long)presents,
                      !g_cullMemo.on ? " (OFF: TE_GFX_CULL_MEMO=0)" : g_cullMemo.ab > 0 ? " (A/B by TE_GFX_CULL_MEMO=abN)" : "",
                      d(m.frustumsLoaded, last.frustumsLoaded), d(m.frustumsStable, last.frustumsStable), d(m.linksLoaded, last.linksLoaded),
                      d(m.linksStable, last.linksStable), d(m.boxLooked, last.boxLooked), d(m.boxHits, last.boxHits),
                      d(m.loadLooked, last.loadLooked), d(m.loadHits, last.loadHits), d(m.screenLooked, last.screenLooked),
-                     d(m.screenHits, last.screenHits), d(m.cellLooked, last.cellLooked), d(m.cellHits, last.cellHits));
+                     d(m.screenHits, last.screenHits), d(m.cellLooked, last.cellLooked), d(m.cellHits, last.cellHits),
+                     d(g_cullLog.boxHits, last.logBoxes), d(g_cullLog.loadHits, last.logLoads), d(g_cullLog.screenHits, last.logScreens));
         if (m.check)
             std::fprintf(stderr, "[te.gfx.vita] presents %llu-%llu culling memo CHECK (TE_GFX_CULL_MEMO_CHECK): %llu answers made again "
                          "and compared, %llu differ\n", (unsigned long long)(from + 1), (unsigned long long)presents,
@@ -2686,6 +3032,7 @@ void SeamCensusLine() {
         last.linksLoaded = m.linksLoaded; last.linksStable = m.linksStable;
         last.boxLooked = m.boxLooked; last.boxHits = m.boxHits; last.loadLooked = m.loadLooked; last.loadHits = m.loadHits;
         last.screenLooked = m.screenLooked; last.screenHits = m.screenHits; last.cellLooked = m.cellLooked; last.cellHits = m.cellHits;
+        last.logBoxes = g_cullLog.boxHits; last.logLoads = g_cullLog.loadHits; last.logScreens = g_cullLog.screenHits;
     }
     {
         // the builders' work per present (the shadow volumes, the chunked builds, the CPU skins) and the pool's
@@ -2745,6 +3092,7 @@ void FlushNativeMeshes() {
 #if defined(__vita__)
     FlushSkinMeshes();   // the skin parts' meshes asked for this picture (graphics_scene.cpp's skins section)
     for (RepeatKeys& keys : g_repeatKeys) keys.EndPicture();   // the builders' census: this picture's inputs
+    g_cullLog.boxAt = g_cullLog.loadAt = 0;   // the culling log: the next picture's calls from its first entries
 #endif
     if (g_meshRequests.empty()) return;
     // the load census: the parts that asked for their mesh this picture, the meshes composed and posted (and their time)
@@ -2821,6 +3169,7 @@ std::string PrepCensusLine() {
     return b;
 }
 void ReplayModelSources(const std::vector<ModelSource>& sources) {
+    ++te_seam_epoch;   // (a save state's restore: the guest memory and the host's graphics state are another run's)
     DrainBuilds();
     ResolveMeshBatches();
     for (auto& [address, m] : g_models)
@@ -2837,6 +3186,150 @@ void ReplayModelSources(const std::vector<ModelSource>& sources) {
     scene.models_refused = refused;
 }
 }  // namespace te::gfx
+
+namespace {
+// ---- the placement's short form ------------------------------------------------------------------------------------------------
+// The rooftop's far view places ~700 instances a picture with ~2700 parts, nearly every one an unclipped instance's
+// common part. DrawInstance spent ~850 instructions an instance and ~380 a part on them (the Vita, measured): the same
+// options, diagnosis, device, origin and record-kind questions asked for every instance, every part's material bytes
+// compared again (84 materials a picture), the view built through copies, the record's fields written one call at a time.
+//
+// The material's cache slot as CachedMaterial's lean hit would answer it, without the call: the address, the memory, the
+// texture map's counter as when the slot was made or confirmed, its words still the bytes (StillSame: compared once per seam
+// epoch), and -- for a compact record -- its pool entry current. Null when CachedMaterial would have to do more.
+MaterialSlot* ShortSlot(const Mem& mem, uint32_t address, bool compact) {
+    if (!address) return nullptr;
+    const uint8_t* mat = mem.Bytes(address, sizeof(te_gfx_material));
+    MaterialSlot& slot = g_materialSlots[((address >> 4) ^ (address >> 13)) & (g_materialSlots.size() - 1)];
+    if (!mat || slot.address != address || slot.base != mem.base || slot.textureEpoch != te::gfx::g_texture_epoch ||
+        (compact && (!slot.pool || slot.poolEpoch != te::gfx::g_pool_epoch)) || !StillSame(slot, mat))
+        return nullptr;
+    return &slot;
+}
+// What DrawInstance decides once per instance and only a seam (or a module resource change) can alter, decided once per seam
+// epoch (te_seam_epoch.h): the options and the diagnosis that rule the short form out, the GS origin the native draws take off
+struct PlaceStretch {
+    unsigned epoch = 0;     // te_seam_epoch when made (0: never)
+    bool ok = false;        // the short form may be taken in this epoch
+    float originX = 0.f, originY = 0.f;
+} g_placeStretch;
+constexpr uint32_t kShortParts = 16;
+// A placement drawn in short: true when done -- the records DrawInstance makes for it, in its order, its census and its
+// counter -- or false with nothing done (the caller takes DrawInstance, as always). Taken when the instance is unclipped
+// (its native meshes drawn whole), needs no eye and no interpolator's tag, and every part DrawInstance would draw is the
+// common part: decoded, its native mesh made, its material's slot answering in short with one pass and no screen copy, not
+// a blended scroll built on the CPU (a placement is never lit). The checks first, then the writes: a placement that fails
+// a check has changed nothing DrawInstance reads.
+bool PlaceShort(const Mem& mem, const te_gfx_rigid_model* rigid, const ChunkView* cv) {
+    PlaceStretch& st = g_placeStretch;
+    if (st.epoch != te_seam_epoch) {
+        const SceneOptions& opts = Opts();
+        st.epoch = te_seam_epoch;
+        st.ok = opts.fast && !opts.noDraw && !opts.firstPassOnly && opts.skipBuckets.empty() && te::gfx::SeamLean() &&
+                !te::gfx::CompactCheck() && !g_diag.flat && !g_diag.Logging();
+        st.originX = te::gfx::GsOriginX();
+        st.originY = te::gfx::GsOriginY();
+    }
+    if (!st.ok || cv->visibility != DrawUnclipped || rigid->billboard || rigid->needsEye || te::gfx::Interpolating()) return false;
+    // (per instance, as DrawInstance asks: the record kind follows the tag and the presenter; the native meshes may be
+    // declined by a batch the general path waited for)
+    const bool compact = te::gfx::CompactMeshes();
+    if (!te::gfx::NativeMeshes()) return false;
+    const te_gfx_model* data = rigid->model ? mem.Get<te_gfx_model>(rigid->model) : nullptr;
+    Model* found = data ? FindModel(rigid->model) : nullptr;
+    if (!found) return false;
+    const uint32_t count = std::min<uint32_t>(rigid->count, data->subModelCount);
+    const uint32_t* materials = count ? reinterpret_cast<const uint32_t*>(mem.Bytes(rigid->materials, 4 * size_t(count))) : nullptr;
+    const uint32_t partCount = std::min<uint32_t>(count, uint32_t(found->parts.size()));
+    if (partCount > kShortParts || (partCount && !materials)) return false;
+    struct Short {
+        const MaterialSlot* slot;
+        uint32_t part;
+        float scroll[2];
+    } shorts[kShortParts];
+    uint32_t n = 0;
+    const bool nativeScrolled = g_nativeScrolled.load(std::memory_order_relaxed);
+    for (uint32_t i = 0; i < partCount; ++i) {
+        const Part& part = found->parts[i];
+        if (!part.decoded) continue;
+        if (part.meshState == 3 || !part.native) return false;
+        const uint32_t resource = materials[i];
+        const uint32_t* materialAddress = resource ? mem.Get<uint32_t>(resource + 8) : nullptr;   // MaterialResource::material
+        const MaterialSlot* slot = materialAddress ? ShortSlot(mem, *materialAddress, compact) : nullptr;
+        if (!slot || !slot->shortPart) return false;
+        Short& s = shorts[n++];
+        s.slot = slot;
+        s.part = i;
+        s.scroll[0] = s.scroll[1] = 0.f;
+        const te_gfx_shader* shader = slot->shortShader;
+        if (shader && FiniteBits(shader->scroll, 2)) {
+            s.scroll[0] = shader->scroll[0];
+            s.scroll[1] = shader->scroll[1];
+        }
+#if defined(__vita__)
+        const bool scrolled = NonzeroFloat(s.scroll[0]) || NonzeroFloat(s.scroll[1]);
+#else
+        const bool scrolled = s.scroll[0] != 0.f || s.scroll[1] != 0.f;
+#endif
+        if (slot->shortBlend && scrolled && !nativeScrolled) return false;
+    }
+    // the writes: each part's mesh asked for at its first draw, the census, the records in the parts' order
+    for (uint32_t k = 0; k < n; ++k) {
+        const Part& part = found->parts[shorts[k].part];
+        if (part.meshState == 0) {
+            part.meshState = 1;
+            g_meshRequests.emplace_back(rigid->model, shorts[k].part);
+        }
+    }
+    g_seams.materialHits += n;
+    g_seams.nativeDraws += n;
+#if defined(__vita__)
+    if (compact) {
+        te::gfx::CompactPart out[kShortParts];
+        for (uint32_t k = 0; k < n; ++k) {
+            const Short& s = shorts[k];
+            out[k] = te::gfx::CompactPart{s.slot->shortBucket, s.slot->pool, found->parts[s.part].native, {s.scroll[0], s.scroll[1]}};
+        }
+        // (the camera unmoved -- the culling memo's frustum and link as in an earlier picture: the records are the slots')
+        const bool still = g_cullMemo.fid && g_cullMemo.fstable && g_cullMemo.lid && g_cullMemo.lstable;
+        te::gfx::RecordCompactParts(out, n, &cv->toScreen[0][0], st.originX, st.originY, still);
+    } else
+#endif
+    {
+        for (uint32_t k = 0; k < n; ++k) {
+            const Short& s = shorts[k];
+            ps2e_draw_mesh_params& mp = te::gfx::RecordMeshInPlace(s.slot->view.bucket, s.slot->state, found->parts[s.part].native);
+            std::memcpy(mp.screen, &cv->toScreen[0][0], sizeof mp.screen);
+            mp.offset[0] = st.originX;
+            mp.offset[1] = st.originY;
+            mp.scroll[0] = s.scroll[0];
+            mp.scroll[1] = s.scroll[1];
+            mp.box[0] = mp.box[1] = -1e9f;
+            mp.box[2] = mp.box[3] = 1e9f;
+            mp.first = 0;
+            mp.count = 0;
+            mp.lit = 0;
+        }
+    }
+    te::gfx::Scene().placed_models++;
+    g_seams.placedShort++;
+    te::gfx::ClearDrawTag();
+    return true;
+}
+// The first placement of a run drawn past an unused clip matrix that is not finite, named once with its view (a linked chunk's
+// or another chunk view) and the matrix's words: what the view's stack held
+bool g_unusedClipSaid = false;
+__attribute__((noinline, cold)) void UnusedClipLine(const ChunkView* cv) {
+    g_unusedClipSaid = true;
+    uint32_t w[16];
+    std::memcpy(w, &cv->clipped[0][0], sizeof w);
+    std::fprintf(stderr, "[te.gfx] placement: a model wholly in view drawn past the clip matrix of %s, which it does not use and which "
+                         "holds an infinity or a NaN (a view none of whose meshes was partly in view never had it written): %08x %08x %08x "
+                         "%08x  %08x %08x %08x %08x  %08x %08x %08x %08x  %08x %08x %08x %08x; the seams census counts them\n",
+                 cv->vtable == te::RetailAddress(kLinkedChunkViewVTable) ? "a linked chunk's view" : "a chunk view", w[0], w[1], w[2],
+                 w[3], w[4], w[5], w[6], w[7], w[8], w[9], w[10], w[11], w[12], w[13], w[14], w[15]);
+}
+}  // namespace
 
 extern "C" {
 
@@ -2908,13 +3401,24 @@ void ps2e_graphics_draw_placed_model(ps2e_u32 model, ps2e_u32 viewAddress, ps2e_
     const auto* cv = mem.Get<ChunkView>(viewAddress);
     if (!rigid || !cv || !te::gfx::EnsureDevice()) return;
     g_seams.placed++;
-    Geometry::View v;
-    v.screen = ToMatrix(cv->toScreen);
-    v.clip = ToMatrix(cv->clipped);
-    v.guard = {cv->clip[0], cv->clip[1], cv->clip[2], cv->clip[3]};
-    v.scroll = {0.f, 0.f};
-    v.clipped = cv->visibility != DrawUnclipped;
-    if (!Finite(v.screen) || !Finite(v.clip)) return;
+    // the matrices tested where they lie (SpecialMatrices), then the view made in one go -- every member from the chunk view, no
+    // zeroed struct overwritten and no matrix copied through a temporary. The matrix to the clip space counts for a CLIPPED
+    // draw only, as retail reads it (models.cpp SetPlacedModelRenderDMA: toCamera for mode != DrawUnclipped): MeshResult writes
+    // it for a mesh partly in view only, so a chunk view none of whose meshes was has never had it written -- a linked chunk's
+    // view is made on the stack every picture (chunkscenery.cpp DrawLinkedChunk), and seen through its doorway every mesh of
+    // it is wholly in view: the matrix is whatever the stack held. Refused for it, every wall of the chunk went wherever the
+    // stack held an infinity or a NaN word there (the Vita's natively compiled game, whose stack the system libraries share);
+    // such a placement is drawn with a zero matrix in its place (finite for the builds; an unclipped build never clips)
+    const bool clipped = cv->visibility != DrawUnclipped;
+    const uint32_t special = SpecialMatrices(&cv->toScreen[0][0], &cv->clipped[0][0]);
+    if (special) {
+        if ((special & 1u) || clipped) return;
+        g_seams.unusedClipSpecial++;
+        if (!g_unusedClipSaid) UnusedClipLine(cv);
+    }
+    if (PlaceShort(mem, rigid, cv)) return;   // the common placement in short (above); else the general path, as always
+    const Geometry::View v{ToMatrix(cv->toScreen), special ? Matrix{} : ToMatrix(cv->clipped),
+                           {cv->clip[0], cv->clip[1], cv->clip[2], cv->clip[3]}, {0.f, 0.f}, clipped};
     if (rigid->billboard) {
         // (once: Once() builds a std::string key -- a heap allocation for this 70-character text -- on every billboard draw)
         static bool said = false;
@@ -3143,12 +3647,21 @@ struct ShadowEmitter {
 ShadowEmitter g_shadowEmitter;
 bool g_shadowsOpen = false;
 // The cost of a body on the game thread, added to a counter on scope exit
+#if defined(__vita__)
+// (the Vita: nothing -- a clock read is a kernel call there and a double conversion a library call: two of each were most of
+// a shadow mesh's ~23 us and a sixth of a skin's ~43 us on the device's game thread. The skins' and the shadows' seams are
+// timed on the device by the TE_PROF census, "[te.prof] ... game seams per present"; the exit summary's ms stay 0 there)
+struct Timed {
+    explicit Timed(double&) {}
+};
+#else
 struct Timed {
     double& sink;
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     explicit Timed(double& s) : sink(s) {}
     ~Timed() { sink += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(); }
 };
+#endif
 ShadowModel& ShadowModelOf(uint32_t model, const Model& m) {
     ShadowModel& sm = g_shadowModels[model];
     if (sm.tried) return sm;
@@ -3553,11 +4066,41 @@ void ps2e_graphics_cull_load_model(ps2e_u32 model) {
     const float* m = mem.Floats(model, 16);
     if (!m || !g_cull.link) return;
 #if defined(__vita__)
-    // (the culling memo: the same link and model words -> the load's answer as made then)
-    if (const CullMemo::ScreenEntry* e = MemoScreen(model, m, true)) g_cull.model = title::CullingMath::Model{e->screen, e->distance};
-    else
+    const uint32_t ordinal = g_cullLog.loadAt++;   // (counted always: the pictures' sequences stay aligned)
+    CullLogLoad* const entry = g_cullMemo.lid && g_cullMemo.lstable && ordinal < CullLog::kLoads ? &g_cullLog.Loads()[ordinal] : nullptr;
+    const uint32_t fpctl = entry ? CullMemo::FpControl() : 0;
+    if (entry && ordinal + 2 < CullLog::kLoads) {
+        const char* const ahead = reinterpret_cast<const char*>(entry + 2);
+        for (int line = 0; line < 3; ++line) __builtin_prefetch(ahead + 32 * line);
+    }
+    if (entry && entry->model == model && entry->lid == g_cullMemo.lid && entry->fpctl == fpctl && SameQuads(entry->modelWords, m, 16)) {
+        // (the culling log: the picture before's load at this place of the sequence, the same link and words)
+        g_cullMemo.loadLooked++;
+        g_cullMemo.loadHits++;
+        g_cullLog.loadHits++;
+        g_cull.model = title::CullingMath::Model{entry->screen, entry->distance};
+        if (g_cullMemo.check) {
+            const auto loaded = title::CullingMath::LoadModel(*g_cull.link, ToMatrix(reinterpret_cast<const float(*)[4]>(m)));
+            g_cullMemo.checked++;
+            if (std::memcmp(&loaded.to_screen, &entry->screen, sizeof entry->screen) != 0 || loaded.distance != entry->distance)
+                g_cullMemo.differ++;
+        }
+    } else {
+        // (the culling memo: the same link and model words -> the load's answer as made then)
+        if (const CullMemo::ScreenEntry* e = MemoScreen(model, m, true)) g_cull.model = title::CullingMath::Model{e->screen, e->distance};
+        else g_cull.model = title::CullingMath::LoadModel(*g_cull.link, ToMatrix(reinterpret_cast<const float(*)[4]>(m)));
+        if (entry) {
+            entry->model = model;
+            entry->lid = g_cullMemo.lid;
+            entry->fpctl = fpctl;
+            entry->distance = g_cull.model->distance;
+            CopyQuads(entry->modelWords, m, 16);
+            entry->screen = g_cull.model->to_screen;
+        }
+    }
+#else
+    g_cull.model = title::CullingMath::LoadModel(*g_cull.link, ToMatrix(reinterpret_cast<const float(*)[4]>(m)));
 #endif
-        g_cull.model = title::CullingMath::LoadModel(*g_cull.link, ToMatrix(reinterpret_cast<const float(*)[4]>(m)));
     g_cull.toScreen = g_cull.model->to_screen;
     g_cull.screenPending = false;   // (a pending box matrix to the screen is replaced unread; one to the clip space stays)
     g_cull.box.reset();
@@ -3674,6 +4217,7 @@ void ps2e_graphics_cull_test_box_at(ps2e_u32 boxAddress, ps2e_u32 model) {
         if (visibility.outside) return;
         g_seams.boxVisible++;
         g_cull.screenPending = true;
+        g_cull.screenLog = nullptr;
         g_cull.screenModel = m;
         g_cull.screenAddress = model;
         if (visibility.clipped) {
@@ -3713,15 +4257,27 @@ void ps2e_graphics_cull_test_box_at(ps2e_u32 boxAddress, ps2e_u32 model) {
     title::CullingMath::Classification visibility;
     int32_t distance;
     CullMemo& memo = g_cullMemo;
+    const uint32_t ordinal = g_cullLog.boxAt++;   // (counted always: the pictures' sequences stay aligned)
+    CullLogBox* logged = nullptr;                 // this test's log entry (the pending matrix reads its model's words there)
     if (memo.fid && memo.fstable && memo.lid && memo.lstable) {
         // (the culling memo: the same frustum, link and box / model words -> the visibility and distance as made then)
         memo.boxLooked++;
         const uint32_t fpctl = CullMemo::FpControl();
-        CullMemo::BoxEntry& e = memo.boxes[CullMemo::SlotOf(boxAddress, model, uint32_t(memo.boxes.size() - 1))];
-        if (e.fid == memo.fid && e.lid == memo.lid && e.fpctl == fpctl && CullMemo::Same(e.box, c, 8) && CullMemo::Same(e.model, mf, 16)) {
+        if (g_cullLog.boxes.empty()) g_cullLog.Allocate();
+        CullLogBox* const entry = ordinal < CullLog::kBoxes ? &g_cullLog.boxes[ordinal] : nullptr;
+        if (entry && ordinal + 2 < CullLog::kBoxes) {
+            // (the entry after the next on its way: this picture reads the log in order)
+            const char* const ahead = reinterpret_cast<const char*>(entry + 2);
+            for (int line = 0; line < 4; ++line) __builtin_prefetch(ahead + 32 * line);
+        }
+        if (entry && entry->box == boxAddress && entry->model == model && entry->fid == memo.fid && entry->lid == memo.lid &&
+            entry->fpctl == fpctl && SameQuads(entry->boxWords, c, 8) && SameQuads(entry->modelWords, mf, 16)) {
+            // the picture before's test at this place of the sequence, the same inputs: its answer
             memo.boxHits++;
-            visibility = e.visibility;
-            distance = e.distance;
+            g_cullLog.boxHits++;
+            visibility = entry->visibility;
+            distance = entry->distance;
+            logged = entry;
             if (memo.check) {
                 int32_t made_distance = 0;
                 const auto made = title::CullingMath::TestBoxAtVisibilityOf(*g_cull.planes, *g_cull.link, c, m, &made_distance);
@@ -3729,14 +4285,41 @@ void ps2e_graphics_cull_test_box_at(ps2e_u32 boxAddress, ps2e_u32 model) {
                 if (made.outside != visibility.outside || made.clipped != visibility.clipped || made_distance != distance) memo.differ++;
             }
         } else {
-            visibility = title::CullingMath::TestBoxAtVisibilityOf(*g_cull.planes, *g_cull.link, c, m, &distance);
-            std::memcpy(e.box, c, sizeof e.box);
-            std::memcpy(e.model, mf, sizeof e.model);
-            e.visibility = visibility;
-            e.distance = distance;
-            e.fpctl = fpctl;
-            e.fid = memo.fid;
-            e.lid = memo.lid;
+            CullMemo::BoxEntry& e = memo.boxes[CullMemo::SlotOf(boxAddress, model, uint32_t(memo.boxes.size() - 1))];
+            if (e.fid == memo.fid && e.lid == memo.lid && e.fpctl == fpctl && CullMemo::Same(e.box, c, 8) && CullMemo::Same(e.model, mf, 16)) {
+                memo.boxHits++;
+                visibility = e.visibility;
+                distance = e.distance;
+                if (memo.check) {
+                    int32_t made_distance = 0;
+                    const auto made = title::CullingMath::TestBoxAtVisibilityOf(*g_cull.planes, *g_cull.link, c, m, &made_distance);
+                    memo.checked++;
+                    if (made.outside != visibility.outside || made.clipped != visibility.clipped || made_distance != distance) memo.differ++;
+                }
+            } else {
+                visibility = title::CullingMath::TestBoxAtVisibilityOf(*g_cull.planes, *g_cull.link, c, m, &distance);
+                std::memcpy(e.box, c, sizeof e.box);
+                std::memcpy(e.model, mf, sizeof e.model);
+                e.visibility = visibility;
+                e.distance = distance;
+                e.fpctl = fpctl;
+                e.fid = memo.fid;
+                e.lid = memo.lid;
+            }
+            if (entry) {
+                // logged at this place for the next picture
+                entry->box = boxAddress;
+                entry->model = model;
+                entry->fid = memo.fid;
+                entry->lid = memo.lid;
+                entry->fpctl = fpctl;
+                entry->visibility = visibility;
+                entry->distance = distance;
+                CopyQuads(entry->boxWords, c, 8);
+                CopyQuads(entry->modelWords, mf, 16);
+                entry->screenLid = 0;
+                logged = entry;
+            }
         }
     } else {
         visibility = title::CullingMath::TestBoxAtVisibilityOf(*g_cull.planes, *g_cull.link, c, m, &distance);
@@ -3760,8 +4343,11 @@ void ps2e_graphics_cull_test_box_at(ps2e_u32 boxAddress, ps2e_u32 model) {
     if (visibility.outside) return;
     g_seams.boxVisible++;
     g_cull.screenPending = true;
-    g_cull.screenModel = m;   // (the model as it was at the test: the pending matrices are made from it when read)
-    g_cull.screenAddress = model;
+    g_cull.screenLog = logged;
+    if (!logged) {
+        g_cull.screenModel = m;   // (the model as it was at the test: the pending matrices are made from it when read)
+        g_cull.screenAddress = model;
+    }
     if (visibility.clipped) {
         g_seams.boxClipped++;
         g_cull.clipPending = true;
@@ -3773,6 +4359,38 @@ void ps2e_graphics_cull_test_box_at(ps2e_u32 boxAddress, ps2e_u32 model) {
 // model or box test (vf15 keeps it across a cell test)
 void ps2e_graphics_cull_result(ps2e_u32 out) {
     TE_SEAM_PART(kSeamBoxes);
+#if defined(__vita__)
+    // (the Vita: the answer in short when no culling diagnosis is on -- one flag, the guest pointer in 32-bit arithmetic;
+    // ~1700 calls a picture at the rooftop's far view, each ~60 instructions of three diagnosis tests and a 64-bit range test)
+    if (!Opts().cullDiag) {
+#if defined(TE_NATIVE)
+        uint32_t* const o = reinterpret_cast<uint32_t*>(te::GuestPointer(out, 12));   // (a guest address is the pointer)
+        if (!o) return;
+#else
+        uint8_t* const base = te::GuestMemory();
+        const uint32_t size = uint32_t(te::GuestMemorySize());
+        if (!base || size < 12 || out > size - 12) return;
+        uint32_t* const o = reinterpret_cast<uint32_t*>(base + out);
+#endif
+        g_seams.results++;
+        uint32_t outside = 0, clipped = 0;
+        int32_t distance = g_cull.model ? g_cull.model->distance : 0;
+        if (g_cull.box) {
+            outside = g_cull.box->visibility.outside;
+            clipped = g_cull.box->visibility.clipped;
+            distance = g_cull.box->distance;
+        } else if (g_cull.cell) {
+            outside = g_cull.cell->outside;
+            clipped = g_cull.cell->clipped;
+        } else if (!g_cull.view || !g_cull.planes) {
+            outside = 1;   // nothing loaded: nothing in view
+        }
+        o[0] = outside;
+        o[1] = clipped;
+        o[2] = uint32_t(distance);
+        return;
+    }
+#endif
     uint32_t* o = reinterpret_cast<uint32_t*>(te::GuestPointer(out, 12));
     if (!o) return;
     g_seams.results++;
@@ -3870,6 +4488,27 @@ struct SkinPart {
 };
 struct SkinModel { std::vector<SkinPart> parts; };
 std::unordered_map<uint32_t, SkinModel> g_skins;   // Skin guest address -> its submodels
+// g_skins' lookups through a small direct-mapped cache (each skin draw's find was a hash bucket's division: __udivsi3, ~120
+// instructions on the A9). An element's address is stable for its life in the map (rehashing moves no node); an entry
+// forgets its address when the skin is erased, all of them when the map is cleared.
+struct SkinSlot {
+    uint32_t key = 0;
+    SkinModel* model = nullptr;
+};
+std::array<SkinSlot, 16> g_skinSlots;
+SkinSlot& SkinSlotOf(uint32_t address) { return g_skinSlots[((address >> 4) ^ (address >> 9)) & (g_skinSlots.size() - 1)]; }
+SkinModel* FindSkin(uint32_t address) {
+    SkinSlot& slot = SkinSlotOf(address);
+    if (address && slot.key == address) return slot.model;
+    const auto it = g_skins.find(address);
+    if (it == g_skins.end()) return nullptr;
+    slot = SkinSlot{address, &it->second};
+    return slot.model;
+}
+void ForgetSkin(uint32_t address) {
+    SkinSlot& slot = SkinSlotOf(address);
+    if (slot.key == address) slot = SkinSlot{};
+}
 struct BlendPartGeo { SkinGeo::Part part; bool decoded = false; bool tried = false; SkinGpu gpu; };
 std::unordered_map<uint32_t, std::unordered_map<uint32_t, BlendPartGeo>> g_blendSkins;   // BlendSkin -> part packet address -> geometry
 
@@ -4068,21 +4707,18 @@ bool SkinInFront(const SkinGpu& gpu, const SkinGeo::Inputs& in, float slack = 0.
 
 // The palette of a draw: per local joint its 3x4 transposed (row k = the k-th lanes of its three axes and its translation)
 void SkinPalette(const SkinGpu& gpu, const SkinGeo::Inputs& in, std::vector<float>& out) {
-    const auto F = [](uint32_t b) { float f; std::memcpy(&f, &b, 4); return f; };
     out.resize(gpu.joints.size() * 12);
     float* o = out.data();
+    // each joint's four quadwords loaded de-interleaved (VLD4: the k-th register holds lane k of the axes and the translation
+    // -- the palette's row k), its first three rows stored: the transposition as moves of the same bits, ~4 instructions a
+    // joint where the word-by-word loop was ~35 (the palette was a third of a skin draw's instructions)
+    const uint32_t* const words = in.joints.data()->data();
     for (size_t j = 0; j < gpu.joints.size(); ++j) {
-        const size_t at = size_t(gpu.joints[j]) * 4;
-        const auto& c0 = in.joints[at];
-        const auto& c1 = in.joints[at + 1];
-        const auto& c2 = in.joints[at + 2];
-        const auto& tr = in.joints[at + 3];
-        for (int k = 0; k < 3; ++k) {
-            *o++ = F(c0[size_t(k)]);
-            *o++ = F(c1[size_t(k)]);
-            *o++ = F(c2[size_t(k)]);
-            *o++ = F(tr[size_t(k)]);
-        }
+        const uint32x4x4_t q = vld4q_u32(words + size_t(gpu.joints[j]) * 16);
+        uint32_t* const to = reinterpret_cast<uint32_t*>(o + j * 12);
+        vst1q_u32(to, q.val[0]);
+        vst1q_u32(to + 4, q.val[1]);
+        vst1q_u32(to + 8, q.val[2]);
     }
 }
 
@@ -4345,7 +4981,7 @@ std::string BuildersCensusLine(double frames) {
                   sb, rr0, rp0, sp, ss, ssk, sv, su, spo, spr, sce, scl, scd, sout, se, scm, sdf, double(mesh[0]) / frames,
                   double(mesh[1]) / frames, double(mesh[2]) / frames, double(mesh[3]) / frames, double(mesh[4]) / frames, rr1, rp1, why[0][0], why[0][1], why[0][2], why[0][3], cv[0], ov[0],
                   fv[0], rr2, rp2, why[1][0], why[1][1], why[1][2], why[1][4], cv[1], ov[1], fv[1], bp, bv, bt, bz, kp, kv);
-    return std::string(b) + PoolCensusLine(frames);
+    return std::string(b) + ParticleCensusLine(frames) + PoolCensusLine(frames);
 #else
     (void)frames;
     return std::string();
@@ -4387,6 +5023,7 @@ void ReplaySkinSources(const std::vector<ModelSource>& sources) {
         for (auto& [packet, geo] : parts) RetireSkinGpu(geo.gpu);
 #endif
     g_skins.clear();
+    g_skinSlots.fill(SkinSlot{});
     g_blendSkins.clear();
     auto& scene = Scene();
     const uint64_t decoded = scene.skins_decoded, refused = scene.skins_refused;
@@ -4396,6 +5033,17 @@ void ReplaySkinSources(const std::vector<ModelSource>& sources) {
     scene.skins_refused = refused;
 }
 }  // namespace te::gfx
+
+namespace {
+// DrawSkin's scratch, the game thread's (namespace scope: a function-local static's guard is an acquire load and a DMB per
+// call on the Vita, a thread_local an emulated TLS lookup)
+#if defined(__vita__)
+SkinGeo::Inputs g_skinInputs;
+std::vector<float> g_skinPalette;
+#endif
+Emitter g_skinEmitter;
+std::vector<ps2r::gs::DrawIr> g_skinDraws;
+}  // namespace
 
 extern "C" {
 
@@ -4410,6 +5058,7 @@ void ps2e_gfx2_skin_released(ps2e_u32 skin) {
     if (auto it = g_skins.find(skin); it != g_skins.end()) RetireSkinMeshes(it->second);
 #endif
     g_skins.erase(skin);
+    ForgetSkin(skin);
 }
 void ps2e_gfx2_blend_skin_released(ps2e_u32 skin) {
     te::gfx::DrainBuilds();   // a posted blend may still read its parts
@@ -4434,21 +5083,21 @@ void ps2e_graphics_draw_skin(ps2e_u32 skinAddress, ps2e_u32 joints, ps2e_s32 joi
     Timed timed(te::gfx::Scene().skin_ms);
     const auto* skin = Guest<te_gfx_skin>(skinAddress);
     if (!skin || !te::gfx::EnsureDevice()) return;
-    auto it = g_skins.find(skinAddress);
-    if (it == g_skins.end()) { te::gfx::Scene().submodels_missing++; return; }
+    SkinModel* const found = FindSkin(skinAddress);
+    if (!found) { te::gfx::Scene().submodels_missing++; return; }
 #if defined(__vita__)
     // the inputs kept across the calls (the game thread's; SkinInputs sets every field a fresh one would hold): a fresh
     // Inputs was the joints' vector allocated and freed per call -- two newlib heap calls (kernel locks) on the Vita
-    static SkinGeo::Inputs in;
+    SkinGeo::Inputs& in = g_skinInputs;
 #else
     SkinGeo::Inputs in;
 #endif
     if (!SkinInputs(joints, jointCount, matrix, lights, mode, in)) return;
     auto& scene = te::gfx::Scene();
     scene.skin_triangles += g_deferredSkinTriangles.exchange(0, std::memory_order_relaxed);
-    static Emitter emitter;
-    static std::vector<ps2r::gs::DrawIr> draws;
-    const uint32_t count = std::min<uint32_t>(skin->count, uint32_t(it->second.parts.size()));
+    Emitter& emitter = g_skinEmitter;
+    std::vector<ps2r::gs::DrawIr>& draws = g_skinDraws;
+    const uint32_t count = std::min<uint32_t>(skin->count, uint32_t(found->parts.size()));
 #if defined(__vita__)
     // the k-th draw of this skin this frame: the interpolator's identity, read by nothing else -- the ordinals' map (a
     // node allocated per skin per frame, all freed at the present) only while the presenter interpolates
@@ -4460,7 +5109,7 @@ void ps2e_graphics_draw_skin(ps2e_u32 skinAddress, ps2e_u32 joints, ps2e_s32 joi
     // the submodels' builds share one copy of the inputs (the joints: kilobytes) per scroll, not a copy each
     std::shared_ptr<const SkinGeo::Inputs> shared;
     for (uint32_t i = 0; i < count; ++i) {
-        SkinPart& part = it->second.parts[i];
+        SkinPart& part = found->parts[i];
         if (!part.decoded) continue;
         ps2e_draw_state state;
         uint32_t bucket;
@@ -4504,7 +5153,7 @@ void ps2e_graphics_draw_skin(ps2e_u32 skinAddress, ps2e_u32 joints, ps2e_s32 joi
             }
             g_skinParts[path]++;
             if (path == kSkinGpu) {
-                thread_local std::vector<float> palette;
+                std::vector<float>& palette = g_skinPalette;   // (the game thread's: an emulated TLS lookup per part on the Vita)
                 SkinPalette(gpu, in, palette);
                 const auto F = [](uint32_t b) { float f; std::memcpy(&f, &b, 4); return f; };
                 ps2e_draw_mesh_params mp{};

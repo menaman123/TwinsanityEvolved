@@ -9,6 +9,7 @@
 //   Section 0 = the thread's own code (the game thread: the wasm module, and its imports without TE_PROF_SEAM).
 //   TE_PROF_BENCH=1 also times a few primitives at start-up (the emulator's cost per kernel call, lock, allocation...).
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <string>
 
@@ -47,6 +48,15 @@ void OnPresent(uint64_t presents);
 // n (the last ~16 s of samples are kept): "(own code) 62% (31), texture: ... 20% (10), ..." -- empty without TE_PROF
 void TickBegin(uint64_t tick);
 std::string TickSections(uint64_t tick, int rows);
+// the most sampled section of tick n's samples (a name kept for the process), null without TE_PROF or samples
+const char* TickTopSection(uint64_t tick);
+// The drawing thread's samples by picture (the slow-picture line's attribution): PictureBegin(n) stamps the drawing
+// thread's samples from here with picture n (its present's number); PictureSections / PictureTopSection as for a tick
+void PictureBegin(uint64_t picture);
+std::string PictureSections(uint64_t picture, int rows);
+const char* PictureTopSection(uint64_t picture);
+// TE_MACHINE_BENCH=1 (the Vita): the processor's and the memory's ceilings, measured once at start-up (te_machine_bench.cpp)
+void MachineBench();
 // TE_PROF_BENCH=2 (the Vita): the per-draw cost model, timed once at the device's creation (te_draw_bench.cpp)
 void DrawBench(::ps2e_draw* device);
 bool DrawBenchWanted();
@@ -100,7 +110,13 @@ enum SeamGroup : uint8_t {
 };
 // the groups' section ids (0 while TE_PROF is off) and their calls (the game thread writes, the report reads)
 extern unsigned short g_seam_id[kSeamGroups];
-void CountSeam(SeamGroup group);
+// the calls: written by the game thread only (a relaxed load and store, no exclusive access), read by the report on the
+// thread that presents; counted where the seam is (inline: a call per seam call was ~10 cycles of ~16000 a picture)
+extern std::atomic<uint32_t> g_seam_calls[kSeamGroups];
+inline void CountSeam(SeamGroup group) {
+    std::atomic<uint32_t>& c = g_seam_calls[group];
+    c.store(c.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+}
 
 class SeamScope {
 public:

@@ -31,11 +31,13 @@ wrong base? (fixtures/judges/mods_import_pal.json; every mod is made at run time
                 North American disc is refused: "The file Default.rm2 matches the European disc's entry ...".
   (viii) USA    with --ntsc-iso (SKIPPED otherwise): a Mod Crate folder made at run time from that disc -- ModCrateInfo.txt
                 with an "!... apply Classic Slide Jump for Crash and Classic Explosion Damage." line, layer0/crash6/MUSIC.MH
-                (lower-case folder, one byte changed), layer1/Language/Code/American.txt ("graphic options" -> "...optionz")
+                (lower-case folder, one byte changed), layer1/Language/Code/American.txt ("graphic options" -> "...optionz"),
+                layer1/Language/AgentLab/American.txt (the disc's + 3 texts of the judge's, as a USA crate adds sign texts)
                 -- imported against it: base NTSC-U / SLUS_209.09 / its Redump name, the notes kept, the warning that the
                 port cannot apply those Crate Mod Loader settings, verify and the recomposition; `inspect` says the same. The
                 same crate over --iso (the European disc) is imported with the warning that it looks made for the North
-                American disc.
+                American disc and the one naming the scripts' texts that disc's Language\AgentLab banks lack (the crate's
+                count against their smallest, by the game's own count of a bank's texts).
 
 RED on the base (no twinsanityevolved-modtool beside the game: nothing can be imported; and its overlay has no
 base check). GREEN on the import build.
@@ -643,6 +645,19 @@ def entry_bytes(disc, entries, name):
     return None
 
 
+def text_count(text):
+    """The texts the game numbers in a text bank (game/src/game/language.cpp ReadTextFile): a line break each -- CR LF and
+    LF CR once, a lone CR or LF once -- up to the first NUL."""
+    n, i = 0, 0
+    while i < len(text) and text[i] != 0:
+        c = text[i]
+        if i + 1 < len(text) and ((c == 13 and text[i + 1] == 10) or (c == 10 and text[i + 1] == 13)):
+            n, i = n + 1, i + 2
+        else:
+            n, i = n + (c in (10, 13)), i + 1
+    return n
+
+
 def recomposed_archive(disc, mod_dir, out, expect):
     """The mod's index + archive recomposed by this judge (tools/mods/apply_overlay_to_iso.py, not the tool): the entries
     whose bytes are not `expect`'s (name -> bytes) or, for the rest, the disc's; and the composed index's entries."""
@@ -747,6 +762,12 @@ def judge_usa_crate(ufx, tool, out, mods, iso, ntsc):
     if bank is None or ufx["from"].encode() not in bank:
         return {"result": "RED: the North American disc has no %s with %r" % (ufx["bank"], ufx["from"])}
     bank2 = bank.replace(ufx["from"].encode(), ufx["to"].encode(), 1)
+    # the scripts' bank with texts of the judge's own after the disc's (a USA crate's new sign texts): over the European disc
+    # the import says which of them that disc's banks lack
+    tbank = entry_bytes(ndisc, entries, ufx["text_bank"])
+    if tbank is None:
+        return {"result": "RED: the North American disc has no %s" % ufx["text_bank"]}
+    tbank2 = tbank + b"".join(b"the import judge's text %d\r\n" % i for i in range(ufx["text_bank_added"]))
     mh = bytearray(ndisc.read("CRASH6/MUSIC.MH", 0, ndisc.files["CRASH6/MUSIC.MH"]["size"]))
     mh[ufx["music_mh_byte"]] ^= 0x5A
     crate = os.path.join(out, "usa_crate")
@@ -760,6 +781,10 @@ def judge_usa_crate(ufx, tool, out, mods, iso, ntsc):
     os.makedirs(os.path.dirname(bank_host))
     with open(bank_host, "wb") as f:
         f.write(bank2)
+    tbank_host = os.path.join(crate, "layer1", *ufx["text_bank"].split("\\"))
+    os.makedirs(os.path.dirname(tbank_host), exist_ok=True)
+    with open(tbank_host, "wb") as f:
+        f.write(tbank2)
     e = {}
     try:
         ins = modtool(tool, ["inspect", crate, "--iso", ntsc])
@@ -774,24 +799,39 @@ def judge_usa_crate(ufx, tool, out, mods, iso, ntsc):
         with open(os.path.join(mod_dir, "mod.json"), encoding="utf-8") as f:
             m = json.load(f)
         v = modtool(tool, ["verify", mod_dir, "--iso", ntsc])
-        new_entries, bad, _ = recomposed_archive(ndisc, mod_dir, out, {ufx["bank"].upper(): bank2})
+        new_entries, bad, _ = recomposed_archive(ndisc, mod_dir, out, {ufx["bank"].upper(): bank2, ufx["text_bank"].upper(): tbank2})
         mh_ok = overlay.composed_sha256(ndisc, mod_dir, "CRASH6/MUSIC.MH") == hashlib.sha256(bytes(mh)).hexdigest()
         base = m.get("base") or {}
         imp = m.get("import") or {}
         e.update({"verify": v.get("ok"), "entries": len(new_entries), "entries_bad": bad, "music_mh": mh_ok, "base": base,
                   "notes": m.get("notes"), "game_code_settings": imp.get("game_code_settings")})
+        text_warned = [w for w in (res.get("warnings") or []) if w.startswith("its text bank ")]
         ok = v.get("ok") and not bad and len(new_entries) == len(entries) and mh_ok and \
             sorted(res.get("files_changed") or []) == sorted(ufx["files_changed"]) and \
             base.get("region") == ufx["region"] and base.get("executable") == ufx["executable"] and \
             ((base.get("disc") or {}).get("redump") or "").startswith(ufx["redump_starts"]) and \
             ufx["note"] in (m.get("notes") or []) and ufx["warning"] in (res.get("warnings") or []) and \
             imp.get("game_code_settings") == ufx["settings"] and ins.get("ok") and ufx["note"] in (ins.get("notes") or []) and \
-            ufx["warning"] in (ins.get("warnings") or []) and sorted(ins.get("files_changed") or []) == sorted(ufx["files_changed"])
-        # over the European disc: imported, with the warning that it looks made for the North American disc
+            ufx["warning"] in (ins.get("warnings") or []) and sorted(ins.get("files_changed") or []) == sorted(ufx["files_changed"]) and \
+            not text_warned
+        # over the European disc: imported, with the warning that it looks made for the North American disc, and the one naming
+        # the scripts' texts its banks lack: the crate's count against the smallest of that disc's Language\AgentLab banks
+        # (the game's count: a text a line break, ReadTextFile)
+        pdisc = overlay.Disc(iso)
+        pentries = disc_entries(pdisc)
+        folder = ufx["text_bank"].rsplit("\\", 1)[0].upper() + "\\"
+        mine = min(text_count(entry_bytes(pdisc, pentries, n)) for n, _, _ in pentries
+                   if n.upper().startswith(folder) and "\\" not in n[len(folder):] and n.upper().endswith(".TXT"))
+        theirs = text_count(tbank2)
+        want = "%s%d texts, this disc's %s banks %d: its texts %d to %d are not on this disc" % (
+            ufx["european_text_warning_starts"], theirs, ufx["text_bank"].rsplit("\\", 1)[0], mine, mine, theirs - 1)
         pal_mods = os.path.join(out, "mods_pal_usa")
         r2 = modtool(tool, ["import", crate, "--iso", iso, "--mods", pal_mods])
-        e["over_european_disc"] = {"ok": r2.get("ok"), "warnings": r2.get("warnings"), "files_added": r2.get("files_added")}
-        ok = ok and r2.get("ok") and any(w.startswith(ufx["european_warning_starts"]) for w in (r2.get("warnings") or []))
+        e["over_european_disc"] = {"ok": r2.get("ok"), "warnings": r2.get("warnings"), "files_added": r2.get("files_added"),
+                                   "text_warning_wanted": want if theirs > mine else "(none: the crate's bank is not longer)"}
+        ok = ok and r2.get("ok") and any(w.startswith(ufx["european_warning_starts"]) for w in (r2.get("warnings") or [])) and \
+            ((want in (r2.get("warnings") or [])) if theirs > mine else
+             not any(w.startswith("its text bank ") for w in (r2.get("warnings") or [])))
         shutil.rmtree(pal_mods, ignore_errors=True)
         e["result"] = "GREEN" if ok else "RED: %s" % {k: e.get(k) for k in ("files_changed", "verify", "entries", "entries_bad", "music_mh", "base",
                                                                              "notes", "warnings", "game_code_settings", "inspect", "over_european_disc")}

@@ -36,9 +36,10 @@ std::string GameFolderPath();
 ps2r::app::GameFolder::Resolved LocateFolders(const std::string& config_arg, const std::string& mc_dir_arg, const std::string& mods_dir_arg,
                                               ps2r::app::GameFolder::Inputs* inputs = nullptr);
 
-// The ps2r.ini keys the port reads itself (the game folder's folders, the mods' order, the PS Vita's tick lock) and the
-// engine's schema may not know: the engine's strict parse refuses a whole file for one unknown key, so the lines of
-// these keys are blanked in the returned text (the line numbers stay the file's) and the folders' values handed back.
+// The ps2r.ini keys the port reads itself (the game folder's folders, the mods' order, the PS Vita's tick lock, the disc
+// speed) and the engine's schema may not know: the engine's strict parse refuses a whole file for one unknown key, so the
+// lines of these keys are blanked in the returned text (the line numbers stay the file's) and the folders' values handed
+// back.
 // A key the engine's schema knows (a later engine may add them) stays in the text.
 std::string TakePortKeys(const std::string& text, std::string* memcards, std::string* mods);
 

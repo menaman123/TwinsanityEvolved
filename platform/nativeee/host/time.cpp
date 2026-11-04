@@ -289,9 +289,12 @@ void Clock::Boundary() {
         if (ms > i.tick_max_ms) i.tick_max_ms = ms;
         if (ms > 1000.0 / double(i.field_hz ? i.field_hz : 60u)) i.ticks_over_field++;
         // the load census (te_load_census.h): the tick's load work folded into the window; its text for the slow-tick line
-        const bool log_tick = i.tick_log_ms >= 0 && ms > i.tick_log_ms;
+        // (TE_TICK_LOG_CAP: past the window's cap only the long ones are printed, the others counted for the window line)
+        const bool slow = i.tick_log_ms >= 0 && ms > i.tick_log_ms;
+        const bool log_tick = slow && load::TickLineWanted(ms, i.tick_log_ms);
         std::string load_work;
         load::EndTick(boundaries_ + 1, ms, log_tick ? &load_work : nullptr);
+        if (slow && !log_tick) load::NoteTickNotLogged(boundaries_ + 1, ms, prof::TickTopSection(boundaries_ + 1));
         if (log_tick) {
             // The phases: the draws' submission and the present/hand-over on this thread, the window's event pump, the rest;
             // then what the tick did that a load costs (textures, model parts, native meshes, the waits that come with them)

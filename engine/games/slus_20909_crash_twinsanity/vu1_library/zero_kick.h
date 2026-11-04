@@ -34,6 +34,10 @@ public:
     // place over `memory` (== in.data, mutable: the caller's own image), with no working copy, no MAC / STATUS chain and no
     // data writes (out.has_regs false). The kicks are RunCCont's byte for byte.
     static bool RunCContKicks(const Vu1HleInput& in, uint8_t* memory, Vu1HleOutput& out);
+    // RunCContKicks' kicks byte for byte without the FMAC clamps where they cannot change a value: every float the program
+    // reads finite and the FPU flushing denormals to zero (set for the call on an ARM processor). Otherwise the clamped form
+    // runs. `unclamped` (optional): whether the unclamped form ran.
+    static bool RunCContKicksUnclamped(const Vu1HleInput& in, uint8_t* memory, Vu1HleOutput& out, bool* unclamped = nullptr);
     static bool RunACont(const Vu1HleInput& in, Vu1HleOutput& out);
     // RunACont's kicks alone, in place over `memory` (== in.data), as RunCContKicks
     static bool RunAContKicks(const Vu1HleInput& in, uint8_t* memory, Vu1HleOutput& out);

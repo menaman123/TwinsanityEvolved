@@ -1,0 +1,694 @@
+{
+ "note": "tools/judges/cutscene_skip_judge.py: every scripted cutscene of the disc (tools/cutscenes/census.py's 51 sites), each by its site and the graphs only it runs (the table the game's cross button consults is made of them: tools/cutscenes/skip_table.py), its status and, for those a test reaches, how: the hub card warped to its chunk (tools/warp_save.py, LOAD GAME with the Academy entry pad log's presses), the cutscene starting at the level's entry or by TE_CUTSCENE_START (its director given its trigger's behaviour), or a pad log / plan that walks to it. Leg W watches it, leg S presses CROSS two boundaries into it (tools/cutscenes/verify.py). status pass: the skip leaves the watched state (compare.py's verdict over `span` boundaries of play, under `rule` -- places within its floor, what two watchings in play mode differ by, or a class's bound -- and the cutscene's `allow`: what of an agent runs on the world's time, with the reason; everything else exact), plays on, and is shorter than watching; status refused: the cross button does nothing there (`why` says why in plain words) and the skipped leg plays exactly as the watched one. `mechanism` is the skip's own result where refused (the judge's --mechanism legs measure it with TE_CUTSCENE_SKIP_ALL=1); a refused cutscene without a chunk is not reached by any test yet.",
+ "span": 300,
+ "every": 7,
+ "most_skip_boundaries": 240,
+ "rule": {
+  "floor": 0.035,
+  "floor_why": "two watchings of one cutscene in play mode on the Vita (its frames of two and three fields) end the player 0 to 0.0334 apart where the cutscene puts him down: the cavern's and the Dingodile fight's 0, the totem's 0.0002, the treasure room's 0.0018, Dingodile's hut's 0.0270, the emu farmer's 0.0334; further where he ends falling, on a slope or on a board (the falling totem 0.17, Rockslide 0.20, the shed 1.18: a cutscene that needs it carries its own allowance); on the desktop 0, no frame there losing a field",
+  "classes": [
+   {
+    "class": "a wumpa fruit's bob",
+    "names": ["REDWUMPA"],
+    "within": 0.25,
+    "why": "a wumpa fruit bobs 0.25 up and down on the world's time (175 bobbing fruits measured over the watched legs) and an unseen one keeps the phase of its last update"
+   }
+  ]
+ },
+ "cutscenes": [
+  {
+   "name": "01_training",
+   "label": "the training on N. Sanity Island's high path",
+   "site": 3483,
+   "graphs": [3483, 3491, 3497, 3795, 3799, 3927, 3963, 4769, 4771, 4817],
+   "unverified": [3497, 3795, 3927, 3963, 4769, 4771, 4817],
+   "chunk": "levels\\earth\\hub\\highpath",
+   "stop": 3900,
+   "status": "pass"
+  },
+  {
+   "name": "02_miniboss_start",
+   "label": "the Mecha-Bandicoot fight's start",
+   "site": 3503,
+   "graphs": [3503, 3507, 3519, 3525, 3527, 3529, 3531, 3533, 3591, 3593, 3595, 4807],
+   "unverified": [3507, 3519, 3525, 3527, 3529, 3531, 3533, 3591, 3593, 3595],
+   "chunk": "levels\\earth\\hub\\bossarea",
+   "story": 1,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/02_3503.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "03_bear",
+   "label": "the bear on Totem Hokum's bear ride",
+   "site": 3613,
+   "graphs": [3613, 3827, 6397],
+   "unverified": [3827],
+   "chunk": "levels\\earth\\docamok\\docamok3",
+   "stop": 3500,
+   "status": "pass"
+  },
+  {
+   "name": "04_cavern",
+   "label": "the cavern director's cutscenes (Cavern Catastrophe)",
+   "site": 3629,
+   "graphs": [3629, 3631, 3633, 3657, 3743, 4033, 6167, 6169],
+   "unverified": [3633, 3657, 3743, 4033, 6169],
+   "chunk": "levels\\earth\\cavern\\cavbridg",
+   "stop": 3700,
+   "status": "pass"
+  },
+  {
+   "name": "05_earth_hub",
+   "label": "the emu farmer on N. Sanity Island",
+   "site": 3953,
+   "graphs": [3953, 3955, 3957, 3965, 3989],
+   "unverified": [3957, 3989],
+   "chunk": "levels\\earth\\hub\\hubd",
+   "story": 3,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/05_3953.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "06_tiki_mon",
+   "label": "the Tikimon (N. Sanity Island)",
+   "site": 4015,
+   "graphs": [4015, 4017, 4019, 4021, 4023, 4025, 4027, 4095, 4097, 4099, 4101, 4103, 4105, 4107, 4131],
+   "unverified": [4019, 4021, 4023, 4025, 4027, 4095, 4097, 4099, 4101, 4103, 4105, 4107, 4131],
+   "chunk": "levels\\earth\\hub\\hubd",
+   "start": "act_TIKI_MON:87@2960",
+   "stop": 4100,
+   "status": "pass"
+  },
+  {
+   "name": "07_totem",
+   "label": "the totem on Totem Hokum's bear ride",
+   "site": 4191,
+   "graphs": [4191, 4193, 4241, 4255, 4267, 4369, 4777, 4953],
+   "unverified": [4241, 4255, 4267, 4369, 4953],
+   "chunk": "levels\\earth\\docamok\\docamok1",
+   "story": 4,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/07_4191.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "08_henchmania_bossfight",
+   "label": "the Henchmania boss fight's start",
+   "site": 4509,
+   "graphs": [4509, 4553, 4555, 4561, 4617, 4623, 5005],
+   "unverified": [4553, 4555, 4617, 4623, 5005],
+   "chunk": "levels\\ice\\highseas\\gpa12",
+   "stop": 5100,
+   "status": "pass"
+  },
+  {
+   "name": "09_battleship_switchthrower",
+   "label": "the battleship's switch thrower (High Seas Hi-Jinks)",
+   "site": 4549,
+   "graphs": [4549, 4717],
+   "chunk": "levels\\ice\\highseas\\gpa04",
+   "start": "act_BATTLESHIP_NGIN_SWITCHTHROWER:4@2960",
+   "stop": 4200,
+   "status": "pass",
+   "allow": [
+    {
+     "agent": "act_PIRATE_MISSILE70",
+     "what": ["place", "flags", "behaviours"],
+     "why": "a missile of the launch loop the cutscene starts: flying or waiting in its delay as the world's time has it (the loop runs on after the cutscene; its far missiles are updated every 2^n frames)"
+    }
+   ]
+  },
+  {
+   "name": "10_dingodile_intro",
+   "label": "the Dingodile fight's intro",
+   "site": 5229,
+   "graphs": [5227, 5229, 5231, 5233, 5489, 5837],
+   "unverified": [5231, 5233, 5489, 5837],
+   "chunk": "levels\\school\\boiler\\boiler_6",
+   "start": "act_DINGODILE_BOSSFIGHT_DIRECTOR:87@2960",
+   "stop": 5100,
+   "status": "pass"
+  },
+  {
+   "name": "11_psychotron",
+   "label": "the Psychetron (Iceberg Lab)",
+   "site": 5385,
+   "graphs": [5383, 5385, 6729],
+   "unverified": [6729],
+   "chunk": "levels\\ice\\hub\\psycho",
+   "story": 6,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/11_5385.padlog",
+   "stop": 6800,
+   "status": "pass"
+  },
+  {
+   "name": "12_ukafight",
+   "label": "the Uka Uka fight's start",
+   "site": 5451,
+   "graphs": [5451, 5459],
+   "chunk": "levels\\ice\\iceclimb\\ukafight",
+   "start": "act_UKAFIGHT_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 6600,
+   "status": "pass"
+  },
+  {
+   "name": "13_icelab",
+   "label": "the Iceberg Lab's exit",
+   "site": 5495,
+   "graphs": [5495, 5497, 6697],
+   "unverified": [6697],
+   "chunk": "levels\\ice\\hub\\labext",
+   "start": "act_ICELAB_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 5500,
+   "status": "pass",
+   "allow": [
+    {
+     "agent": "NITROCRATE",
+     "what": ["place", "flags", "behaviours"],
+     "why": "a nitro crate hops on its own timer while it is updated (its airborne bit 0x1000, 0.35 up: 7 to 13 hops in the watched leg); an unseen one keeps its load state until it is next updated: the watched cutscene's camera showed these, the skip does not"
+    }
+   ]
+  },
+  {
+   "name": "14_sentry",
+   "label": "the sentry's look (Totem Hokum, Classroom Chaos)",
+   "site": 5511,
+   "graphs": [5511],
+   "chunk": "levels\\school\\crash\\crgpa02",
+   "stop": 3500,
+   "status": "pass"
+  },
+  {
+   "name": "15_slipslide",
+   "label": "Slip Slide Icecapades' start",
+   "site": 5549,
+   "graphs": [5549, 5551, 6771],
+   "unverified": [6771],
+   "chunk": "levels\\ice\\slipslide\\l05start",
+   "start": "act_SLIPSLIDE_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 5400,
+   "status": "pass"
+  },
+  {
+   "name": "16_school_hub",
+   "label": "the Academy of Evil's hub",
+   "site": 5605,
+   "graphs": [5605, 5607],
+   "chunk": "levels\\school\\sch_hub\\sch_hub",
+   "start": "act_SCHOOL_HUB_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 4400,
+   "status": "pass"
+  },
+  {
+   "name": "17_dorm_room",
+   "label": "the dorm room (the Academy)",
+   "site": 5655,
+   "graphs": [5655, 5657],
+   "chunk": "levels\\school\\cortex\\cogpa08",
+   "stop": 5200,
+   "status": "pass",
+   "allow": [
+    {
+     "agent": "music:1",
+     "what": ["tracks"],
+     "settles": 200,
+     "why": "the cutscene's speech track, which a skip does not play: watched, it plays on 182 boundaries after the cutscene ends"
+    }
+   ]
+  },
+  {
+   "name": "18_ukauka_defeated",
+   "label": "Uka Uka's defeat",
+   "site": 5697,
+   "graphs": [5697, 5709, 6709],
+   "unverified": [6709],
+   "chunk": "levels\\ice\\iceclimb\\ukafight",
+   "start": "act_UKAUKA_DEFEATED_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 5700,
+   "status": "pass"
+  },
+  {
+   "name": "19_final_boss",
+   "label": "the Evil Twins fight's start",
+   "site": 5721,
+   "graphs": [5721, 5723, 5725, 5727, 5729, 5731, 5733, 5737, 5739, 5741, 5743, 5745, 5747, 5749, 5753, 5755, 5827, 6027, 6199, 6515, 6517, 6519, 6521, 6895],
+   "unverified": [5725, 5727, 5729, 5731, 5733, 5737, 5739, 5741, 5743, 5745, 5747, 5749, 5753, 5755, 5827, 6027, 6199, 6517, 6519, 6521, 6895],
+   "chunk": "levels\\altearth\\core\\throne",
+   "story": 23,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/19_5721.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "20_henchmania",
+   "label": "Henchmania's start (High Seas Hi-Jinks)",
+   "site": 5783,
+   "graphs": [5783, 5785, 6813],
+   "unverified": [6813],
+   "chunk": "levels\\ice\\highseas\\gpa11",
+   "start": "act_HENCHMANIA_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 4500,
+   "status": "pass"
+  },
+  {
+   "name": "21_frontend_flyby",
+   "label": "the title's flyby over the beach",
+   "site": 5793,
+   "graphs": [5793, 5807],
+   "chunk": "levels\\earth\\hub\\beach",
+   "start": "act_FRONTEND_FLYBY_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 4600,
+   "status": "refused",
+   "why": "the title screen's own flyby: it plays behind the title (the game stays in its title, never in a cutscene) and play never starts it",
+   "mechanism": "differs"
+  },
+  {
+   "name": "22_totem_tied",
+   "label": "the tied totem (Totem Hokum)",
+   "site": 5901,
+   "graphs": [5901, 5903],
+   "chunk": "levels\\earth\\totem\\l03stock",
+   "start": "act_TOTEM_TIED_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 4100,
+   "status": "pass"
+  },
+  {
+   "name": "23_totem_falling",
+   "label": "the falling totem (Totem Hokum)",
+   "site": 5913,
+   "graphs": [5913, 5915],
+   "chunk": "levels\\earth\\totem\\l03stock",
+   "start": "act_TOTEM_FALLING_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 4700,
+   "status": "pass",
+   "allow": [
+    {
+     "agent": "act_EARTH_WORM",
+     "what": ["behaviours"],
+     "why": "the earth worm's loop runs at the world's pace and the cutscene never tells it anything: two watchings on the Vita leave it at another point of its loop"
+    },
+    {
+     "agent": "act_GLOBAL_BUTTERFLY",
+     "what": ["place", "behaviours"],
+     "why": "a butterfly wanders on the world's time"
+    },
+    {
+     "agent": "*",
+     "chunk": "l03chase",
+     "what": ["presence"],
+     "settles": 140,
+     "why": "the next area, l03chase, streams in from the disc during the watched seconds: after a skip its instances arrive at +119"
+    }
+   ]
+  },
+  {
+   "name": "24_rockslide",
+   "label": "Rockslide Rumble's start",
+   "site": 5975,
+   "graphs": [5975, 5977],
+   "chunk": "levels\\altearth\\rockslid\\l10start",
+   "start": "act_ALTEARTH_ROCKSLIDE_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 5200,
+   "status": "pass",
+   "allow": [
+    {
+     "agent": "music:1",
+     "what": ["tracks"],
+     "settles": 40,
+     "why": "the cutscene's speech track, which a skip does not play: watched, it plays on 23 boundaries after the cutscene ends"
+    },
+    {
+     "agent": "player",
+     "what": ["place"],
+     "from": 7,
+     "why": "the level starts on a slide: from the end of the cutscene the slide carries the player and its physics amplifies any difference (two watchings on the Vita end him 0.20 apart, and 12.8 apart 14 boundaries later); at the end he is within the floor"
+    }
+   ]
+  },
+  {
+   "name": "25_walrus",
+   "label": "the walrus (High Seas Hi-Jinks)",
+   "site": 6021,
+   "graphs": [6021, 6023, 6803],
+   "unverified": [6803],
+   "chunk": "levels\\ice\\highseas\\gpa10",
+   "stop": 4000,
+   "status": "pass"
+  },
+  {
+   "name": "26_lab_psychetron_room",
+   "label": "the Psychetron room after Madame Amberly",
+   "site": 6077,
+   "graphs": [6077, 6079],
+   "chunk": "levels\\ice\\hub\\psycho",
+   "story": 19,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/26_6077.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "27_slipslide_shed",
+   "label": "the shed (Slip Slide Icecapades)",
+   "site": 6093,
+   "graphs": [6093, 6095, 6097],
+   "unverified": [6097],
+   "chunk": "levels\\ice\\slipslide\\l05chasa",
+   "story": 9,
+   "character": "crash",
+   "second": "cortex",
+   "pairing": 2,
+   "padlog": "fixtures/padlogs/cutscenes/27_6093.padlog",
+   "test": "teleport 178.0000 58.0000 -2.0000@2742",
+   "span": 520,
+   "stop": 3700,
+   "status": "pass",
+   "allow": [
+    {
+     "agent": "player",
+     "what": ["place"],
+     "from": 7,
+     "why": "from the end of the cutscene the player rides the board down the chase's slope, and its slide amplifies any difference (two watchings on the Vita end him 1.18 apart, and 4.6 apart 200 boundaries later)"
+    },
+    {
+     "agent": "player",
+     "what": ["place"],
+     "within": 1.2,
+     "why": "the cutscene releases the player's board on the chase's slope, and where it has slid to at the end follows the frame times: two watchings on the Vita end him 1.18 apart"
+    },
+    {
+     "agent": "music:1",
+     "what": ["tracks"],
+     "settles": 500,
+     "why": "the cutscene's speech track, which a skip does not play: watched, it plays on 483 boundaries after the cutscene ends (490 on the Vita)"
+    }
+   ]
+  },
+  {
+   "name": "28_classroom_chaos",
+   "label": "Classroom Chaos' start",
+   "site": 6107,
+   "graphs": [6107, 6109],
+   "chunk": "levels\\school\\crash\\crgpa08",
+   "start": "act_CLASSROOM_CHAOS_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 4100,
+   "status": "pass"
+  },
+  {
+   "name": "29_angry_skunk",
+   "label": "the angry skunk (the high path)",
+   "site": 6147,
+   "graphs": [6147, 6151],
+   "chunk": "levels\\earth\\hub\\highpath",
+   "start": "act_ANGRY_SKUNK_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 4700,
+   "status": "pass"
+  },
+  {
+   "name": "30_bell_tower",
+   "label": "the bell tower (Madame Amberly)",
+   "site": 6185,
+   "graphs": [6185, 6187],
+   "chunk": "levels\\school\\madame\\amberly",
+   "story": 18,
+   "character": "cortex",
+   "padlog": "fixtures/padlogs/cutscenes/30_6185.padlog",
+   "start": "act_BELL_TOWER_CUTSCENE_DIRECTOR:87@3100",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "31_beehive",
+   "label": "the beehive on Totem Hokum's bear ride",
+   "site": 6223,
+   "graphs": [6221, 6223],
+   "chunk": "levels\\earth\\docamok\\docamok2",
+   "story": 4,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/31_6223.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "32_play_fight",
+   "label": "Madame Amberly's play fight",
+   "site": 6233,
+   "graphs": [2421, 2423, 2461, 2587, 2619, 2661, 6233],
+   "unverified": [2421, 2423, 2461, 2619, 2661],
+   "chunk": "levels\\school\\madame\\amberly",
+   "story": 18,
+   "character": "cortex",
+   "padlog": "fixtures/padlogs/cutscenes/32_6233.padlog",
+   "test": "teleport 1.2999 -4.0000 -3.2999@2703;teleport 28.0400 -2.5999 -10.7600@4046;counter 1 0 act_MAMBERLY@5036;message act_MAMBERLY 8@5069;counter 1 0 act_MAMBERLY@6873;message act_MAMBERLY 8@6906;counter 1 0 act_MAMBERLY@9142;message act_MAMBERLY 8@9175",
+   "nth": 2,
+   "stop": 10000,
+   "status": "pass"
+  },
+  {
+   "name": "33_icelab_interior",
+   "label": "inside the Iceberg Lab",
+   "site": 6237,
+   "graphs": [6237, 6239, 6749],
+   "unverified": [6749],
+   "chunk": "levels\\ice\\hub\\labint",
+   "start": "act_ICELABINT_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 6100,
+   "status": "pass"
+  },
+  {
+   "name": "34_dingodile_hut",
+   "label": "Dingodile's hut (High Seas Hi-Jinks)",
+   "site": 6257,
+   "graphs": [6257, 6259, 6779],
+   "unverified": [6779],
+   "chunk": "levels\\ice\\highseas\\gpa01",
+   "story": 10,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/34_6257.padlog",
+   "start": "act_SLIPSLIDE_DINGODILE_HUT_CUTSCENE:87@3100",
+   "stop": 7200,
+   "status": "pass",
+   "allow": [
+    {
+     "agent": "act_EXITVEHICLESWITCH",
+     "what": ["behaviours"],
+     "settles": 240,
+     "why": "the exit vehicle switch's own behaviour, started at the level's load, ends on its own timer 8.6 s later: during the watched cutscene (b3501), 224 boundaries after the skip (b3498)"
+    },
+    {
+     "agent": "act_CORTEX5",
+     "what": ["place"],
+     "why": "Cortex falls through l05brawl's missing floor (this test's start skips the vehicle's arrival), during the watched cutscene as after the skip; where his fall stops is where the game stops updating him, an unseen agent updated every 2^n frames: it follows the frames run"
+    }
+   ]
+  },
+  {
+   "name": "35_cortex_pipe",
+   "label": "Cortex in the pipe (Boiler Room Doom)",
+   "site": 6309,
+   "graphs": [6309, 6311],
+   "chunk": "levels\\school\\boiler\\boiler_1",
+   "story": 15,
+   "character": "crash",
+   "second": "cortex",
+   "padlog": "fixtures/padlogs/cutscenes/35_6309.padlog",
+   "stop": 5400,
+   "status": "pass"
+  },
+  {
+   "name": "36_treasure_room",
+   "label": "the treasure room",
+   "site": 6327,
+   "graphs": [6327, 6329],
+   "chunk": "levels\\altearth\\core\\treasure",
+   "start": "act_TREASUREROOM_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 4800,
+   "status": "pass"
+  },
+  {
+   "name": "37_psychetron_room_h02j",
+   "label": "the Psychetron room's second visit",
+   "site": 6347,
+   "graphs": [6347, 6353],
+   "chunk": "levels\\ice\\hub\\psycho",
+   "story": 12,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/37_6347.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "38_cortex_follow",
+   "label": "the Cortex follow manager (Twinsanity Island)",
+   "site": 6361,
+   "graphs": [6361, 6633],
+   "chunk": "levels\\altearth\\hub\\slipjoin",
+   "story": 21,
+   "character": "crash",
+   "second": "cortex",
+   "padlog": "fixtures/padlogs/cutscenes/38_6361.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "39_beach_aku",
+   "label": "Aku Aku on the beach",
+   "site": 6365,
+   "graphs": [6365, 6367],
+   "chunk": "levels\\earth\\hub\\beach",
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/39_6365.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "40_rooftop",
+   "label": "Rooftop Rampage's start",
+   "site": 6375,
+   "graphs": [6375, 6377, 6395],
+   "unverified": [6377],
+   "chunk": "levels\\school\\rooftop\\roof01",
+   "start": "act_ROOFTOP_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 4200,
+   "status": "pass"
+  },
+  {
+   "name": "41_evilcrash_cuddle",
+   "label": "Evil Crash's cuddle (the lab)",
+   "site": 6419,
+   "graphs": [6419, 6421],
+   "chunk": "levels\\altearth\\lab\\psycho",
+   "stop": 5200,
+   "status": "pass"
+  },
+  {
+   "name": "42_core_intro",
+   "label": "the core's entrance",
+   "site": 6435,
+   "graphs": [6435, 6445],
+   "chunk": "levels\\altearth\\hub\\coreent",
+   "start": "act_ALTEARTH_COREINTRO_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 4700,
+   "status": "pass"
+  },
+  {
+   "name": "43_penguin",
+   "label": "the penguin (Ice Climb)",
+   "site": 6467,
+   "graphs": [6467, 6469, 6705],
+   "unverified": [6705],
+   "chunk": "levels\\ice\\iceclimb\\bergext",
+   "start": "act_ICE_PENGUIN_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 5900,
+   "status": "pass",
+   "allow": [
+    {
+     "agent": "act_CUTSCENE_EXTRA2",
+     "what": ["place"],
+     "why": "the penguin is let go at Cortex's pose, and Cortex's idle look picks its animation at random every frame (RandomCondition): where it lands follows the frames run, not the cutscene"
+    }
+   ]
+  },
+  {
+   "name": "44_buschase",
+   "label": "the bus chase",
+   "site": 6527,
+   "graphs": [6527, 6529],
+   "chunk": "levels\\school\\rooftop\\buschase",
+   "story": 18,
+   "character": "nina",
+   "padlog": "fixtures/padlogs/cutscenes/44_6527.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "45_evilcrash_house",
+   "label": "Evil Crash's house",
+   "site": 6643,
+   "graphs": [6643, 6645],
+   "chunk": "levels\\altearth\\hub\\alta",
+   "story": 20,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/45_6643.padlog",
+   "stop": 7200,
+   "status": "pass"
+  },
+  {
+   "name": "46_party_arena",
+   "label": "the party arena before the Mecha-Bandicoot fight",
+   "site": 6669,
+   "graphs": [6669, 6671],
+   "chunk": "levels\\earth\\hub\\bossarea",
+   "start": "act_PARTY_ARENA_DIRECTOR:87@2960",
+   "stop": 5900,
+   "status": "pass"
+  },
+  {
+   "name": "47_blimp_depart",
+   "label": "the blimp leaving the Iceberg Lab",
+   "site": 6765,
+   "graphs": [6759, 6765],
+   "chunk": "levels\\ice\\hub\\labext",
+   "story": 13,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/47_6765.padlog",
+   "test": "teleport 120.0000 -1.0000 83.1999@2676",
+   "stop": 4200,
+   "status": "refused",
+   "why": "its end hands Crash to the transfer to the airship, which waits for the airship's area to be read from the disc: after a skip the game plays on for those seconds (4.7 s before the airship movie, 0.7 s watched), and keeping the cutscene on through them would only wait out the disc read, which a skip cannot shorten",
+   "mechanism": "differs"
+  },
+  {
+   "name": "48_school_hub_to_ice_hub",
+   "label": "the airship from the Academy to the Iceberg Lab",
+   "site": 6767,
+   "graphs": [6767],
+   "chunk": "levels\\ice\\hub\\labext",
+   "start": "act_CORTEX_AIRSHIP:83@2960",
+   "stop": 4000,
+   "status": "pass"
+  },
+  {
+   "name": "49_crows_nest",
+   "label": "the crow's nest (High Seas Hi-Jinks)",
+   "site": 6799,
+   "graphs": [6799],
+   "chunk": "levels\\ice\\highseas\\gpa09",
+   "story": 10,
+   "character": "crash",
+   "padlog": "fixtures/padlogs/cutscenes/49_6799.padlog",
+   "test": "teleport -34.0000 15.0000 42.0000@2731;message act_NGIN 192 act_BATTLESHIP_NGIN_POST2@2856;message act_NGIN 192 act_BATTLESHIP_NGIN_POST2@2916;message act_NGIN 192 act_BATTLESHIP_NGIN_POST2@2976",
+   "stop": 4800,
+   "status": "pass"
+  },
+  {
+   "name": "50_beach_training",
+   "label": "the training on the beach",
+   "site": 6821,
+   "graphs": [6821, 6823],
+   "chunk": "levels\\earth\\hub\\beach",
+   "start": "act_BEACH_TRAINING_CUTSCENE_DIRECTOR1:87@2960",
+   "stop": 3800,
+   "status": "pass"
+  },
+  {
+   "name": "51_coreent_to_labint",
+   "label": "from the core's entrance to the lab",
+   "site": 6871,
+   "graphs": [6871],
+   "chunk": "levels\\altearth\\hub\\coreent",
+   "start": "act_COREENT_TO_LABINT_CUTSCENE_DIRECTOR:87@2960",
+   "stop": 3600,
+   "status": "refused",
+   "why": "it is the level transition: the next area is read from the disc during it (2.8 of its 4.2 s), which a skip cannot shorten",
+   "mechanism": "given back"
+  }
+ ]
+}

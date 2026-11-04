@@ -830,6 +830,40 @@ int main() {
         CHECK(mi::Inspect(nc.string(), iso, {}, &in, &why) && in.notes.size() == 2 && in.importable);
     }
 
+    // ---- a North American text bank with more texts than this disc's banks of its folder: the warning names the numbers
+    {
+        auto lines = [](int n, char c) {
+            std::string s;
+            for (int i = 0; i < n; ++i) s += std::string(8, c) + "\r\n";
+            return s;
+        };
+        // this disc: Language\AgentLab\English.txt with 4 texts, Spanish.txt with 3 (the smaller decides), the CR LF / LF CR /
+        // lone LF rule of the game's ReadTextFile
+        const std::vector<Entry> banks = {{"Language\\AgentLab\\English.txt", Text(lines(3, 'e') + "eeee\n")},
+                                          {"Language\\AgentLab\\Spanish.txt", Text("ssss\n\rssss\rssss\r\n")},
+                                          {"Language\\Code\\English.txt", Text(lines(5, 'c'))}};
+        const std::string iso4 = te_test::WriteTestIso({{"", "SYSTEM.CNF", cnf}, {"", "SLES_525.68", Text("program")},
+                                                        {"CRASH6", "CRASH.BH", MakeBh(banks)}, {"CRASH6", "CRASH.BD", MakeBd(banks)}});
+        CHECK(!iso4.empty());
+        const fs::path tc = root / "text_crate";
+        WriteText(tc / "ModCrateInfo.txt", "Name=Text Crate\r\nAuthor=Tester\r\nVersion=v1\r\nGame=CrashTS\r\n");
+        WriteText(tc / "layer1" / "Language" / "AgentLab" / "American.txt", lines(6, 'a'));   // 6 texts: 3..5 are not on this disc
+        WriteText(tc / "layer1" / "Language" / "Code" / "American.txt", lines(5, 'a'));       // as many as this disc's: no warning
+        std::string why;
+        mi::Inspection in;
+        CHECK(mi::Inspect(tc.string(), iso4, {}, &in, &why) && in.importable);
+        size_t text_warnings = 0;
+        bool named = false;
+        for (const std::string& w : in.warnings) {
+            if (w.compare(0, 14, "its text bank ") == 0) ++text_warnings;
+            named |= w == "its text bank Language\\AgentLab\\American.txt (an entry of the North American disc's archive) has 6 texts, "
+                          "this disc's Language\\AgentLab banks 3: its texts 3 to 5 are not on this disc";
+        }
+        CHECK(named && text_warnings == 1);
+        std::error_code ec4;
+        fs::remove(iso4, ec4);
+    }
+
     // ---- cancelled: nothing left behind
     {
         const fs::path empty = root / "mods_cancel";

@@ -6,6 +6,7 @@
 //
 //   per tick      the slow-tick line (TE_TICK_LOG_MS=x: `[twinsanityevolved] tick: boundary N took Y ms (...)`) carries the tick's
 //                 load work after its phases: ` load: textures 12 decoded (840 KB, 55.1 ms) made 12 (waited 3.2 ms); ...`
+//                 (TE_TICK_LOG_CAP=n: at most n such lines a window, then the long ones only -- TickLineWanted below)
 //   per window    `[te.load] presents A-B: ...` with the pace census (TE_GFX_SUMMARY_EVERY): the window's ticks over
 //                 TE_LOAD_LONG_MS (default 25) -- how many, the longest, what they did -- and the window's whole load work
 //                 ("texture decode: N textures, M KB, T ms"), the drawing thread's texture / mesh creation time, vitaGL's
@@ -70,6 +71,21 @@ void EndTick(uint64_t boundary, double tick_ms, std::string* line);
 
 // The window's line (and the window started over); empty when nothing was noted
 std::string WindowLine(uint64_t from, uint64_t to);
+
+// THE SLOW-TICK LINES' CAP (the clock's tick log, TE_TICK_LOG_MS=x). TE_TICK_LOG_CAP=n prints at most n slow-tick lines a
+// census window; past them only a tick of twice x or more, or the window's longest tick so far -- the window's longest
+// is always printed, and so is every tick a log at twice the threshold would have had. The ticks not printed are counted
+// with the top section of their profile, and TickLogLine says so at the window's end. Unset or 0: every slow tick printed.
+// TickLineWanted: the game thread, for a tick over x -- whether its line is printed (always true without the cap)
+bool TickLineWanted(double tick_ms, double log_ms);
+// a slow tick not printed: its boundary, its milliseconds, the top section of its profile (null when none was sampled)
+void NoteTickNotLogged(uint64_t boundary, double tick_ms, const char* top);
+// The same for the drawing thread's slow-picture lines (TE_PICTURE_LOG_MS=x, graphics.cpp): TE_PICTURE_LOG_CAP=n
+bool PictureLineWanted(double picture_ms, double log_ms);
+void NotePictureNotLogged(uint64_t present, double picture_ms, const char* top);
+// `[te.load] presents A-B: slow ticks not logged ...` and `... slow pictures not logged ...` (and the windows started over);
+// empty without the caps or when every slow tick and picture of the window was printed
+std::string TickLogLine(uint64_t from, uint64_t to);
 
 // Monotonic nanoseconds (the census clock)
 int64_t NowNs();

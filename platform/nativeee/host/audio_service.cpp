@@ -969,7 +969,22 @@ bool AudioService::IsMusicReady(int32_t channel) {
     IssueMusicRead(parent, lock);
     RefreshMusicPhase(parent);
     const Phase phase = streams_[parent].phase;
+    if (phase == Phase::Prepared && !streams_[parent].data.count && !MusicReadyWaitsForCard()) {
+        // In play a window read off the game thread is ready once its first blocks are off the card (the PS2's: once the IOP
+        // had preloaded them): until then the game's music player asks again next frame instead of PlayMusic waiting for them
+        if (const MusicRead* job = music_jobs_[parent].get(); job && !job->landing.Ready()) {
+            ++music_card_put_offs_;
+            return false;
+        }
+    }
     return phase == Phase::Prepared || phase == Phase::Playing;
+}
+
+bool AudioService::MusicReadyWaitsForCard() {
+    // the deterministic profile: ready at once, PlayMusic waiting for the first blocks (the same answers whatever the card);
+    // TE_STREAM_WAIT_CARD=1 the same in play (the A/B)
+    static const bool knob = std::getenv("TE_STREAM_WAIT_CARD") && std::getenv("TE_STREAM_WAIT_CARD")[0] == '1';
+    return te::GetSettings().deterministic || knob;
 }
 
 int32_t AudioService::PlayMusic(int32_t channel) {

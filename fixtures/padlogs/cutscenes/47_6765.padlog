@@ -1,0 +1,25 @@
+# cutscene reach fixture (tools/cutscenes/reach.py): site 6765 COM_BLIMP_DEPART_CUTSCENE_DIRECTOR_ACTIVATED
+# card: tools/warp_save.py --card <hub card> --chunk 'levels\ice\hub\labext' --place 0xFFFF --character crash --story 13
+# chunk=levels\ice\hub\labext
+# story=13
+# character=crash
+# test=teleport 120.0000 -1.0000 83.1999@2676  (TE_TEST_ACTIONS: what the recording's plan asked of the game; the legs set it)
+# reach: TEST MEANS at story 13 (the lab's lifts and platforms open past story 12): the player teleported onto the hovering ice platform at the airship's dock (120.0, -2.8, 83.2), 97 units above the chunk's start (the route up the lab's lifts is not authored); he lands inside the dock's first-entry volume (126.6, -1.9, 87.6), which tells the director 87; the cutscene hands over to the HUB2_TO_HUB3 director (a movie, then the airship chunk)
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# text-language=english
+# speech-language=english
+1 0000 128 128 128 128  # NONE
+1271 0008 128 128 128 128  # START
+1276 0000 128 128 128 128  # NONE
+1354 0040 128 128 128 128  # DOWN
+1357 0000 128 128 128 128  # NONE
+1404 4000 128 128 128 128  # CROSS
+1409 0000 128 128 128 128  # NONE
+1804 0040 128 128 128 128  # DOWN
+1807 0000 128 128 128 128  # NONE
+1904 4000 128 128 128 128  # CROSS
+1907 0000 128 128 128 128  # NONE
+2626 4000 128 128 128 128  # CROSS
+2629 0000 128 128 128 128  # NONE
+2681 0000 128 128 128 128  # NONE
+# end at boundary 4200

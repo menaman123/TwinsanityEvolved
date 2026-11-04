@@ -88,6 +88,7 @@ extern "C" size_t vglMemFree(int type);
 #include "engine/platform/ps2e/present_pacer.h"
 #include "engine/platform/host/platform.h"
 #include "engine/render/backends/gl/gl_census.h"
+#include "engine/render/backends/gl/gl_gpu_lifetime.h"
 #include "engine/render/backends/gl/gl_fill_census.h"
 #if defined(__vita__)
 #include "engine/render/backends/gl/gl_vertex_stream.h"   // (the vertex copies' census)
@@ -110,7 +111,17 @@ extern "C" size_t vglMemFree(int type);
 #include "te_tick_lock.h"
 #include "vita_gpu_census.h"
 
-namespace te::gfx { void RegisterStateSection(); }
+namespace te::gfx {
+void RegisterStateSection();
+uint32_t g_texture_epoch = 0;
+uint32_t g_pool_epoch = 0;
+bool g_seam_lean = true, g_seam_lean_read = false;
+void ReadSeamLean() {
+    g_seam_lean_read = true;
+    const char* v = std::getenv("TE_VITA_SEAM_LEAN");
+    g_seam_lean = !(v && v[0] == '0');
+}
+}  // namespace te::gfx
 
 namespace {
 
@@ -160,6 +171,24 @@ long EnvLong(const char* name, long fallback) {
     return v && *v ? std::atol(v) : fallback;
 }
 
+#if defined(__vita__)
+// THE INSTANCE BLOCKS' STREAM (graphics_internal.h NewBlock / RecordCompactParts): a picture's blocks in fixed chunks of
+// kChunk -- a record names its block by address, so a chunk never moves while a picture uses it; the chunks are kept from
+// picture to picture (the blocks' box, range and lights were set when their chunk was made and are never written again:
+// the whole frame, the whole mesh, none). Travels with the buckets at the hand-over, like their records.
+struct BlockStream {
+    static constexpr size_t kChunk = 128;   // 128 x 192 bytes = 24 KB
+    struct alignas(32) Chunk {
+        ps2e_draw_mesh_params blocks[kChunk];
+    };
+    std::vector<std::unique_ptr<Chunk>> chunks;
+    size_t chunk = 0;                         // the chunk `next` points into (while `next` is set)
+    ps2e_draw_mesh_params* next = nullptr;    // the picture's next block and its chunk's end (equal: the next chunk first;
+    ps2e_draw_mesh_params* end = nullptr;     // null: none taken yet)
+    size_t Used() const { return next ? chunk * kChunk + size_t(next - chunks[chunk]->blocks) : 0; }
+};
+#endif
+
 struct Gfx {
     ps2e_draw* dev = nullptr;
     ps2e_draw_presentation presentation{};   // the display settings, set before or after the device exists
@@ -191,6 +220,22 @@ struct Gfx {
         // others' TrimStorage returns at once): the sweep read a line of EVERY record of the frame set (~1000 a hub picture,
         // a miss each: 0.3-0.6 ms a tick on the device) where ~1 in 5 holds vertices. Travels with `draws`.
         std::vector<uint32_t> holds;
+        // The records' EXPANSION MARKERS (ExpandBucket): per record, the state pool entry and its generation whose expansion
+        // its lines 1, 7 and 8-11 hold (the state, the joints and tag, the box and the whole range ExpandCompact writes) --
+        // 0 when not known. The drawing thread sets it when it expands a compact record; every other writer of a record
+        // (OpenDraw, RecordMeshInPlace, RecordSkinMesh, ReserveDeferred: the game thread) clears it; RecordMeshCompact writes
+        // none of those lines, so a compact record of the same entry in a marked slot is whole as it stands. Travels with
+        // `draws` (the vector may be shorter: a record past its end is not known).
+        std::vector<uint64_t> expanded_as;
+        uint32_t copy_draws = 0;   // the records of [0, used) taking a screen copy (OpenDraw / CloseDraw count them)
+        // THE PICTURE'S DRAW FACTS (graphics_internal.h PictureFacts; ExpandBucket with TE_GFX_VITA_GATHER): one per entry of
+        // the order as built, `perm` mapping the order's entries to them (the draw order permutes both). The drawing side's
+        // own (they stay with the frame slot); valid while `facts_made` (cleared with `ordered`).
+        std::vector<te::gfx::DrawFact> facts;
+        std::vector<te::gfx::DrawTuple> tuples;
+        std::vector<te::gfx::DrawRow> rows;
+        std::vector<uint32_t> perm;
+        bool facts_made = false;
 #endif
     };
     Bucket buckets[TE_GFX_BUCKET_COUNT];
@@ -198,12 +243,19 @@ struct Gfx {
     // buckets at the hand-over (their addresses are what the placeholders and the workers hold)
     std::vector<std::unique_ptr<DeferredBuild>> deferred;
     size_t deferred_used = 0;
+#if defined(__vita__)
+    BlockStream blocks;   // the picture's instance blocks (the compact parts' parameters): travel with the buckets
+#endif
     std::unordered_map<uint32_t, uint32_t> textures;   // GameTexture guest address -> ps2e_draw texture
-    // the last lookups of `textures`, direct-mapped by address (the game thread's; every change of an entry drops its
-    // slot): a material read finds its texture without the map's division (software on the Vita's CPU)
-    static constexpr uint32_t kTextureSlots = 256;
-    uint32_t texture_keys[kTextureSlots] = {};
-    uint32_t texture_values[kTextureSlots] = {};
+    // the last lookups of `textures`, two-way set-associative by address (the game thread's; every change of an entry
+    // drops it): a material read finds its texture without the map's division (software on the Vita's CPU). (A direct-
+    // mapped 256 indexed by the address's bits 4-11 alone let the rooftop's far view walk the map on every eighth material
+    // hit.) Each set: the way last used first, a key and its value side by side
+    static constexpr uint32_t kTextureSets = 512;
+    struct TextureSlot {
+        uint32_t key = 0, value = 0;
+    };
+    TextureSlot texture_slots[2 * kTextureSets] = {};
     // The texture resources as the game handed them (header + upload packet): what a save state carries so a loaded
     // process can decode them again (the game frees the packet's disk-manager block after the upload, as the PS2 did).
     struct TextureSource { te_gfx_texture_header header; std::vector<uint8_t> packet; };
@@ -228,6 +280,9 @@ struct Gfx {
         Bucket buckets[TE_GFX_BUCKET_COUNT];
         std::vector<std::unique_ptr<DeferredBuild>> deferred;
         size_t deferred_used = 0;
+#if defined(__vita__)
+        BlockStream blocks;   // (the records' instance blocks: they travel with the records)
+#endif
         bool send = false;
         int screen_w = 0, screen_h = 0;
         uint64_t harness_key = 0;                 // the boundary this present precedes (te_harness.h's key)
@@ -296,6 +351,9 @@ struct Gfx {
         int arrival_count = 0;
         int64_t delay_ns = 0;
         double delay_ms_max = 0;
+        // the next picture's start on the drawing thread when it waited for the GPU's room first (the PS Vita's low-latency
+        // hand-over; 0: none) -- the slow-picture line's wait (SlowPictureLine)
+        int64_t picture_from_ns = 0;
         ~RenderThread() {
             { std::lock_guard<std::mutex> lock(mutex); stop = true; }
             wake.notify_all();
@@ -393,6 +451,7 @@ bool LowLatency() {
 
 void ExpandDeferred(Gfx::Bucket* buckets, std::vector<std::unique_ptr<DeferredBuild>>& deferred, size_t& used);
 void ExpandBucket(Gfx::Bucket* buckets, int b);
+constexpr int kSkyGeometry = -2;   // (SkyStopByState: the draw's extent decides)
 
 #if defined(__vita__)
 // ---- the Vita's compact mesh records (graphics_internal.h RecordMeshCompact) and their state pool ------------------------
@@ -429,6 +488,9 @@ struct StatePool {
     // (32-bit: a 64-bit atomic's relaxed load / store is an LDREXD / STREXD loop on ARMv7; the census takes differences)
     std::atomic<uint32_t> expanded{0};
     uint32_t last_expanded = 0;
+    // compact records whose slot held their expansion already (ExpandBucket's markers: not expanded again)
+    std::atomic<uint32_t> kept{0};
+    uint32_t last_kept = 0;
     std::atomic<uint64_t> compared{0}, differ{0};
     void Read() {
         read = true;
@@ -480,6 +542,7 @@ struct StatePool {
             if (!id) return 0;
             Unlink(id);
             remade++;
+            te::gfx::g_pool_epoch++;   // (an entry's generation changes below: the (id, generation) pairs kept may no longer hold)
         }
         std::memcpy(&states[id - 1], &s, sizeof s);
         hashes[id - 1] = h;
@@ -518,9 +581,9 @@ void ExpandCompact(Draw& d) {
     if (g_pool.check) {
         const ps2r::ps2e::InterpTag untagged{};
         const bool same = std::memcmp(&d.state, &s, sizeof s) == 0 && d.skin_joints == 0 && d.tag.id == untagged.id &&
-                          d.tag.part == untagged.part && d.tag.kind == untagged.kind && d.mesh_params.box[0] == -1e9f &&
-                          d.mesh_params.box[1] == -1e9f && d.mesh_params.box[2] == 1e9f && d.mesh_params.box[3] == 1e9f &&
-                          d.mesh_params.first == 0 && d.mesh_params.count == 0;
+                          d.tag.part == untagged.part && d.tag.kind == untagged.kind && d.own_params.box[0] == -1e9f &&
+                          d.own_params.box[1] == -1e9f && d.own_params.box[2] == 1e9f && d.own_params.box[3] == 1e9f &&
+                          d.own_params.first == 0 && d.own_params.count == 0;
         g_pool.compared.fetch_add(1, std::memory_order_relaxed);
         if (!same) {
             const uint64_t n = g_pool.differ.fetch_add(1, std::memory_order_relaxed);
@@ -529,8 +592,8 @@ void ExpandCompact(Draw& d) {
                              "skin_joints %u, tag %llx/%u/%u, box %g %g %g %g, first %d count %d\n",
                              d.mesh, unsigned(d.pool), std::memcmp(&d.state, &s, sizeof s) == 0 ? "same" : "DIFFERENT",
                              unsigned(d.skin_joints), (unsigned long long)d.tag.id, unsigned(d.tag.part), unsigned(d.tag.kind),
-                             double(d.mesh_params.box[0]), double(d.mesh_params.box[1]), double(d.mesh_params.box[2]),
-                             double(d.mesh_params.box[3]), d.mesh_params.first, d.mesh_params.count);
+                             double(d.own_params.box[0]), double(d.own_params.box[1]), double(d.own_params.box[2]),
+                             double(d.own_params.box[3]), d.own_params.first, d.own_params.count);
         }
         return;
     }
@@ -557,7 +620,7 @@ void ExpandCompact(Draw& d) {
     if (d.skin_joints) d.skin_joints = 0;
     const ps2r::ps2e::InterpTag untagged{};
     if (d.tag.id != untagged.id || d.tag.part != untagged.part || d.tag.kind != untagged.kind) d.tag = untagged;
-    ps2e_draw_mesh_params& p = d.mesh_params;
+    ps2e_draw_mesh_params& p = d.own_params;
     {
         // (the box's bits compared as integers: a float compare is a VCMP + VMRS flag transfer each on the Cortex-A9)
         static const uint32_t kWhole[4] = {0xCE6E6B28u, 0xCE6E6B28u, 0x4E6E6B28u, 0x4E6E6B28u};   // -1e9f, -1e9f, 1e9f, 1e9f
@@ -577,24 +640,38 @@ inline void MarkHolds(Gfx::Bucket& b, size_t i) {
     if (w >= b.holds.size()) b.holds.resize(w + 1, 0u);
     b.holds[w] |= 1u << (i & 31);
 }
+// Gfx::Bucket::expanded_as: record i is (re)written other than as a compact record -- its expansion not known any more
+inline void ForgetExpansion(Gfx::Bucket& b, size_t i) {
+    if (i < b.expanded_as.size()) b.expanded_as[i] = 0;
+}
 #endif
 
 // g.textures through its slots (0: none)
-uint32_t TextureSlot(uint32_t address) { return (address >> 4) & (Gfx::kTextureSlots - 1); }
+Gfx::TextureSlot* TextureSetOf(uint32_t address) {
+    return &g.texture_slots[2 * (((address >> 4) ^ (address >> 13)) & (Gfx::kTextureSets - 1))];
+}
 uint32_t TextureHandleOf(uint32_t address) {
-    const uint32_t slot = TextureSlot(address);
-    if (address && g.texture_keys[slot] == address) return g.texture_values[slot];
+    Gfx::TextureSlot* set = TextureSetOf(address);
+    if (address && set[0].key == address) return set[0].value;
+    if (address && set[1].key == address) {
+        std::swap(set[0], set[1]);
+        return set[0].value;
+    }
     auto it = g.textures.find(address);
     if (it == g.textures.end()) return 0;
-    g.texture_keys[slot] = address;
-    g.texture_values[slot] = it->second;
+    set[1] = set[0];
+    set[0] = Gfx::TextureSlot{address, it->second};
     return it->second;
 }
 void TextureChanged(uint32_t address) {
-    if (g.texture_keys[TextureSlot(address)] == address) g.texture_keys[TextureSlot(address)] = 0;
+    Gfx::TextureSlot* set = TextureSetOf(address);
+    for (int way = 0; way < 2; ++way)
+        if (set[way].key == address) set[way] = Gfx::TextureSlot{};
+    te::gfx::g_texture_epoch++;
 }
 void TexturesCleared() {
-    for (uint32_t i = 0; i < Gfx::kTextureSlots; ++i) g.texture_keys[i] = 0;
+    for (Gfx::TextureSlot& slot : g.texture_slots) slot = Gfx::TextureSlot{};
+    te::gfx::g_texture_epoch++;
 }
 
 void ReadOptions();
@@ -641,6 +718,9 @@ void Summary() {
                  g.rt.enabled ? "on" : "off", (unsigned long long)g.rt.frames, (unsigned long long)g.rt.waits, g.rt.wait_ms,
                  g.rt.wait_max_ms);
     std::fprintf(stderr, "[te.gfx] %s\n", PresentCensus().c_str());
+    // the GPU-lifetime audit's window (TE_GFX_GPU_LIFETIME=1; nothing when off)
+    const std::string lifetime = ps2r::render::gpu_lifetime::WindowLine();
+    if (!lifetime.empty()) std::fprintf(stderr, "%s\n", lifetime.c_str());
 }
 
 // ---- the device --------------------------------------------------------------------------------------------------------
@@ -783,6 +863,28 @@ void NoteLatency(int64_t content_ns, int64_t now_ns) {
     if (ms > rt.latency_max_ms) rt.latency_max_ms = ms;
 }
 
+// TE_PICTURE_LOG_MS=x: a picture whose time on the drawing thread -- its wait for the GPU's room before it was taken (the
+// PS Vita's low-latency hand-over), its drawing and its present call -- passed x ms, logged with the drawing thread's
+// sections sampled over that time (TE_PROF): the drawing side of a hitch, which the game thread's slow-tick line
+// (TE_TICK_LOG_MS) does not see when the game never waits for the drawing thread. TE_PICTURE_LOG_CAP=n: at most n such lines
+// a census window, by the slow ticks' rule (te_load_census.h)
+void SlowPictureLine(uint64_t present, double gpu_wait_ms, double work_ms, double present_ms) {
+    static const double log_ms = [] {
+        const char* v = std::getenv("TE_PICTURE_LOG_MS");
+        return v ? std::atof(v) : -1.0;
+    }();
+    const double ms = gpu_wait_ms + work_ms + present_ms;
+    if (log_ms < 0 || ms <= log_ms) return;
+    if (!te::load::PictureLineWanted(ms, log_ms)) {
+        te::load::NotePictureNotLogged(present, ms, te::prof::PictureTopSection(present));
+        return;
+    }
+    const std::string sections = te::prof::PictureSections(present, 4);
+    std::fprintf(stderr, "[te.gfx] picture: present %llu took %.1f ms on the drawing thread (waiting for the GPU %.1f, drawing %.1f, "
+                         "the present call %.1f)%s%s\n",
+                 (unsigned long long)present, ms, gpu_wait_ms, work_ms, present_ms, sections.empty() ? "" : " prof: ", sections.c_str());
+}
+
 void RenderLoop() {
     auto& rt = g.rt;
     // with the game thread: interactive work (the engine's per-platform arm: macOS QoS, Windows SetThreadPriority)
@@ -847,6 +949,10 @@ void RenderLoop() {
                     wait_from = 0;
                 } else if (in_flight > g.ll_ahead) {
                     if (!wait_from) wait_from = now;
+                    if (!rt.picture_from_ns) {
+                        rt.picture_from_ns = now;   // (the wait is the next picture's: its sections from here)
+                        te::prof::PictureBegin(g.presents.load(std::memory_order_relaxed) + 1);
+                    }
                     lock.unlock();
                     {
                         TE_PROF_SCOPE("rt wait for the GPU (low-latency hand-over)");
@@ -881,8 +987,11 @@ void RenderLoop() {
                 rt.delay_ns = std::clamp<int64_t>(p90, 0, period);
                 rt.delay_ms_max = std::max(rt.delay_ms_max, double(rt.delay_ns) / 1e6);
             }
+            const int64_t waited_from_ns = rt.picture_from_ns;   // (its wait for the GPU's room, when it had one)
+            rt.picture_from_ns = 0;
             lock.unlock();
             const int64_t taken_ns = NowNs();   // the drawing thread's work on this picture from here (the tick lock's census)
+            if (!waited_from_ns) te::prof::PictureBegin(g.presents.load(std::memory_order_relaxed) + 1);
 #if defined(__vita__)
             // TE_VITA_DIAG_RENDER_DELAY_US (a test knob): a slow drawing thread / GPU, to see the hand-over's behaviour
             // (TE_VITA_DIAG_RENDER_DELAY_FROM / _TO: only over those presents)
@@ -913,7 +1022,10 @@ void RenderLoop() {
                 {
                     // the tick lock's census and its rise test: the picture's work here, the present call itself excluded
                     const double busy = double(NowNs() - taken_ns) / 1e6;
-                    te::tick_lock::NotePictureDrawn(std::max(0.0, busy - g.last_present_call_ms), g.last_present_call_ms);
+                    const double work = std::max(0.0, busy - g.last_present_call_ms);
+                    te::tick_lock::NotePictureDrawn(work, g.last_present_call_ms);
+                    SlowPictureLine(g.presents.load(std::memory_order_relaxed),
+                                    waited_from_ns ? double(taken_ns - waited_from_ns) / 1e6 : 0.0, work, g.last_present_call_ms);
                 }
             } else {
                 RenderFrame(f, CaptureArmed() ? Show::Capture : Show::None);   // 30: the picture between two shown ones
@@ -1357,6 +1469,8 @@ Draw& OpenDraw(uint32_t bucket, const ps2e_draw_state& state, bool copy_frame = 
     Draw& d = b.draws[b.used++];
 #if defined(__vita__)
     MarkHolds(b, b.used - 1);   // (its producer appends vertices: ClearBuckets trims it)
+    ForgetExpansion(b, b.used - 1);
+    if (copy_frame) b.copy_draws++;   // (a copy draw never joins the draw before it: a record of its own)
 #endif
     d.state = state;
     d.verts.clear();
@@ -1366,6 +1480,7 @@ Draw& OpenDraw(uint32_t bucket, const ps2e_draw_state& state, bool copy_frame = 
     d.pending = nullptr;
     d.mesh = 0;
     d.pool = 0;
+    d.params = nullptr;
     d.tag = g.tag;
     d.has_transform = g.tag_has_transform;
     if (g.tag_has_transform) d.transform = g.tag_transform;
@@ -1393,6 +1508,9 @@ void CloseDraw(uint32_t bucket) {
     Draw& d = b.draws[b.used - 1];
     d.verts.resize(d.verts.size() / 3 * 3);   // whole triangles only (a merged tail must not shift the next draw's)
     if (d.verts.size() < 3) {
+#if defined(__vita__)
+        if (d.copy_frame) b.copy_draws--;
+#endif
         d.verts.clear();
         b.used--;
         g.draws--;
@@ -1823,6 +1941,9 @@ DeferredBuild& ReserveDeferred(uint32_t bucket, const ps2e_draw_state& state) {
     auto& b = g.buckets[bucket < TE_GFX_BUCKET_COUNT ? bucket : TE_GFX_BUCKET_UI];
     if (b.used == b.draws.size()) b.draws.emplace_back();
     Draw& d = b.draws[b.used++];
+#if defined(__vita__)
+    ForgetExpansion(b, b.used - 1);
+#endif
     d.state = state;
     d.verts.clear();
     d.ext = nullptr;
@@ -1830,6 +1951,7 @@ DeferredBuild& ReserveDeferred(uint32_t bucket, const ps2e_draw_state& state) {
     d.copy_frame = false;
     d.mesh = 0;
     d.pool = 0;
+    d.params = nullptr;
     d.tag = g.tag;
     d.has_transform = g.tag_has_transform;
     if (g.tag_has_transform) d.transform = g.tag_transform;
@@ -2167,6 +2289,170 @@ bool JoinsDraw(const Draw* last, const ps2e_draw_state& state, bool copy_frame, 
                        (tag.kind != ps2r::ps2e::InterpKind::Vertices || last->tag.part == tag.part));
 }
 constexpr uint32_t kExpandedBit = 0x80000000u;   // an order entry naming one of the bucket's `expanded` records
+// THE PICTURE'S DRAW FACTS (graphics_internal.h PictureFacts): TE_GFX_VITA_GATHER unset / 1 = made in the expansion's pass
+// and read by the draw order, the sky's wait, the plan and the instanced submit; 0 = every phase reads the records as
+// before (the device's A/B: each fact is the answer its phase computes, so the draws handed to the GPU are the same). Off
+// with TE_GFX_VITA_ATEST_FOLD (the draw order then changes states after the facts).
+// abN: on and off alternating every N presents (on first) -- the device's A/B of the drawing thread's cost in one run
+struct GatherMode {
+    int mode = -1;   // -1 unread, 0 off, 1 on, 2 abN
+    long ab = 0;
+};
+GatherMode g_gather;
+void ReadGather() {
+    const char* v = std::getenv("TE_GFX_VITA_GATHER");
+    g_gather.mode = v && v[0] == 'a' && v[1] == 'b' ? 2 : v && v[0] == '0' ? 0 : 1;
+    if (g_gather.mode == 2) g_gather.ab = std::max(1L, std::atol(v + 2));
+    if (te::gfx::ZOrderFoldOn()) g_gather.mode = 0;
+    static const char* const kNames[3] = {"off (every phase reads the records)",
+                                          "on -- each draw's facts (the draw order's class, the plan's kind / state answers / "
+                                          "tuple, the sky's answer, an instanced group's row) made once in the expansion's pass "
+                                          "over the records; a compact record whose expansion it already holds not expanded again",
+                                          "A/B: on and off alternating"};
+    std::fprintf(stderr, "[te.gfx.vita] the picture's draw facts (TE_GFX_VITA_GATHER=%s%ld): %s\n", g_gather.mode == 2 ? "ab" : "",
+                 g_gather.mode == 2 ? g_gather.ab : long(g_gather.mode), kNames[g_gather.mode]);
+}
+// this picture's arm (the presents so far stand still while a picture is expanded and submitted)
+bool GatherOn() {
+    if (__builtin_expect(g_gather.mode < 0, 0)) ReadGather();
+    if (g_gather.mode != 2) return g_gather.mode == 1;
+    return ((g.presents.load(std::memory_order_relaxed) / uint64_t(g_gather.ab)) & 1u) == 0;
+}
+// the markers are kept whenever the facts may be made (in the A/B's off arm too: a marker must name what its slot holds)
+bool GatherEver() {
+    if (__builtin_expect(g_gather.mode < 0, 0)) ReadGather();
+    return g_gather.mode != 0;
+}
+// The sky's answers in the facts are asked in the expansion while the sky waits -- known when the loop reaches the sky's
+// bucket (SubmitBuckets), after the synchronous path has expanded every bucket: the picture before decides (g_sky_hint;
+// an answer not asked is asked when the sky's wait reaches its draw, so the hint only decides where the work is done) --
+// from bucket 1 on, until the run of the first draw it stops at ends: the draw order moves draws only within a run, so no
+// later draw can come before that one (g_sky_scan: 0 asking, 1 that run's draws, 2 done)
+bool g_sky_hint = false;
+int g_sky_scan = 0;
+int SkyStopWith(const Draw& d, const ps2e_draw_state& s, bool compact);
+int SkyStopOf(const Draw& d);
+int SkyStopByState(const ps2e_draw_state& s, bool copy_frame);
+int SkyStopByGeometry(const Draw& d, bool compact);
+// A compact record's state answers, made once a state pool entry (its bytes stand while its generation does): the plan's
+// state bits, the draw order's class of an unlit mesh draw of it, the sky's answer by its state -- what MakeFact asks of
+// every compact record of the entry (a compact record is a mesh draw without a screen copy or joints)
+struct PoolAnswers {
+    uint32_t gen = 0;   // the entry's generation they were made for (0: none -- a made entry's is at least 1)
+    uint8_t sbits = 0, zclass = 0;
+    int8_t sky = 0;
+};
+PoolAnswers g_pool_answers[StatePool::kEntries + 1];
+// one entry's facts (graphics_internal.h FactKindOf / FactZClass / FactStateBits / FactTuple), from its record: a compact
+// record's state its pool entry's, its joints none, its range the whole mesh -- what its expansion holds
+void MakeFact(Gfx::Bucket& bk, size_t k, const Draw& d, bool ask_sky) {
+    const bool compact = d.pool != 0;
+    // (a mesh draw's parameters: its own, or its instance block -- the later phases read them through the row)
+    const ps2e_draw_mesh_params* const params = d.mesh ? &d.Params() : nullptr;
+    const int lit = params ? params->lit : 0;
+    te::gfx::DrawFact& f = bk.facts[k];
+    uint8_t sb, zclass;
+    int sky_state;
+    if (compact) {
+        PoolAnswers& a = g_pool_answers[d.pool];
+        const uint32_t gen = g_pool.generations[d.pool - 1];
+        if (a.gen != gen) {
+            const ps2e_draw_state& s = g_pool.states[d.pool - 1];
+            a.gen = gen;
+            a.sbits = te::gfx::FactStateBits(s);
+            a.zclass = te::gfx::FactZClass(d, s, 0u, 0);
+            a.sky = int8_t(SkyStopByState(s, false));
+        }
+        sb = a.sbits;
+        zclass = lit ? 0 : a.zclass;   // (a lit mesh keeps its place: FactZClass)
+        sky_state = a.sky;
+    } else {
+        const uint32_t skin = d.mesh ? d.skin_joints : 0u;
+        sb = te::gfx::FactStateBits(d.state);
+        zclass = te::gfx::FactZClass(d, d.state, skin, lit);
+        sky_state = SkyStopByState(d.state, d.copy_frame);
+    }
+    const uint32_t skin = compact || !d.mesh ? 0u : d.skin_joints;
+    f.sbits = uint8_t(sb | (d.copy_frame ? te::gfx::kFactCopyDraw : 0) | (compact ? te::gfx::kFactCompact : 0));
+    f.kind = te::gfx::FactKindOf(d, sb, skin, lit);
+    f.zclass = zclass;
+    f.sky = te::gfx::kSkyNotAsked;
+    if (g_sky_scan == 1 && f.zclass == 0) g_sky_scan = 2;   // the first stop's run ended
+    if (ask_sky && g_sky_scan < 2) {
+        f.sky = int8_t(sky_state != kSkyGeometry ? sky_state : SkyStopByGeometry(d, compact));
+        if (g_sky_scan == 0 && f.sky >= 0) g_sky_scan = f.zclass == 0 ? 2 : 1;
+    }
+    // its parameters (an instanced group's member's row: its screen matrix in place), and a candidate of an instanced group
+    // (FullPass's cand): its tuple
+    bk.rows[k].p = params;
+    if ((sb & te::gfx::kFactDepthSafe) && !d.copy_frame && f.kind == te::gfx::kFactUnlit && !(sb & te::gfx::kFactAlphaTest))
+        te::gfx::FactTuple(d, *params, compact ? 0 : params->first, compact ? 0 : params->count, bk.tuples[k]);
+}
+// TE_GFX_VITA_FACTS_CHECK=1 (diagnosis): every entry's facts made again the way each phase makes its answer from the record
+// (the record's own state, joints and range -- whole after the expansion) and compared: the state bits, the kind, the class,
+// a sky answer asked, a candidate's tuple and row -- the differences counted (the census) and the first ones listed
+struct FactsCheck {
+    bool on = false, read = false;
+    uint64_t entries = 0, differ = 0, sky = 0, rows = 0, tuples = 0;
+};
+FactsCheck g_fcheck;
+bool FactsCheckOn() {
+    if (!g_fcheck.read) {
+        g_fcheck.read = true;
+        const char* v = std::getenv("TE_GFX_VITA_FACTS_CHECK");
+        g_fcheck.on = v && v[0] == '1';
+        if (g_fcheck.on) std::fprintf(stderr, "[te.gfx.vita] facts CHECK on (TE_GFX_VITA_FACTS_CHECK=1): every fact made again from its record\n");
+    }
+    return g_fcheck.on;
+}
+void CheckFacts(Gfx::Bucket& bk, int b) {
+    for (size_t k = 0; k < bk.order.size(); ++k) {
+        const Draw& d = *bk.order[k];
+        const te::gfx::DrawFact& f = bk.facts[k];
+        const uint32_t skin = d.mesh ? d.skin_joints : 0u;
+        const int lit = d.mesh ? d.Params().lit : 0;
+        const uint8_t sb = te::gfx::FactStateBits(d.state);
+        const uint8_t want_sbits = uint8_t(sb | (d.copy_frame ? te::gfx::kFactCopyDraw : 0) | (d.pool ? te::gfx::kFactCompact : 0));
+        const uint8_t want_kind = te::gfx::FactKindOf(d, sb, skin, lit);
+        const uint8_t want_class = te::gfx::FactZClass(d, d.state, skin, lit);
+        g_fcheck.entries++;
+        bool bad = f.sbits != want_sbits || f.kind != want_kind || f.zclass != want_class;
+        if (f.sky != te::gfx::kSkyNotAsked && f.sky != SkyStopOf(d)) {
+            g_fcheck.sky++;
+            bad = true;
+        }
+        const bool cand = (sb & te::gfx::kFactDepthSafe) && !d.copy_frame && want_kind == te::gfx::kFactUnlit && !(sb & te::gfx::kFactAlphaTest);
+        if (cand) {
+            te::gfx::DrawTuple t;
+            te::gfx::FactTuple(d, d.Params(), d.Params().first, d.Params().count, t);
+            if (std::memcmp(&t, &bk.tuples[k], sizeof t) != 0) {
+                g_fcheck.tuples++;
+                bad = true;
+            }
+        }
+        // (the row: the parameters the record draws with, its own or its instance block)
+        if (bk.rows[k].p != (d.mesh ? &d.Params() : nullptr)) {
+            g_fcheck.rows++;
+            bad = true;
+        }
+        if (bad && g_fcheck.differ++ < 16)
+            std::fprintf(stderr, "[te.gfx.vita] facts CHECK: bucket %d entry %u (mesh %u pool %u): sbits %02x/%02x kind %u/%u class %u/%u "
+                         "sky %d/%d (made/the record's)%s\n", b, unsigned(k), d.mesh, unsigned(d.pool), f.sbits, want_sbits, f.kind,
+                         want_kind, f.zclass, want_class, int(f.sky), f.sky != te::gfx::kSkyNotAsked ? SkyStopOf(d) : -99,
+                         cand ? " (a candidate)" : "");
+    }
+}
+std::string FactsCheckLine() {
+    if (!g_fcheck.on) return std::string();
+    static FactsCheck last;
+    char buf[300];
+    std::snprintf(buf, sizeof buf, "[te.gfx.vita] facts CHECK (TE_GFX_VITA_FACTS_CHECK=1): %llu entries made again from their records, "
+                  "%llu differ (sky answers %llu, tuples %llu, rows %llu)\n", (unsigned long long)(g_fcheck.entries - last.entries),
+                  (unsigned long long)(g_fcheck.differ - last.differ), (unsigned long long)(g_fcheck.sky - last.sky),
+                  (unsigned long long)(g_fcheck.tuples - last.tuples), (unsigned long long)(g_fcheck.rows - last.rows));
+    last = g_fcheck;
+    return buf;
+}
 // The Vita: the bucket's draw ORDER (Gfx::Bucket::order), the same draw list the replay through the joining rule gives
 // (the desktop's form below moves the records themselves) -- the draws before the first placeholder as they are, then the
 // tail: each recorded draw in its place (or joined to the draw before it), each placeholder's segments as draws of the
@@ -2186,35 +2472,108 @@ void ExpandBucket(Gfx::Bucket* buckets, int b) {
         return kExpandedBit | uint32_t(bk.expanded_used++);
     };
     size_t head = bk.used;
-    // (the compact mesh records made whole first -- their pooled state and constant fields, ExpandCompact -- in the same
-    // sweep that finds the first placeholder: every reader from here on sees whole records)
-    // the lines that sweep reads of a record -- its header, its skin / tag line, its mesh parameters' box /
-    // first / count, its state's four -- asked for two records ahead (PLD: no effect on any value): a record's header is
-    // written on the game thread's core, the rest were last touched pictures ago
-    const auto prefetch = [](const Draw* r) {
-        const char* const s = reinterpret_cast<const char*>(&r->state);
-        __builtin_prefetch(r);
-        __builtin_prefetch(&r->skin_joints);
-        __builtin_prefetch(r->mesh_params.box);
-        __builtin_prefetch(s);
-        __builtin_prefetch(s + 32);
-        __builtin_prefetch(s + 64);
-        __builtin_prefetch(s + 96);
-    };
-    if (bk.used > 0) prefetch(&bk.draws[0]);
-    if (bk.used > 1) prefetch(&bk.draws[1]);
-    for (size_t i = 0; i < bk.used; ++i) {
-        if (i + 2 < bk.used) prefetch(&bk.draws[i + 2]);
-        Draw& d = bk.draws[i];
-        if (d.pool) ExpandCompact(d);
-        if (d.pending && head == bk.used) head = i;
+    const bool gather = GatherOn();
+    if (gather) {
+        // (the facts of the draws before the first placeholder are made in the sweep below, record i = order entry i)
+        if (b == TE_GFX_BUCKET_SKY) g_sky_scan = 0;   // (a picture's buckets are expanded in order, the sky's first)
+        bk.facts.resize(bk.used);
+        bk.tuples.resize(bk.used);
+        bk.rows.resize(bk.used);
     }
+    const bool ask_sky = gather && g_sky_hint && b != TE_GFX_BUCKET_SKY;
+    // (the markers: not with TE_GFX_COMPACT_CHECK, whose expansion compares every compact record with its whole write)
+    const bool marks = GatherEver() && !g_pool.check;
+    if (marks && bk.expanded_as.size() < bk.used) bk.expanded_as.resize(bk.used, 0);
+    uint32_t kept = 0, copies = 0;
+    if (!gather) {
+        // (the compact mesh records made whole first -- their pooled state and constant fields, ExpandCompact -- in the same
+        // sweep that finds the first placeholder: every reader from here on sees whole records)
+        // the lines that sweep reads of a record -- its header, its skin / tag line, its mesh parameters' box /
+        // first / count, its state's four -- asked for two records ahead (PLD: no effect on any value): a record's header is
+        // written on the game thread's core, the rest were last touched pictures ago
+        const auto prefetch = [](const Draw* r) {
+            const char* const s = reinterpret_cast<const char*>(&r->state);
+            __builtin_prefetch(r);
+            __builtin_prefetch(&r->skin_joints);
+            __builtin_prefetch(r->own_params.box);
+            __builtin_prefetch(s);
+            __builtin_prefetch(s + 32);
+            __builtin_prefetch(s + 64);
+            __builtin_prefetch(s + 96);
+        };
+        if (bk.used > 0) prefetch(&bk.draws[0]);
+        if (bk.used > 1) prefetch(&bk.draws[1]);
+        for (size_t i = 0; i < bk.used; ++i) {
+            if (i + 2 < bk.used) prefetch(&bk.draws[i + 2]);
+            Draw& d = bk.draws[i];
+            if (d.pool) {
+                ExpandCompact(d);
+                if (marks) bk.expanded_as[i] = (uint64_t(g_pool.generations[d.pool - 1]) << 32) | d.pool;   // (the A/B's off arm)
+            }
+            if (d.pending && head == bk.used) head = i;
+        }
+    } else {
+        // ONE PASS over the records: each compact record made whole unless its slot holds that expansion already (its
+        // marker: the same pool entry and generation -- then its lines 1, 7 and 8-11 are not read), the facts of the draws
+        // before the first placeholder, the copy draws counted (the record-time count checked). The lines it reads: the
+        // header (line 0) four records ahead, then -- two ahead, once the header says which -- the matrix and the shift
+        // (the parameters' first three lines: the record's lines 2-4, or its instance block's, which the instance's other
+        // parts share) and, for a record to expand or not compact, its joints line, the box line and the state's four
+        const auto pf_header = [](const Draw* r) { __builtin_prefetch(r); };
+        const auto pf_rest = [&bk, marks](size_t r) {
+            const Draw* const p = &bk.draws[r];
+            const char* const m = reinterpret_cast<const char*>(p->Params().screen);
+            __builtin_prefetch(m);
+            __builtin_prefetch(m + 32);
+            __builtin_prefetch(m + 64);
+            const bool whole = p->pool && marks && r < bk.expanded_as.size() &&
+                               bk.expanded_as[r] == ((uint64_t(g_pool.generations[p->pool - 1]) << 32) | p->pool);
+            if (!whole) {
+                const char* const s = reinterpret_cast<const char*>(&p->state);
+                __builtin_prefetch(&p->skin_joints);
+                __builtin_prefetch(p->own_params.box);
+                __builtin_prefetch(s);
+                __builtin_prefetch(s + 32);
+                __builtin_prefetch(s + 64);
+                __builtin_prefetch(s + 96);
+            }
+        };
+        for (size_t r = 0; r < 4 && r < bk.used; ++r) pf_header(&bk.draws[r]);
+        for (size_t r = 0; r < 2 && r < bk.used; ++r) pf_rest(r);
+        for (size_t i = 0; i < bk.used; ++i) {
+            if (i + 4 < bk.used) pf_header(&bk.draws[i + 4]);
+            if (i + 2 < bk.used) pf_rest(i + 2);
+            Draw& d = bk.draws[i];
+            if (d.pool) {
+                const uint64_t as = (uint64_t(g_pool.generations[d.pool - 1]) << 32) | d.pool;
+                if (marks && bk.expanded_as[i] == as) {
+                    kept++;
+                } else {
+                    ExpandCompact(d);
+                    if (marks) bk.expanded_as[i] = as;
+                }
+            }
+            copies += d.copy_frame ? 1u : 0u;
+            if (d.pending && head == bk.used) head = i;
+            if (head == bk.used) MakeFact(bk, i, d, ask_sky);
+        }
+        if (copies != bk.copy_draws) {
+            // (a tripwire: SubmitBuckets announced the record-time count before the frame's first draw)
+            static uint32_t said = 0;
+            if (said++ < 4)
+                std::fprintf(stderr, "[te.gfx.vita] bucket %d: %u copy draws in its records, %u counted where they were recorded\n", b,
+                             copies, bk.copy_draws);
+        }
+    }
+    g_pool.kept.store(g_pool.kept.load(std::memory_order_relaxed) + kept, std::memory_order_relaxed);
     idx.resize(head);
     for (size_t i = 0; i < head; ++i) idx[i] = uint32_t(i);
+    bool head_joined = false;   // the last entry before the tail took the tail's vertices (its facts made before that)
     for (size_t i = head; i < bk.used; ++i) {
         Draw& d = bk.draws[i];
         if (!d.pending) {
             if (!d.mesh && !idx.empty() && JoinsDraw(&at(idx.back()), d.state, d.copy_frame, d.tag, interp)) {
+                if (idx.size() == head) head_joined = true;
                 Draw& last = at(idx.back());
                 last.OwnVertices();
                 last.verts.insert(last.verts.end(), d.verts.begin(), d.verts.end());
@@ -2246,7 +2605,8 @@ void ExpandBucket(Gfx::Bucket* buckets, int b) {
                 o.pending = nullptr;
                 o.pool = 0;
                 o.mesh = ms.mesh;
-                o.mesh_params = ms.params;
+                o.own_params = ms.params;
+                o.params = nullptr;
                 o.skin_joints = 0;
                 o.tag = d.tag;
                 o.has_transform = false;
@@ -2257,6 +2617,7 @@ void ExpandBucket(Gfx::Bucket* buckets, int b) {
             const ps2e_draw_vertex* const first = build.verts.data() + vat;
             vat += count;
             if (!idx.empty() && JoinsDraw(&at(idx.back()), state, false, d.tag, interp)) {
+                if (idx.size() == head) head_joined = true;
                 Draw& last = at(idx.back());
                 if (last.ext && count && last.ext + last.ext_count == first) {
                     last.ext_count += count;   // the next segment of the same storage: the view grows
@@ -2277,6 +2638,7 @@ void ExpandBucket(Gfx::Bucket* buckets, int b) {
                 o.pending = nullptr;
                 o.mesh = 0;
                 o.pool = 0;
+                o.params = nullptr;
                 o.tag = d.tag;
                 o.has_transform = d.has_transform;
                 if (d.has_transform) o.transform = d.transform;
@@ -2290,6 +2652,23 @@ void ExpandBucket(Gfx::Bucket* buckets, int b) {
     // (the expanded records are all made: their addresses stand from here on)
     bk.order.resize(idx.size());
     for (size_t k = 0; k < idx.size(); ++k) bk.order[k] = &at(idx[k]);
+    if (gather) {
+        // the tail's entries (from the first placeholder on: its builds' segments, the draws after it as joined) -- their
+        // facts from what the order holds now; the sky's scan goes on through them, and a run does not outlive the bucket
+        const size_t n = idx.size();
+        bk.facts.resize(n);
+        bk.tuples.resize(n);
+        bk.rows.resize(n);
+        for (size_t k = head; k < n; ++k) MakeFact(bk, k, at(idx[k]), ask_sky);
+        if (g_sky_scan == 1) g_sky_scan = 2;
+        // (a vertex draw's sky answer reads its vertices: one that took the tail's is asked when the sky's wait reaches it --
+        // its kind, class and state answers are a vertex draw's of the same state either way)
+        if (head_joined && head > 0) bk.facts[head - 1].sky = te::gfx::kSkyNotAsked;
+        bk.perm.resize(n);
+        for (size_t k = 0; k < n; ++k) bk.perm[k] = uint32_t(k);
+        bk.facts_made = true;
+        if (FactsCheckOn()) CheckFacts(bk, b);
+    }
 }
 #else
 void ExpandBucket(Gfx::Bucket* buckets, int b) {
@@ -2340,7 +2719,8 @@ void ExpandBucket(Gfx::Bucket* buckets, int b) {
                     o.copy_frame = false;
                     o.pending = nullptr;
                     o.mesh = ms.mesh;
-                    o.mesh_params = ms.params;
+                    o.own_params = ms.params;
+                    o.params = nullptr;
                     o.skin_joints = 0;
                     o.tag = d.tag;
                     o.has_transform = false;
@@ -2376,6 +2756,7 @@ void ExpandBucket(Gfx::Bucket* buckets, int b) {
                     o.copy_frame = false;
                     o.pending = nullptr;
                     o.mesh = 0;
+                    o.params = nullptr;
                     o.tag = d.tag;
                     o.has_transform = d.has_transform;
                     if (d.has_transform) o.transform = d.transform;
@@ -2483,6 +2864,8 @@ void ClearBuckets() {
     for (auto& b : g.buckets) {
         if (b.draws.size() > b.used + kSpareDraws) b.draws.resize(b.used + kSpareDraws);
         const size_t n = b.draws.size();
+        if (b.expanded_as.size() > n) b.expanded_as.resize(n);   // (the records past the end are gone: none known)
+        b.copy_draws = 0;
         const size_t words = (n + 31) >> 5;
         if (b.holds.size() != words) b.holds.resize(words, 0u);
         if (n & 31) b.holds[words - 1] &= (1u << (n & 31)) - 1u;   // (the records past the end are gone)
@@ -2510,6 +2893,13 @@ void ClearBuckets() {
         }
         b.used = 0;   // the storage stays
     }
+    {
+        BlockStream& s = g.blocks;
+        const size_t needed = (s.Used() + BlockStream::kChunk - 1) / BlockStream::kChunk;
+        if (s.chunks.size() > needed + 2) s.chunks.resize(needed + 2);
+        s.next = s.end = nullptr;   // (the chunks stay)
+        s.chunk = 0;
+    }
 #else
     for (auto& b : g.buckets) {
         if (b.draws.size() > b.used + kSpareDraws) b.draws.resize(b.used + kSpareDraws);
@@ -2523,6 +2913,7 @@ void ClearBuckets() {
         const bool held = i < g.deferred_used;
         TrimStorage(build.verts, held ? build.verts.size() : 0, spare_bytes);
         TrimStorage(build.segments, held ? build.segments.size() : 0, spare_bytes);
+        TrimStorage(build.input, held ? build.input.size() : 0, spare_bytes);
     }
     g.deferred_used = 0;
 }
@@ -3011,7 +3402,7 @@ void FillCensusBoxOf(const Draw& d, int screen_w, int screen_h) {
     float bx[4] = {0.f, 0.f, -1.f, -1.f};
     ps2r::render::FillCensusArea(-1.0);   // (not known: a mesh's; a vertex draw's below)
     if (d.mesh) {
-        if (d.skin_joints || !ps2e_draw_mesh_screen_box(g.dev, d.mesh, &d.mesh_params, bx)) {
+        if (d.skin_joints || !ps2e_draw_mesh_screen_box(g.dev, d.mesh, &d.Params(), bx)) {
             bx[0] = bx[1] = 0.f;
             bx[2] = bx[3] = -1.f;
         }
@@ -3053,20 +3444,34 @@ void FillCensusBoxOf(const Draw& d, int screen_w, int screen_h) {
 // colour mask) and still does; at a pixel they did not write, the sky's layers composite over the same colour (the frame's
 // clear and the layers before them) as before; the depth the scene reads is the reset's either way (the sky writes none),
 // and every draw after the insertion point sees the frame as it was. Not the shadows' casters (ps2e_draw_set_far_background:
-// as when drawn first with no test). The frame's clear and the reset itself are unchanged. The same holds on the desktop
-// (its depth z / 2^24 keeps every GS z unit: any z of at least kSkyMinZ is above the reset's 0), where at internal scale 4
-// the sky's layers were 16 Mpx of a hub frame's fill, most of it under the scene.
-constexpr float kSkyMinZ = 1024.f;   // GS z: z / 2^31 - 1 is then above -1 in float (the Vita's depth above the reset's 0)
+// as when drawn first with no test). The frame's clear and the reset itself are unchanged. The same holds on the desktop,
+// where at internal scale 4 the sky's layers were 16 Mpx of a hub frame's fill, most of it under the scene.
+// THE THRESHOLD (both platforms map GS z to the window depth z / 2^24 by default, EnsureDevice's depth_bits: z / 2^23 - 1 in
+// the clip space, exact in float for every integer z): the depth stores tell any z >= 1 from the reset's 0 -- 2^-24 is a
+// normal float, the Vita's surface is 32-bit float (vitaGL's DF32M_S8), a 24-bit fixed one has a step per unit. Under
+// TE_GFX_DEPTH_Z32=1 (z / 2^32: z / 2^31 - 1, a float step of 128 units next to -1) a z of 65 or more is above it. 1024
+// holds under both.
+constexpr float kSkyMinZ = 1024.f;   // GS z
 struct SkyMove {
     static constexpr size_t kMaxLayers = 32;
     bool pending = false;
     const Draw* layers[kMaxLayers] = {};   // bucket 0's sky draws in drawing order (the frame's records: alive until it is presented)
     size_t count = 0;
     uint64_t over = 0;               // the scene's draws drawn before the sky this frame
+#if defined(__vita__)
+    // vitaGL's scenes ended (its fence's count) when the first draw the sky waits for was drawn: the frame target's scene in
+    // progress from there to the sky's flush -- a scene ended in between broke it (the sky's argument needs the depth of
+    // the draws it waited for: kept across a break only by TE_GFX_VITA_KEEP_DEPTH=always)
+    bool scene_marked = false;
+    uint32_t scenes_at_first = 0;
+#endif
 };
 struct SkyCensus {
     uint64_t frames = 0, moved = 0, sky_draws = 0, over = 0, no_pattern = 0;
     uint64_t stops[12] = {};         // why the sky was drawn where it was (SkyStop)
+#if defined(__vita__)
+    uint64_t broken = 0, breaks = 0; // the moved frames whose wait a scene end crossed, and those scene ends
+#endif
 };
 SkyCensus g_sky;
 enum SkyStop { kStopEnd, kStopCopy, kStopStencil, kStopNoColour, kStopBlend, kStopDepthTest, kStopNoDepthWrite,
@@ -3099,12 +3504,11 @@ struct LeverSwitch {
 };
 bool SkyLastOn() {
 #if defined(__vita__)
-    static const bool on = [] { const char* v = std::getenv("TE_GFX_VITA_SKY_LAST"); return !(v && v[0] == '0'); }();
-    return on;
+    static LeverSwitch sw{"TE_GFX_VITA_SKY_LAST"};   // 0 off, abN: alternating every N presents (a device A/B in one run)
 #else
     static LeverSwitch sw{"TE_GFX_SKY_LAST"};
-    return sw.On();
 #endif
+    return sw.On();
 }
 // bucket 0's last draw: the full-frame depth reset to the far value (no colour, no test, depth written, every vertex at z
 // 0, two triangles splitting a rectangle that holds the frame along a diagonal, no scissor)
@@ -3139,10 +3543,10 @@ bool SkyLayer(const Draw& d) {
     return !d.mesh && !d.copy_frame && d.VertexCount() >= 3 && s.depth_test == PS2E_DRAW_DEPTH_ALWAYS && !s.depth_write &&
            s.stencil == PS2E_DRAW_STENCIL_OFF;
 }
-// a scene draw the sky may wait for (see above); else the reason it may not
-int SkyStopOf(const Draw& d) {
-    const ps2e_draw_state& s = d.state;
-    if (d.copy_frame) return kStopCopy;
+// a scene draw the sky may wait for (see above); else the reason it may not. By its state and screen copy first
+// (kSkyGeometry: the draw's extent decides)
+int SkyStopByState(const ps2e_draw_state& s, bool copy_frame) {
+    if (copy_frame) return kStopCopy;
     if (s.stencil != PS2E_DRAW_STENCIL_OFF) return kStopStencil;
     if (s.no_colour_write) return kStopNoColour;
     if (s.blend) return kStopBlend;
@@ -3151,18 +3555,22 @@ int SkyStopOf(const Draw& d) {
     if (s.alpha_test && s.alpha_fail != 0) return kStopAlphaFail;
     if (s.dest_alpha_test) return kStopDate;
     if (s.depth_test == PS2E_DRAW_DEPTH_GREATER) return -1;   // a fragment it writes is above the reset's 0 by its test
+    return kSkyGeometry;
+}
+// ... then by its extent: a mesh's bounds through its matrix, a skin's joints, a vertex draw's vertices
+int SkyStopByGeometry(const Draw& d, bool compact) {
     if (d.mesh) {
-        if (d.skin_joints) {
+        if (!compact && d.skin_joints) {
             // a GPU skin: the hull of its joints' images of its bind box (convex weights; a blend part's displacements and
             // a skin whose weights are not convex: not bounded)
             float z_far = 0.f;
             if (d.skin_disp || d.palette.size() < size_t(d.skin_joints) * 12 ||
-                !ps2e_draw_skin_depth_far(g.dev, d.mesh, &d.mesh_params, d.palette.data(), int(d.skin_joints), &z_far))
+                !ps2e_draw_skin_depth_far(g.dev, d.mesh, &d.Params(), d.palette.data(), int(d.skin_joints), &z_far))
                 return kStopSkin;
             return z_far >= kSkyMinZ ? -1 : kStopNearFar;
         }
         // (depth_range's z_far >= kSkyMinZ asked directly -- the same answer without the corners' divisions)
-        const int above = ps2e_draw_mesh_depth_far_above(g.dev, d.mesh, &d.mesh_params, kSkyMinZ);
+        const int above = ps2e_draw_mesh_depth_far_above(g.dev, d.mesh, &d.Params(), kSkyMinZ);
         if (above < 0) return kStopMeshDepth;
         return above ? -1 : kStopNearFar;
     }
@@ -3170,6 +3578,177 @@ int SkyStopOf(const Draw& d) {
     for (size_t k = 0, n = d.VertexCount(); k < n; ++k)
         if (!(v[k].z >= kSkyMinZ)) return kStopNearFar;
     return -1;
+}
+// `s` the draw's state (a compact record's: its pool entry's, the bytes its expansion holds; its joints none)
+int SkyStopWith(const Draw& d, const ps2e_draw_state& s, bool compact) {
+    const int by_state = SkyStopByState(s, d.copy_frame);
+    return by_state != kSkyGeometry ? by_state : SkyStopByGeometry(d, compact);
+}
+int SkyStopOf(const Draw& d) { return SkyStopWith(d, d.state, false); }
+#if defined(__vita__)
+// the sky's answer for order entry k: the picture's facts' when asked (SkyStopOf's own), else asked now
+inline int SkyStopAt(const te::gfx::PictureFacts* facts, Draw* const* list, size_t k) {
+    if (facts) {
+        const int why = facts->facts[facts->perm[k]].sky;
+        if (why != te::gfx::kSkyNotAsked) return why;
+    }
+    return SkyStopOf(*list[k]);
+}
+#endif
+// TE_GFX_SKY_DIAG=A[,B[,S]] (diagnosis): the sky's move in pictures A..B (every S-th; SubmitBuckets' picture numbers), every
+// draw listed ("[te.gfx.sky]") with where it stands to the sky -- L a held layer, R the depth reset, O drawn before the
+// waiting sky, S the draw the sky is drawn right before (and why), A drawn after it, - no sky waiting -- and the facts the
+// sky's answer is made from: the state, the kind (M a mesh, C a compact mesh record, K a GPU skin, V a vertex draw), the
+// depth extent in GS z (a mesh's bounds through its matrix, a skin's joints' far depth, a vertex draw's vertices), the
+// screen box; then one line per picture: how many draws the sky waited for, the smallest far depth among them, where and
+// why it was drawn
+struct SkyDiag {
+    long from = -2, to = -1, step = 1;
+    bool pending = false, moved = false;   // (the picture's replay: the sky waiting / drawn)
+    size_t layers = 0;
+    uint64_t over = 0;
+    float far_min = 1e30f;
+    int far_bucket = -1;
+    long far_index = -1;
+#if defined(__vita__)
+    const te::gfx::BatchPlan* plan = nullptr;   // the bucket's instancing plan while its lines are listed (SkyDiagBucket's caller)
+#endif
+    bool On(bool count_as_picture, long picture) {
+        if (from == -2) {
+            from = -1;
+            if (const char* v = std::getenv("TE_GFX_SKY_DIAG")) {
+                from = std::atol(v);
+                const char* c = std::strchr(v, ',');
+                to = c ? std::atol(c + 1) : from;
+                const char* c2 = c ? std::strchr(c + 1, ',') : nullptr;
+                step = c2 ? std::max(1L, std::atol(c2 + 1)) : 1;
+            }
+        }
+        return count_as_picture && from >= 0 && picture >= from && picture <= to && (picture - from) % step == 0;
+    }
+};
+SkyDiag g_sky_diag;
+void SkyDiagDraw(long picture, int b, size_t i, const Draw& d, const ps2e_draw_state& s, bool compact, char where, int why) {
+    const char kind = d.mesh ? (compact ? 'C' : d.skin_joints ? 'K' : 'M') : 'V';
+    float z_near = 0.f, z_far = 0.f;
+    bool known = false;
+    float bx[4] = {0.f, 0.f, -1.f, -1.f};
+    int above = -2;   // (a mesh's ps2e_draw_mesh_depth_far_above answer at kSkyMinZ)
+    if (d.mesh) {
+        if (kind == 'K') {
+            known = d.palette.size() >= size_t(d.skin_joints) * 12 &&
+                    ps2e_draw_skin_depth_far(g.dev, d.mesh, &d.Params(), d.palette.data(), int(d.skin_joints), &z_far) != 0;
+            z_near = z_far;
+        } else {
+            known = ps2e_draw_mesh_depth_range(g.dev, d.mesh, &d.Params(), &z_near, &z_far) != 0;
+            above = ps2e_draw_mesh_depth_far_above(g.dev, d.mesh, &d.Params(), kSkyMinZ);
+        }
+        if (kind != 'K' && !ps2e_draw_mesh_screen_box(g.dev, d.mesh, &d.Params(), bx)) bx[2] = bx[3] = -1.f;
+    } else if (const size_t n = d.VertexCount()) {
+        const ps2e_draw_vertex* v = d.Vertices();
+        z_far = bx[0] = bx[1] = 1e30f;
+        z_near = bx[2] = bx[3] = -1e30f;
+        for (size_t k = 0; k < n; ++k) {
+            z_far = std::min(z_far, v[k].z);
+            z_near = std::max(z_near, v[k].z);
+            bx[0] = std::min(bx[0], v[k].x);
+            bx[1] = std::min(bx[1], v[k].y);
+            bx[2] = std::max(bx[2], v[k].x);
+            bx[3] = std::max(bx[3], v[k].y);
+        }
+        known = true;
+    }
+    if (where == 'O' && known) {
+        g_sky_diag.over++;
+        if (z_far < g_sky_diag.far_min) {
+            g_sky_diag.far_min = z_far;
+            g_sky_diag.far_bucket = b;
+            g_sky_diag.far_index = long(i);
+        }
+    } else if (where == 'O') {
+        g_sky_diag.over++;
+    }
+    char z[64];
+    if (known) std::snprintf(z, sizeof z, "%.1f..%.1f", double(z_far), double(z_near));
+    else std::snprintf(z, sizeof z, "?");
+    char stop[96] = "";
+    if (where == 'S') std::snprintf(stop, sizeof stop, " (%s)", kSkyStopNames[std::clamp(why, 0, kStopCount - 1)]);
+#if defined(__vita__)
+    // (the Vita: the instancing plan's word for the entry -- the first draw of a group of N drawn as one instanced run,
+    // a draw joined to its group's first, or none -- and a mesh draw's range, whose index count an instance repeats)
+    char grouped[48] = "-";
+    const te::gfx::BatchPlan* const plan = g_sky_diag.plan;
+    if (plan && i < plan->absorbed.size() && i < plan->next.size()) {
+        if (plan->absorbed[i]) {
+            std::snprintf(grouped, sizeof grouped, "joined");
+        } else if (plan->next[i] >= 0) {
+            int n = 1;
+            for (int32_t m = plan->next[i]; m >= 0 && size_t(m) < plan->next.size() && n < 4096; m = plan->next[size_t(m)]) ++n;
+            std::snprintf(grouped, sizeof grouped, "first of %d", n);
+        }
+    }
+    std::fprintf(stderr, "[te.gfx.sky] picture %ld %c%s bucket %d #%lu %c mesh %u tex %u zt %d zw %d blend %d atest %d(m%d ref %d fail %d) "
+                 "date %d stencil %d nocol %d copy %d z %s above %d box (%.0f %.0f)-(%.0f %.0f) verts %lu range %u+%u plan %s\n",
+                 picture, where, stop, b, (unsigned long)i, kind, d.mesh, s.texture, s.depth_test, s.depth_write, s.blend, s.alpha_test,
+                 s.alpha_method, s.alpha_reference, s.alpha_fail, s.dest_alpha_test, s.stencil, s.no_colour_write, d.copy_frame ? 1 : 0,
+                 z, above, double(bx[0]), double(bx[1]), double(bx[2]), double(bx[3]), (unsigned long)d.VertexCount(),
+                 d.mesh ? unsigned(d.Params().first) : 0u, d.mesh ? unsigned(d.Params().count) : 0u, grouped);
+#else
+    std::fprintf(stderr, "[te.gfx.sky] picture %ld %c%s bucket %d #%lu %c mesh %u tex %u zt %d zw %d blend %d atest %d(m%d ref %d fail %d) "
+                 "date %d stencil %d nocol %d copy %d z %s above %d box (%.0f %.0f)-(%.0f %.0f) verts %lu\n",
+                 picture, where, stop, b, (unsigned long)i, kind, d.mesh, s.texture, s.depth_test, s.depth_write, s.blend, s.alpha_test,
+                 s.alpha_method, s.alpha_reference, s.alpha_fail, s.dest_alpha_test, s.stencil, s.no_colour_write, d.copy_frame ? 1 : 0,
+                 z, above, double(bx[0]), double(bx[1]), double(bx[2]), double(bx[3]), (unsigned long)d.VertexCount());
+#endif
+}
+void SkyDiagSummary(long picture, int b, long i, int why, size_t layers) {
+    std::fprintf(stderr, "[te.gfx.sky] picture %ld: the sky's %lu layers drawn before bucket %d #%ld (%s) after %llu scene draws; "
+                 "their smallest far depth GS z %.1f (bucket %d #%ld); kSkyMinZ %.0f\n",
+                 picture, (unsigned long)layers, b, i, kSkyStopNames[std::clamp(why, 0, kStopCount - 1)],
+                 (unsigned long long)g_sky_diag.over, double(g_sky_diag.far_min), g_sky_diag.far_bucket, g_sky_diag.far_index,
+                 double(kSkyMinZ));
+    g_sky_diag.over = 0;
+    g_sky_diag.far_min = 1e30f;
+    g_sky_diag.far_bucket = -1;
+    g_sky_diag.far_index = -1;
+}
+// order entry i's line: its state the one it is drawn with (a compact record's: its pool entry's, as the drawing loop reads it)
+void SkyDiagAt(long picture, int b, size_t i, const Draw& d, const te::gfx::PictureFacts* facts, char where, int why) {
+#if defined(__vita__)
+    const bool compact = facts && (facts->facts[facts->perm[i]].sbits & te::gfx::kFactCompact);
+    SkyDiagDraw(picture, b, i, d, compact ? g_pool.states[d.pool - 1] : d.state, compact || d.pool != 0, where, why);
+#else
+    (void)facts;
+    SkyDiagDraw(picture, b, i, d, d.state, false, where, why);
+#endif
+}
+// a bucket's lines once its draws are submitted, from the order and the facts the drawing loop drew from: the sky's answers
+// asked again draw by draw as the loop asks them (the first answer >= 0 is the draw the sky was drawn before)
+void SkyDiagBucket(long picture, int b, Draw* const* list, size_t count, const te::gfx::PictureFacts* facts) {
+    for (size_t i = 0; i < count; ++i) {
+        const Draw& d = *list[i];
+        if (!g_sky_diag.pending) {
+            SkyDiagAt(picture, b, i, d, facts, g_sky_diag.moved ? 'A' : '-', -1);
+            continue;
+        }
+        if (b == TE_GFX_BUCKET_SKY) {
+            SkyDiagAt(picture, b, i, d, facts, i < g_sky_diag.layers ? 'L' : 'R', -1);
+            continue;
+        }
+#if defined(__vita__)
+        const int why = SkyStopAt(facts, list, i);
+#else
+        const int why = SkyStopOf(d);
+#endif
+        if (why < 0) {
+            SkyDiagAt(picture, b, i, d, facts, 'O', -1);
+            continue;
+        }
+        SkyDiagAt(picture, b, i, d, facts, 'S', why);
+        SkyDiagSummary(picture, b, long(i), why, g_sky_diag.layers);
+        g_sky_diag.pending = false;
+        g_sky_diag.moved = true;
+    }
 }
 // the waiting sky drawn here: its layers in their order, at z 0 with a GEQUAL test (no depth write)
 void FlushSky(SkyMove& sky, int stop, int screen_w, int screen_h, bool fill, int bucket_now, uint64_t& triangles) {
@@ -3206,6 +3785,14 @@ void FlushSky(SkyMove& sky, int stop, int screen_w, int screen_h, bool fill, int
     g_sky.sky_draws += sky.count;
     g_sky.over += sky.over;
     g_sky.stops[std::clamp(stop, 0, kStopCount - 1)]++;
+#if defined(__vita__)
+    // (the frame target's scene broken while the sky waited: the layers are drawn after scene ends their wait crossed)
+    uint32_t issued = 0, done = 0;
+    if (sky.scene_marked && te::vita_gpu::SceneFence(&issued, &done) && issued != sky.scenes_at_first) {
+        g_sky.broken++;
+        g_sky.breaks += issued - sky.scenes_at_first;
+    }
+#endif
 }
 std::string SkyCensusLine(double frames) {
 #if defined(__vita__)
@@ -3228,6 +3815,20 @@ std::string SkyCensusLine(double frames) {
         std::snprintf(b, sizeof b, "%s%s %llu", stops.empty() ? "" : ", ", kSkyStopNames[k], (unsigned long long)g_sky.stops[k]);
         stops += b;
     }
+#if defined(__vita__)
+    char line[900];   // (the stops' list and the breaks' count: longer than the off line's buffer)
+    std::snprintf(line, sizeof line, "%s the sky after the opaque scene (%s): %llu of %llu frames (%llu without "
+                  "the sky + depth reset pattern); per moved frame %.1f sky layers drawn after %.1f scene draws, at z 0 with a GEQUAL "
+                  "test: shaded only where nothing opaque covers them; drawn before: %s; the frame target's scene broken while "
+                  "the sky waited: %llu frames (%llu scene ends)\n", tag, knob,
+                  (unsigned long long)g_sky.moved, (unsigned long long)g_sky.frames, (unsigned long long)g_sky.no_pattern,
+                  g_sky.moved ? double(g_sky.sky_draws) / double(g_sky.moved) : 0.0,
+                  g_sky.moved ? double(g_sky.over) / double(g_sky.moved) : 0.0, stops.empty() ? "-" : stops.c_str(),
+                  (unsigned long long)g_sky.broken, (unsigned long long)g_sky.breaks);
+    (void)frames;
+    g_sky = SkyCensus{};
+    return line;
+#else
     std::snprintf(buf, sizeof buf, "%s the sky after the opaque scene (%s): %llu of %llu frames (%llu without "
                   "the sky + depth reset pattern); per moved frame %.1f sky layers drawn after %.1f scene draws, at z 0 with a GEQUAL "
                   "test: shaded only where nothing opaque covers them; drawn before: %s\n", tag, knob,
@@ -3237,6 +3838,7 @@ std::string SkyCensusLine(double frames) {
     (void)frames;
     g_sky = SkyCensus{};
     return buf;
+#endif
 }
 
 uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool count_as_picture) {
@@ -3262,7 +3864,7 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
         mix(fields, sizeof fields);
         if (d.VertexCount()) mix(d.Vertices(), d.VertexCount() * sizeof(*d.Vertices()));
         if (d.mesh) {
-            const ps2e_draw_mesh_params& m = d.mesh_params;
+            const ps2e_draw_mesh_params& m = d.Params();
             mix(m.screen, sizeof m.screen);
             mix(m.offset, sizeof m.offset);
             mix(m.scroll, sizeof m.scroll);
@@ -3280,6 +3882,14 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
     // copies -- and coalesced on every platform (graphics_copies.cpp: a copy is skipped where the frame's last one holds the
     // region its draws sample)
     int frameCopies = 0;
+#if defined(__vita__)
+    // (with the picture's facts: counted where the copy draws were recorded -- no pass over every record of the frame here;
+    // the expansion checks the count against the records it reads)
+    const bool gather = GatherOn();
+    if (gather)
+        for (int b = 0; b < TE_GFX_BUCKET_COUNT; ++b) frameCopies += int(buckets[b].copy_draws);
+    else
+#endif
     for (int b = 0; b < TE_GFX_BUCKET_COUNT; ++b)
         for (size_t i = 0; i < buckets[b].used; ++i) {
 #if defined(__vita__)
@@ -3297,6 +3907,9 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
     constexpr bool fill = false;
 #endif
     SkyMove sky;   // the sky after the opaque scene (see SkyMove)
+#if defined(__vita__)
+    bool skyThisPicture = false;   // (the next picture's expansion asks the sky's answers by it: g_sky_hint)
+#endif
     {
         TE_PROF_SCOPE("rt begin frame");
         BeginFrameTarget(screen_w, screen_h);
@@ -3360,6 +3973,8 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
         }
     }
     const bool x2Log = count_as_picture && x2From >= 0 && xPic >= x2From && xPic <= x2To && (xPic - x2From) % x2Step == 0;
+    const bool skyDiag = g_sky_diag.On(count_as_picture, xPic);   // TE_GFX_SKY_DIAG (see SkyDiag)
+    if (skyDiag) g_sky_diag.pending = g_sky_diag.moved = false;
     static const unsigned short profExpand = te::prof::Register("rt expand (copy built vertices)"),
                                 profMesh = te::prof::Register("rt submit native mesh"), profVerts = te::prof::Register("rt submit vertices"),
                                 profCopy = te::prof::Register("rt frame copy"),
@@ -3408,12 +4023,20 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
 #if defined(__vita__)
         Draw* const* const list = buckets[b].order.data();
         const size_t count = buckets[b].order.size();
+        // the picture's facts of this bucket's order (ExpandBucket), when made
+        te::gfx::PictureFacts pictureFacts;
+        const te::gfx::PictureFacts* facts = nullptr;
+        if (gather && buckets[b].facts_made && buckets[b].perm.size() == count) {
+            Gfx::Bucket& bk = buckets[b];
+            pictureFacts = te::gfx::PictureFacts{bk.facts.data(), bk.tuples.data(), bk.rows.data(), bk.perm.data()};
+            facts = &pictureFacts;
+        }
         // the GPU's draw order (graphics_zorder.cpp): the punch-through draws of each order-free run after the others,
         // near to far -- the same picture, fewer shaded fragments on the device's deferred renderer
         if (!diag) {
             static const unsigned short profOrder = te::prof::Register("rt draw order (punch-through after opaque)");
             te::prof::Scope scope(profOrder, profSlot);
-            te::gfx::ZOrderDraws(g.dev, buckets[b].order.data(), count, g.presents.load(std::memory_order_relaxed));
+            te::gfx::ZOrderDrawsFacts(g.dev, buckets[b].order.data(), count, g.presents.load(std::memory_order_relaxed), facts);
         }
 #else
         thread_local std::vector<Draw*> desk;
@@ -3421,6 +4044,7 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
         for (size_t i = 0; i < buckets[b].used; ++i) desk[i] = &buckets[b].draws[i];
         Draw* const* const list = desk.data();
         const size_t count = desk.size();
+        const te::gfx::PictureFacts* const facts = nullptr;   // (the Vita's: the picture's draw facts)
 #endif
 #if defined(__vita__)
         if (drawHash && count_as_picture)
@@ -3452,7 +4076,7 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                 for (int f : fields) h = (h ^ uint32_t(f)) * 16777619u;
                 float bx[4] = {-1e30f, -1e30f, 1e30f, 1e30f};
                 if (d.mesh) {
-                    if (!ps2e_draw_mesh_screen_box(g.dev, d.mesh, &d.mesh_params, bx)) { bx[0] = bx[1] = -1e30f; bx[2] = bx[3] = 1e30f; }
+                    if (!ps2e_draw_mesh_screen_box(g.dev, d.mesh, &d.Params(), bx)) { bx[0] = bx[1] = -1e30f; bx[2] = bx[3] = 1e30f; }
                 } else if (d.VertexCount()) {
                     bx[0] = bx[1] = 1e30f; bx[2] = bx[3] = -1e30f;
                     for (size_t k = 0; k < d.VertexCount(); ++k) {
@@ -3466,7 +4090,7 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                 // 11 ztest, 12 zwrite, 13 atest.method.ref.fail, 14 tfx, 15 tcc, 16 fba, 17 no colour write, 18 stencil,
                 // 19 scissor set, 20 linear, 21 wrap u, 22 wrap v, 23 gouraud, 24 mip levels, 25-28 box
                 std::fprintf(stderr, "XD2 %ld %d %u %c %u %u %d %08x %u %d.%d%d%d%d.%d %d %d %d.%d.%d.%d %d %d %d %d %d %d %d %d %d %d %d %g %g %g %g\n",
-                             xPic, b, unsigned(i), kind, d.mesh, unsigned(d.VertexCount()), d.mesh ? d.mesh_params.lit : -1, h, s.texture,
+                             xPic, b, unsigned(i), kind, d.mesh, unsigned(d.VertexCount()), d.mesh ? d.Params().lit : -1, h, s.texture,
                              s.blend, s.blend_a, s.blend_b, s.blend_c, s.blend_d, s.blend_fix, s.depth_test, s.depth_write, s.alpha_test,
                              s.alpha_method, s.alpha_reference, s.alpha_fail, s.tfx, s.tcc, s.fba, s.no_colour_write, s.stencil,
                              (s.scissor_x0 | s.scissor_y0 | s.scissor_x1 | s.scissor_y1) ? 1 : 0, s.linear, s.wrap_u, s.wrap_v,
@@ -3486,11 +4110,21 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
             for (size_t k = 0; layers && k + 1 < n; ++k) layers = SkyLayer(at(k));
             g_sky.frames++;
             if (layers) {
+#if defined(__vita__)
+                skyThisPicture = true;
+#endif
                 sky.pending = true;
                 sky.count = n - 1;
                 for (size_t k = 0; k < sky.count; ++k) sky.layers[k] = &at(k);
+                if (skyDiag) {
+                    g_sky_diag.pending = true;
+                    g_sky_diag.layers = sky.count;
+                }
             } else {
                 g_sky.no_pattern++;
+                if (skyDiag)
+                    std::fprintf(stderr, "[te.gfx.sky] picture %ld: no sky + depth reset pattern (bucket 0: %lu draws)\n", xPic,
+                                 (unsigned long)n);
             }
         }
 #if defined(__vita__)
@@ -3503,14 +4137,14 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
             size_t stop = count;
             if (sky.pending)
                 for (size_t k = 0; k < count; ++k) {
-                    const int why = SkyStopOf(*list[k]);
+                    const int why = SkyStopAt(facts, list, k);
                     if (why >= 0) {
                         stop = k;
                         skyStopWhy = why;
                         break;
                     }
                 }
-            plan = te::gfx::PlanBucket(g.dev, list, count, stop, batchCensus, planned, xPic, b);
+            plan = te::gfx::PlanBucket(g.dev, list, count, stop, batchCensus, planned, xPic, b, facts);
             if (plan && sky.pending) skyStopAt = stop;
         }
 #endif
@@ -3527,14 +4161,27 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                 ++g_draw_timing.tick;
                 continue;
             }
-            if (i + 1 < count) PrefetchDrawHot(list[i + 1]);   // (the next record's lines, written on another core)
+            if (facts) {
+                // the next DRAWN entry's lines (an absorbed one is drawn with its group: its record is not read here) -- a
+                // compact record's header and parameters (its state is its pool entry's), another's whole hot part
+                size_t n = i + 1;
+                if (plan)
+                    while (n < count && plan->absorbed[n]) ++n;
+                if (n < count) {
+                    const uint32_t at = facts->perm[n];
+                    if (facts->facts[at].sbits & te::gfx::kFactCompact) PrefetchDrawParams(list[n], facts->rows[at].p);
+                    else PrefetchDrawHot(list[n]);
+                }
+            } else if (i + 1 < count) {
+                PrefetchDrawHot(list[i + 1]);   // (the next record's lines, written on another core)
+            }
 #endif
             if (sky.pending) {
                 if (b == TE_GFX_BUCKET_SKY) {
                     if (i < sky.count) continue;   // a sky layer: drawn by FlushSky (the reset, bucket 0's last, now)
                 } else {
 #if defined(__vita__)
-                    const int stop = plan ? (i == skyStopAt ? skyStopWhy : -1) : SkyStopOf(d);
+                    const int stop = plan ? (i == skyStopAt ? skyStopWhy : -1) : SkyStopAt(facts, list, i);
 #else
                     const int stop = SkyStopOf(d);
 #endif
@@ -3543,6 +4190,12 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                         FlushSky(sky, stop, screen_w, screen_h, fill, b, triangles);
                         if (timers) ps2e_draw_gpu_phase(g.dev, BucketPhase(b));
                     } else {
+#if defined(__vita__)
+                        if (!sky.over) {
+                            uint32_t done = 0;
+                            sky.scene_marked = te::vita_gpu::SceneFence(&sky.scenes_at_first, &done);
+                        }
+#endif
                         sky.over++;
                     }
                 }
@@ -3586,9 +4239,17 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                 const auto& c = ps2r::render::Census();
                 const uint64_t f0 = c.mesh_full, a0 = c.mesh_again, x0 = c.mesh_texture, p0 = c.mesh_packet;
                 const uint64_t t0 = timed ? DrawClockUs() : 0;
+#if defined(__vita__)
+                // (a compact record: its state its pool entry's bytes, its joints none -- the record's lines not read)
+                const bool compact = facts && (facts->facts[facts->perm[i]].sbits & te::gfx::kFactCompact);
+                const ps2e_draw_state& state = compact ? g_pool.states[d.pool - 1] : d.state;
+                if (!compact && d.skin_joints) {
+#else
+                const ps2e_draw_state& state = d.state;
                 if (d.skin_joints) {
+#endif
                     // a GPU-skinned part (its palette lives in the draw until the picture is presented)
-                    if (ps2e_draw_submit_skin(g.dev, &d.state, d.mesh, &d.mesh_params, d.palette.data(), int(d.skin_joints),
+                    if (ps2e_draw_submit_skin(g.dev, &d.state, d.mesh, &d.Params(), d.palette.data(), int(d.skin_joints),
                                               d.skin_disp ? d.palette.data() + size_t(d.skin_joints) * 12 : nullptr,
                                               int(d.skin_disp)) < 0)
                         g.dropped_draws++;
@@ -3603,15 +4264,34 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                     // the plan's group (graphics_batch.cpp): its draws -- one tuple: this mesh range, state and shift,
                     // unlit -- in their order, here at its first draw's place; =1 as ps2e_draw_submit_mesh_instances (instanced
                     // once the packet memo holds the state), =2 one draw at a time the plain way
+                    // (the members' parameters -- their own or their instance blocks -- from the picture's facts when made: the
+                    // members' records are not read for them)
                     static std::vector<const ps2e_draw_mesh_params*> grp;   // (the drawing thread's alone)
                     grp.clear();
-                    for (int32_t k = int32_t(i); k >= 0; k = plan->next[size_t(k)]) grp.push_back(&list[size_t(k)]->mesh_params);
+                    if (facts)
+                        for (int32_t k = int32_t(i); k >= 0; k = plan->next[size_t(k)]) grp.push_back(facts->rows[facts->perm[size_t(k)]].p);
+                    else
+                        for (int32_t k = int32_t(i); k >= 0; k = plan->next[size_t(k)]) grp.push_back(&list[size_t(k)]->Params());
                     if (sky.pending && b != TE_GFX_BUCKET_SKY) sky.over += grp.size() - 1;   // (its later draws: waited for)
-                    if (planMode == 1) {
-                        g.dropped_draws += uint64_t(ps2e_draw_submit_mesh_instances(g.dev, &d.state, d.mesh, grp.data(), int(grp.size())));
+                    if (planMode == 1 && facts) {
+                        // the members' transforms from the picture's facts: each one's row (its parameters' screen matrix, in
+                        // place), the group's shift (its tuple's words, every member's), the box a compact record's expansion
+                        // or instance block holds (the whole frame) -- the members' records are not read
+                        static std::vector<ps2e_draw_mesh_view> views;
+                        static const float kWholeFrame[4] = {-1e9f, -1e9f, 1e9f, 1e9f};   // (ExpandCompact's box)
+                        views.clear();
+                        const te::gfx::DrawTuple& t = facts->tuples[facts->perm[i]];
+                        float shift[4];
+                        std::memcpy(shift, &t.w[3], sizeof shift);
+                        for (const ps2e_draw_mesh_params* p : grp)
+                            views.push_back(ps2e_draw_mesh_view{p->screen, shift, shift + 2, t.w[7] ? kWholeFrame : p->box});
+                        g.dropped_draws += uint64_t(ps2e_draw_submit_mesh_views(g.dev, &state, d.mesh, int(t.w[1]), int(t.w[2]),
+                                                                                grp.data(), views.data(), int(grp.size())));
+                    } else if (planMode == 1) {
+                        g.dropped_draws += uint64_t(ps2e_draw_submit_mesh_instances(g.dev, &state, d.mesh, grp.data(), int(grp.size())));
                     } else {
                         for (const ps2e_draw_mesh_params* p : grp)
-                            if (ps2e_draw_submit_mesh(g.dev, &d.state, d.mesh, p) < 0) g.dropped_draws++;
+                            if (ps2e_draw_submit_mesh(g.dev, &state, d.mesh, p) < 0) g.dropped_draws++;
                     }
                     g.mesh_runs++;
                     g.mesh_run_draws += grp.size();
@@ -3626,24 +4306,25 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                 // any reordering) -- handed over as one ps2e_draw_submit_mesh_instances: the same draws in the same order, which
                 // the device draws as one instanced draw once they are its packet's. The sky's wait sees each of the run's
                 // draws as this loop would (a draw it stops at ends the run before it: its flush comes first).
-                if (!plan && instancing && te::gfx::InstancePlanSetting() == 0 && !d.copy_frame && !d.mesh_params.lit &&
+                if (!plan && instancing && te::gfx::InstancePlanSetting() == 0 && !d.copy_frame && !d.Params().lit &&
                     d.state.stencil == PS2E_DRAW_STENCIL_OFF) {
                     size_t j = i + 1;
                     while (j < count && j - i < kMaxMeshRun) {
                         const Draw& e = *list[j];
-                        if (e.mesh != d.mesh || e.skin_joints || e.copy_frame || e.mesh_params.lit ||
-                            e.mesh_params.first != d.mesh_params.first || e.mesh_params.count != d.mesh_params.count ||
-                            std::memcmp(e.mesh_params.offset, d.mesh_params.offset, sizeof d.mesh_params.offset) != 0 ||
-                            std::memcmp(e.mesh_params.scroll, d.mesh_params.scroll, sizeof d.mesh_params.scroll) != 0 ||
+                        const ps2e_draw_mesh_params& ep = e.Params();
+                        const ps2e_draw_mesh_params& dp = d.Params();
+                        if (e.mesh != d.mesh || e.skin_joints || e.copy_frame || ep.lit || ep.first != dp.first || ep.count != dp.count ||
+                            std::memcmp(ep.offset, dp.offset, sizeof dp.offset) != 0 ||
+                            std::memcmp(ep.scroll, dp.scroll, sizeof dp.scroll) != 0 ||
                             !SameDrawState(e.state, d.state))
                             break;
-                        if (sky.pending && b != TE_GFX_BUCKET_SKY && SkyStopOf(e) >= 0) break;
+                        if (sky.pending && b != TE_GFX_BUCKET_SKY && SkyStopAt(facts, list, j) >= 0) break;
                         ++j;
                     }
                     if (j - i >= 2) {
                         static std::vector<const ps2e_draw_mesh_params*> run;   // (the drawing thread's alone)
                         run.clear();
-                        for (size_t k = i; k < j; ++k) run.push_back(&list[k]->mesh_params);
+                        for (size_t k = i; k < j; ++k) run.push_back(&list[k]->Params());
                         if (sky.pending && b != TE_GFX_BUCKET_SKY) sky.over += j - i - 1;   // (the run's later draws: waited for)
                         g.dropped_draws += uint64_t(ps2e_draw_submit_mesh_instances(g.dev, &d.state, d.mesh, run.data(), int(j - i)));
                         g.mesh_runs++;
@@ -3659,7 +4340,7 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                     }
                 }
 #endif
-                if (ps2e_draw_submit_mesh(g.dev, &d.state, d.mesh, &d.mesh_params) < 0) g.dropped_draws++;
+                if (ps2e_draw_submit_mesh(g.dev, &state, d.mesh, &d.Params()) < 0) g.dropped_draws++;
                 if (timed) {
                     const int k = c.mesh_full != f0 ? 0 : c.mesh_again != a0 ? 1 : c.mesh_texture != x0 ? 2 : c.mesh_packet != p0 ? 7 : -1;
                     if (k >= 0) {
@@ -3701,8 +4382,18 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
             }
             triangles += d.VertexCount() / 3;
         }
+        if (skyDiag) {
+#if defined(__vita__)
+            g_sky_diag.plan = plan;
+            SkyDiagBucket(xPic, b, list, count, facts);
+            g_sky_diag.plan = nullptr;
+#else
+            SkyDiagBucket(xPic, b, list, count, facts);
+#endif
+        }
         te::gfx::CopiesBucketEnd(list, count);   // (the bucket's draws since its last copy draw: the coalescer's notes)
     }
+    if (skyDiag && g_sky_diag.pending) SkyDiagSummary(xPic, TE_GFX_BUCKET_COUNT, -1, kStopEnd, g_sky_diag.layers);
     if (sky.pending) {
         if (timers) ps2e_draw_gpu_phase(g.dev, PS2E_DRAW_PHASE_SKY);
         FlushSky(sky, kStopEnd, screen_w, screen_h, fill, TE_GFX_BUCKET_COUNT - 1, triangles);
@@ -3711,6 +4402,7 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
     if (drawHash && count_as_picture)
         std::fprintf(stderr, "[te.drawhash] picture %llu: %016llx (%llu draws)\n", (unsigned long long)(g.pictures.load() + 1),
                      (unsigned long long)pictureHash, (unsigned long long)pictureDraws);
+    if (count_as_picture) g_sky_hint = skyThisPicture;
 #endif
     g.frame_triangles = triangles;
     return submitted;
@@ -3846,6 +4538,9 @@ void NotePace(uint64_t presents) {
                 const std::string prep = te::gfx::PrepCensusLine();
                 if (!prep.empty()) std::fputs(prep.c_str(), stderr);
             }
+            // the window's slow ticks / pictures past their lines' caps (TE_TICK_LOG_CAP, TE_PICTURE_LOG_CAP; else nothing)
+            const std::string slow = te::load::TickLogLine(presents - g_pace.frames + 1, presents);
+            if (!slow.empty()) std::fputs(slow.c_str(), stderr);
         }
 #if defined(__vita__)
         {
@@ -4106,6 +4801,7 @@ void NotePace(uint64_t presents) {
                                  per(now_c.copy_pixels, last.copy_pixels) / 1000.0, per(now_c.copy_whole, last.copy_whole));
                 std::fputs(te::gfx::ChunkCensusLine(f).c_str(), stderr);
                 std::fputs(te::gfx::ZOrderCensusLine(f).c_str(), stderr);
+                std::fputs(FactsCheckLine().c_str(), stderr);
                 std::fputs(te::gfx::BatchCensusLine(f).c_str(), stderr);   // (graphics_batch.cpp)
                 std::fputs(SkyCensusLine(f).c_str(), stderr);
                 std::fputs(ps2r::render::FillCensusLines().c_str(), stderr);
@@ -4429,7 +5125,7 @@ void ProbeHalf(Gfx::Frame& prev, Gfx::Frame& cur) {
 
 // Present: the frame handed to the render thread (the bucket storage swapped, one frame in flight) or drawn here, then
 // the blank
-// TE_AB=lean|vector|joinblend|texswap|particlefull|skinvu|nativescroll|draws|gamecpu2 (+ TE_AB_EVERY=N, default 120 pictures): an
+// TE_AB=lean|vector|joinblend|texswap|particlefull|skinvu|nativescroll|draws|gamecpu2|seamlean (+ TE_AB_EVERY=N, default 120 pictures): an
 // in-run A/B of one performance knob, flipped every N
 // pictures (off, on, off, ...) and logged as `[te.ab] picture P: <knob> on|off` -- the two arms then share the machine's
 // load (a loaded host swamps a comparison of separate runs). Applied right after the frame's builds are handed over.
@@ -4468,6 +5164,7 @@ void AbToggle() {
     else if (std::strcmp(knob, "skinvu") == 0) title::SkinGeometry::SetFastPaths(!on);   // on = the VU programs (the earlier form)
     else if (std::strcmp(knob, "nativescroll") == 0) te::gfx::SetNativeScrolled(on);    // on = the scrolled blends native
     else if (std::strcmp(knob, "gamecpu2") == 0) te::gfx::SetGameCpuFast(on);          // on = the fast game-thread seams
+    else if (std::strcmp(knob, "seamlean") == 0) te::gfx::SetSeamLean(on);             // on = the leaner seam forms (the Vita)
     else if (std::strcmp(knob, "gpuskin") == 0) te::gfx::SetGpuSkins(on);              // on = the skins on the GPU
     else if (std::strcmp(knob, "chunked") == 0) te::gfx::SetChunkedNative(on);         // on = clipped parts / sky by chunks
     else if (std::strcmp(knob, "gpublend") == 0) te::gfx::SetGpuBlend(on);             // on = the blend skins' parts too
@@ -4591,11 +5288,17 @@ void PresentFrame(bool send) {
                 std::swap(g.buckets[b].used, f.buckets[b].used);
 #if defined(__vita__)
                 std::swap(g.buckets[b].holds, f.buckets[b].holds);   // (the records' storage marks travel with them)
+                std::swap(g.buckets[b].expanded_as, f.buckets[b].expanded_as);   // (... and their expansion markers)
+                std::swap(g.buckets[b].copy_draws, f.buckets[b].copy_draws);
                 f.buckets[b].ordered = false;   // a new picture's draws: its order is made when it is drawn (ExpandBucket)
+                f.buckets[b].facts_made = false;
 #endif
             }
             std::swap(g.deferred, f.deferred);
             std::swap(g.deferred_used, f.deferred_used);
+#if defined(__vita__)
+            std::swap(g.blocks, f.blocks);   // (the records' instance blocks with them)
+#endif
             f.retire.insert(f.retire.end(), g.mesh_retired.begin(), g.mesh_retired.end());
             g.mesh_retired.clear();
             for (auto& r : g.storage_retired) f.retired_storage.push_back(std::move(r));
@@ -4637,9 +5340,15 @@ void PresentFrame(bool send) {
             std::swap(g.buckets[b].used, sync.buckets[b].used);
 #if defined(__vita__)
             std::swap(g.buckets[b].holds, sync.buckets[b].holds);
+            std::swap(g.buckets[b].expanded_as, sync.buckets[b].expanded_as);
+            std::swap(g.buckets[b].copy_draws, sync.buckets[b].copy_draws);
             sync.buckets[b].ordered = false;   // (as the hand-over's: this picture's order made at its expansion)
+            sync.buckets[b].facts_made = false;
 #endif
         }
+#if defined(__vita__)
+        std::swap(g.blocks, sync.blocks);
+#endif
         sync.send = send;
         sync.lock_fields = lock_fields;
         sync.screen_w = ScreenW();
@@ -4661,8 +5370,13 @@ void PresentFrame(bool send) {
             std::swap(g.buckets[b].used, sync.buckets[b].used);
 #if defined(__vita__)
             std::swap(g.buckets[b].holds, sync.buckets[b].holds);
+            std::swap(g.buckets[b].expanded_as, sync.buckets[b].expanded_as);
+            std::swap(g.buckets[b].copy_draws, sync.buckets[b].copy_draws);
 #endif
         }
+#if defined(__vita__)
+        std::swap(g.blocks, sync.blocks);
+#endif
     }
     {
         TE_PROF_SCOPE("present: ClearBuckets");
@@ -4840,6 +5554,7 @@ ps2e_draw_mesh_params& RecordMeshInPlace(uint32_t bucket, const ps2e_draw_state&
     if (b.used == b.draws.size()) b.draws.emplace_back();
     Draw& d = b.draws[b.used++];
 #if defined(__vita__)
+    ForgetExpansion(b, b.used - 1);
     // the next record's lines on their way into the cache while this one is filled (the bucket's storage was last touched
     // frames ago, by the other core: every store of a record missed): the lines a mesh record writes (TE_GFX_PREFETCH=0: off)
     if (g.prefetch_records && b.used < b.draws.size()) {
@@ -4858,11 +5573,12 @@ ps2e_draw_mesh_params& RecordMeshInPlace(uint32_t bucket, const ps2e_draw_state&
     d.has_transform = false;
     d.pending = nullptr;
     d.ext = nullptr;
-    d.ext_count = 0;
+    d.params = nullptr;
     d.verts.clear();
+    d.ext_count = 0;
     d.tag = g.tag;
     d.state = state;
-    return d.mesh_params;
+    return d.own_params;
 }
 #if defined(__vita__)
 bool CompactMeshes() { return ::CompactRecording(); }
@@ -4891,7 +5607,7 @@ ps2e_draw_mesh_params& RecordMeshCompact(uint32_t bucket, uint32_t pool, const p
     d.has_transform = false;
     d.pending = nullptr;
     d.ext = nullptr;
-    d.ext_count = 0;
+    d.params = nullptr;
     if (!d.verts.empty()) d.verts.clear();
     g_pool.Use(pool);
     g_pool.compact_records++;
@@ -4901,21 +5617,247 @@ ps2e_draw_mesh_params& RecordMeshCompact(uint32_t bucket, uint32_t pool, const p
         d.tag = g.tag;
         d.state = state;
     }
-    return d.mesh_params;
+    return d.own_params;
+}
+// What an unlit part drawn whole holds in its parameters' first three lines -- the screen matrix (its bits: four NEON
+// quadwords, kept in registers by the caller), the GS origin, the scroll, unlit -- stored into `mp`. The matrix is compared
+// first only when `still` (a camera that moved changes it: the compare's NEON-to-core transfer would be wasted); the origin /
+// scroll / lit words always (they rarely change: their line stays clean where the matrix alone moved). The same bytes either
+// way.
+typedef uint32_t __attribute__((may_alias)) ParamWord;
+static_assert(offsetof(ps2e_draw_mesh_params, offset) == 64 && offsetof(ps2e_draw_mesh_params, scroll) == 72 &&
+              offsetof(ps2e_draw_mesh_params, lit) == 80, "the origin, the scroll and lit: five words after the matrix");
+inline __attribute__((always_inline)) void StoreTransform(ps2e_draw_mesh_params& mp, uint32x4_t row0, uint32x4_t row1, uint32x4_t row2,
+                                                          uint32x4_t row3, uint32_t ox, uint32_t oy, uint32_t s0, uint32_t s1,
+                                                          bool still) {
+    uint32_t* const to = reinterpret_cast<uint32_t*>(mp.screen);
+    bool screenDiffers = true;
+    if (still) {
+        const uint32x4_t differ = vorrq_u32(vorrq_u32(veorq_u32(vld1q_u32(to), row0), veorq_u32(vld1q_u32(to + 4), row1)),
+                                            vorrq_u32(veorq_u32(vld1q_u32(to + 8), row2), veorq_u32(vld1q_u32(to + 12), row3)));
+        const uint32x2_t folded = vorr_u32(vget_low_u32(differ), vget_high_u32(differ));
+        screenDiffers = vget_lane_u64(vreinterpret_u64_u32(folded), 0) != 0;
+    }
+    if (screenDiffers) {
+        vst1q_u32(to, row0);
+        vst1q_u32(to + 4, row1);
+        vst1q_u32(to + 8, row2);
+        vst1q_u32(to + 12, row3);
+    }
+    ParamWord* const tail = reinterpret_cast<ParamWord*>(mp.offset);   // offset, scroll, lit as their words
+    if (tail[0] != ox || tail[1] != oy || tail[2] != s0 || tail[3] != s1 || tail[4] != 0) {
+        tail[0] = ox;
+        tail[1] = oy;
+        tail[2] = s0;
+        tail[3] = s1;
+        tail[4] = 0;
+    }
+}
+// TE_GFX_VITA_BLOCKS (unset / 1: on; 0: each compact record its own parameters, as before) and the blocks' census
+struct BlocksMode {
+    int on = -1;   // -1 unread
+    uint32_t made = 0, parts = 0, last_made = 0, last_parts = 0;   // (32-bit: the census takes differences)
+};
+BlocksMode g_blocks;
+__attribute__((noinline)) void ReadBlocks() {
+    const char* v = std::getenv("TE_GFX_VITA_BLOCKS");
+    g_blocks.on = v && v[0] == '0' ? 0 : 1;
+    std::fprintf(stderr, "[te.gfx.vita] instance blocks (TE_GFX_VITA_BLOCKS=%d): %s\n", g_blocks.on,
+                 g_blocks.on ? "an instance's compact unlit parts drawn whole share one block of mesh parameters (its screen "
+                               "matrix, the GS origin, the scroll), written once; each part's record is its line 0"
+                             : "off -- each compact record holds its own parameters (lines 2-4 written per part)");
+}
+inline bool BlocksOn() {
+    if (__builtin_expect(g_blocks.on < 0, 0)) ReadBlocks();
+    return g_blocks.on != 0;
+}
+// the stream's next chunk (made when new: its blocks' lights none, their box the whole frame, their range the whole mesh)
+__attribute__((noinline)) void TakeChunk(BlockStream& s) {
+    const size_t c = s.next ? s.chunk + 1 : 0;
+    if (c == s.chunks.size()) {
+        auto chunk = std::make_unique<BlockStream::Chunk>();   // (zeroed)
+        for (ps2e_draw_mesh_params& mp : chunk->blocks) {
+            mp.box[0] = mp.box[1] = -1e9f;   // the whole frame (ExpandCompact's box)
+            mp.box[2] = mp.box[3] = 1e9f;
+        }
+        s.chunks.push_back(std::move(chunk));
+    }
+    s.chunk = c;
+    s.next = s.chunks[c]->blocks;
+    s.end = s.next + BlockStream::kChunk;
+}
+// the next block of the picture's stream -- the one after it asked for ahead (`still`: for reading, its lines compared
+// before they are written)
+inline __attribute__((always_inline)) ps2e_draw_mesh_params& NextBlock(bool still) {
+    BlockStream& s = g.blocks;
+    if (__builtin_expect(s.next == s.end, 0)) TakeChunk(s);
+    ps2e_draw_mesh_params& mp = *s.next++;
+    if (g.prefetch_records && s.next != s.end) {
+        const char* const ahead = reinterpret_cast<const char*>(s.next);
+        if (still) {
+            __builtin_prefetch(ahead, 0, 3);
+            __builtin_prefetch(ahead + 32, 0, 3);
+            __builtin_prefetch(ahead + 64, 0, 3);
+        } else {
+            __builtin_prefetch(ahead, 1, 3);
+            __builtin_prefetch(ahead + 32, 1, 3);
+            __builtin_prefetch(ahead + 64, 1, 3);
+        }
+    }
+    g_blocks.made++;
+    return mp;
+}
+// TE_GFX_VITA_BLOCKS=0's RecordCompactParts: each part's record its own parameters (lines 0 and 2-4), as before
+__attribute__((noinline)) void RecordCompactPartsOwn(const CompactPart* parts, uint32_t n, uint32x4_t row0, uint32x4_t row1,
+                                                     uint32x4_t row2, uint32x4_t row3, uint32_t ox, uint32_t oy, bool still) {
+    for (uint32_t k = 0; k < n; ++k) {
+        const CompactPart& p = parts[k];
+        auto& b = g.buckets[p.bucket < TE_GFX_BUCKET_COUNT ? p.bucket : uint32_t(TE_GFX_BUCKET_UI)];
+        g.draws++;
+        if (b.used == b.draws.size()) b.draws.emplace_back();
+        Draw& d = b.draws[b.used++];
+        if (g.prefetch_records && b.used < b.draws.size()) {
+            // (read: the lines are compared first, and an unchanged one is not written)
+            const char* const next = reinterpret_cast<const char*>(&b.draws[b.used]);
+            __builtin_prefetch(next, 0, 3);
+            __builtin_prefetch(next + 64, 0, 3);
+            __builtin_prefetch(next + 96, 0, 3);
+            __builtin_prefetch(next + 128, 0, 3);
+        }
+        if (!still || d.mesh != p.mesh || d.pool != uint16_t(p.pool) || d.copy_frame || d.has_transform || d.pending || d.ext ||
+            d.params) {
+            d.mesh = p.mesh;
+            d.pool = uint16_t(p.pool);
+            d.copy_frame = false;
+            d.has_transform = false;
+            d.pending = nullptr;
+            d.ext = nullptr;
+            d.params = nullptr;
+        }
+        if (!d.verts.empty()) d.verts.clear();
+        g_pool.Use(p.pool);
+        uint32_t s0, s1;
+        std::memcpy(&s0, &p.scroll[0], 4);
+        std::memcpy(&s1, &p.scroll[1], 4);
+        StoreTransform(d.own_params, row0, row1, row2, row3, ox, oy, s0, s1, still);
+    }
+    g_pool.compact_records += n;
+}
+// One instance's parts as compact records, in order: for each, what RecordMeshCompact writes and what its caller writes
+// after it for an unlit part drawn whole -- the screen matrix (the instance's: its bits held in four NEON registers across
+// the parts, not reloaded per part), the GS origin, the part's scroll, unlit. The placement's short form
+// (graphics_scene.cpp PlaceShort); never under TE_GFX_COMPACT_CHECK (its caller then takes the general path).
+// THE INSTANCE BLOCK: those parameters are the instance's (and its parts' scroll -- one as a rule): written once into the
+// picture's block stream for a run of parts of one scroll, each part's record its line 0 naming the block -- where each
+// record took its lines 2-4 (the screen matrix copied into every part: 4 lines a part, ~15 an instance).
+// `still` (the camera unmoved since an earlier picture: the caller's culling memo says so): the record's header and the
+// block's matrix are stored only where they differ from what the slot holds (StoreTransform: the block's origin / scroll /
+// lit always so): a slot holds the same part (block) as a rule, and at a still view the picture before's IS this one, so its
+// lines stay clean (not written back, not taken from the drawing thread's core). A moving camera's differ: written without
+// those comparisons. The bytes are the same either way.
+void RecordCompactParts(const CompactPart* parts, uint32_t n, const float* screen, float originX, float originY, bool still) {
+    const uint32_t* const from = reinterpret_cast<const uint32_t*>(screen);
+    const uint32x4_t row0 = vld1q_u32(from), row1 = vld1q_u32(from + 4), row2 = vld1q_u32(from + 8), row3 = vld1q_u32(from + 12);
+    uint32_t ox, oy;
+    std::memcpy(&ox, &originX, 4);
+    std::memcpy(&oy, &originY, 4);
+    if (__builtin_expect(!BlocksOn(), 0)) {
+        RecordCompactPartsOwn(parts, n, row0, row1, row2, row3, ox, oy, still);
+        return;
+    }
+    const ps2e_draw_mesh_params* block = nullptr;   // the block of the run of parts of its scroll
+    uint32_t bs0 = 0, bs1 = 0;
+    // (what the loop's stores could alias, read once: the prefetch switch, the pool's ordinal of the picture being recorded --
+    // g_pool.Use's -- and its use marks)
+    const bool prefetch = g.prefetch_records;
+    const uint32_t recording = g_pool.recording;
+    uint32_t* const lastUse = g_pool.last_use;
+    for (uint32_t k = 0; k < n; ++k) {
+        const CompactPart& p = parts[k];
+        auto& b = g.buckets[p.bucket < TE_GFX_BUCKET_COUNT ? p.bucket : uint32_t(TE_GFX_BUCKET_UI)];
+        if (b.used == b.draws.size()) b.draws.emplace_back();
+        Draw& d = b.draws[b.used++];
+        if (prefetch && b.used < b.draws.size()) __builtin_prefetch(&b.draws[b.used], 0, 3);   // (the next part's line)
+        uint32_t s0, s1;
+        std::memcpy(&s0, &p.scroll[0], 4);
+        std::memcpy(&s1, &p.scroll[1], 4);
+        if (!block || s0 != bs0 || s1 != bs1) {
+            ps2e_draw_mesh_params& mp = NextBlock(still);
+            StoreTransform(mp, row0, row1, row2, row3, ox, oy, s0, s1, still);
+            block = &mp;
+            bs0 = s0;
+            bs1 = s1;
+        }
+        if (!still || d.mesh != p.mesh || d.pool != uint16_t(p.pool) || d.copy_frame || d.has_transform || d.pending || d.ext ||
+            d.params != block) {
+            d.mesh = p.mesh;
+            d.pool = uint16_t(p.pool);
+            d.copy_frame = false;
+            d.has_transform = false;
+            d.pending = nullptr;
+            d.ext = nullptr;
+            d.params = block;
+        }
+        if (!d.verts.empty()) d.verts.clear();
+        lastUse[p.pool - 1] = recording;   // (g_pool.Use)
+    }
+    g.draws += n;
+    g_pool.compact_records += n;
+    g_blocks.parts += n;
+}
+bool CompactBlocks() { return BlocksOn(); }
+const ps2e_draw_mesh_params* NewBlock(const float* screen, float originX, float originY, const float* scroll) {
+    const uint32_t* const from = reinterpret_cast<const uint32_t*>(screen);
+    uint32_t ox, oy, s0, s1;
+    std::memcpy(&ox, &originX, 4);
+    std::memcpy(&oy, &originY, 4);
+    std::memcpy(&s0, &scroll[0], 4);
+    std::memcpy(&s1, &scroll[1], 4);
+    ps2e_draw_mesh_params& mp = NextBlock(false);
+    StoreTransform(mp, vld1q_u32(from), vld1q_u32(from + 4), vld1q_u32(from + 8), vld1q_u32(from + 12), ox, oy, s0, s1, false);
+    return &mp;
+}
+// RecordMeshCompact's header naming `block` as its parameters (DrawInstance's common part): the record's line 0 alone
+void RecordMeshBlock(uint32_t bucket, uint32_t pool, uint32_t mesh, const ps2e_draw_mesh_params* block) {
+    auto& b = g.buckets[bucket < TE_GFX_BUCKET_COUNT ? bucket : uint32_t(TE_GFX_BUCKET_UI)];
+    g.draws++;
+    if (b.used == b.draws.size()) b.draws.emplace_back();
+    Draw& d = b.draws[b.used++];
+    if (g.prefetch_records && b.used < b.draws.size()) __builtin_prefetch(&b.draws[b.used], 1, 3);
+    d.mesh = mesh;
+    d.pool = uint16_t(pool);
+    d.copy_frame = false;
+    d.has_transform = false;
+    d.pending = nullptr;
+    d.ext = nullptr;
+    d.params = block;
+    if (!d.verts.empty()) d.verts.clear();
+    g_pool.Use(pool);
+    g_pool.compact_records++;
+    g_blocks.parts++;
 }
 std::string CompactCensusLine(double presents) {
     const uint64_t c = g_pool.compact_records, f = g_pool.full_records, k = g_pool.compared.load(std::memory_order_relaxed),
                    x = g_pool.differ.load(std::memory_order_relaxed);
-    const uint32_t e = g_pool.expanded.load(std::memory_order_relaxed);
-    char buf[512];
+    const uint32_t e = g_pool.expanded.load(std::memory_order_relaxed), kk = g_pool.kept.load(std::memory_order_relaxed);
+    char buf[640];
     std::snprintf(buf, sizeof buf,
-                  "compact mesh records per present: %.1f (whole: the pool full %.1f), expanded %.1f; state pool %u entries made, "
-                  "%llu remade, %llu lookups (%llu found), %u in use by the last %u pictures%s",
+                  "compact mesh records per present: %.1f (whole: the pool full %.1f), expanded %.1f, kept as their slot held them %.1f; "
+                  "state pool %u entries made, %llu remade, %llu lookups (%llu found), %u in use by the last %u pictures%s",
                   double(c - g_pool.last_compact) / presents, double(f - g_pool.last_full) / presents,
-                  double(uint32_t(e - g_pool.last_expanded)) / presents, g_pool.made, (unsigned long long)g_pool.remade,
+                  double(uint32_t(e - g_pool.last_expanded)) / presents, double(uint32_t(kk - g_pool.last_kept)) / presents,
+                  g_pool.made, (unsigned long long)g_pool.remade,
                   (unsigned long long)g_pool.lookups, (unsigned long long)g_pool.found, g_pool.InUse(),
                   g_pool.recording - g_pool.done.load(std::memory_order_relaxed), "");
     std::string out = buf;
+    if (g_blocks.on > 0) {
+        std::snprintf(buf, sizeof buf, "; instance blocks %.1f (the parameters of %.1f compact parts)",
+                      double(uint32_t(g_blocks.made - g_blocks.last_made)) / presents,
+                      double(uint32_t(g_blocks.parts - g_blocks.last_parts)) / presents);
+        out += buf;
+        g_blocks.last_made = g_blocks.made;
+        g_blocks.last_parts = g_blocks.parts;
+    }
     if (g_pool.ab > 0) {
         std::snprintf(buf, sizeof buf, "; this window's arms (TE_GFX_COMPACT=ab%ld): compact in %llu of %llu pictures", g_pool.ab,
                       (unsigned long long)(g_pool.presents_on - g_pool.last_presents_on),
@@ -4932,6 +5874,7 @@ std::string CompactCensusLine(double presents) {
     g_pool.last_compact = c;
     g_pool.last_full = f;
     g_pool.last_expanded = e;
+    g_pool.last_kept = kk;
     return out;
 }
 void NoteWholeMeshRecord() { g_pool.full_records++; }
@@ -4955,6 +5898,9 @@ void RecordSkinMesh(uint32_t bucket, const ps2e_draw_state& state, uint32_t mesh
     g.draws++;
     if (b.used == b.draws.size()) b.draws.emplace_back();
     Draw& d = b.draws[b.used++];
+#if defined(__vita__)
+    ForgetExpansion(b, b.used - 1);
+#endif
     d.state = state;
     d.verts.clear();
     d.ext = nullptr;
@@ -4962,10 +5908,11 @@ void RecordSkinMesh(uint32_t bucket, const ps2e_draw_state& state, uint32_t mesh
     d.copy_frame = false;
     d.pending = nullptr;
     d.pool = 0;
+    d.params = nullptr;
     d.tag = g.tag;
     d.has_transform = false;
     d.mesh = mesh;
-    d.mesh_params = params;
+    d.own_params = params;
     d.palette.assign(bones, bones + size_t(joints) * 12);
     if (disp && disp_count) d.palette.insert(d.palette.end(), disp, disp + size_t(disp_count) * 4);
     d.skin_joints = joints;

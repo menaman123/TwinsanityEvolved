@@ -199,6 +199,10 @@ ps2e_system_mod_page_label
 ps2e_system_mod_page_row_label
 ps2e_system_mod_page_row_chosen
 ps2e_system_mod_warp_target
+ps2e_system_infinite_lives
+ps2e_system_load_reads_done
+ps2e_system_cutscene_skippable
+ps2e_system_next_test_request
 ps2e_system_local_time
 ps2e_time_initialise
 ps2e_time_ticks
@@ -243,3 +247,4 @@ ps2e_text_font_size
 ps2e_text_font_read
 ps2e_text_diag
 ps2e_text_shaped
+ps2e_gfx2_resources_changed

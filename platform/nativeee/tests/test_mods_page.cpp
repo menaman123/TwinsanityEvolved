@@ -1,6 +1,6 @@
 // test_mods_page.cpp -- te_mods_page.h: the title's Options > MODS page as the platform answers it. With a mods folder of three
-// disc mods (one on at start-up) and a language pack, the page's rows are the built-ins ALONE (level select, speedrun mode:
-// the mods that apply while the game runs), a row past the page is no mod (no label, no switch, no page, nothing written),
+// disc mods (one on at start-up) and a language pack, the page's rows are the built-ins ALONE (level select, speedrun mode,
+// infinite lives: the mods that apply while the game runs), a row past the page is no mod (no label, no switch, no page, nothing written),
 // the folder mods stay in the registry with the switches the start-up read (the -mods card rule, the overlay's layers), a
 // built-in's switch applies at once and is persisted, and nothing the page does writes a folder mod's key. Everything
 // is written to a temporary folder by the test: no game data.
@@ -72,41 +72,44 @@ int main() {
     s.mc_dir = (root / "memcards").string();
     s.settings_path = ini.string();
     Reset(s);
-    te::mods::InstallBuiltins();   // level_select, speedrun
+    te::mods::InstallBuiltins();   // level_select, speedrun, infinite_lives
     CHECK_EQ(te::mods::ScanFolder(mods.string()), 3u);   // lingo is a language pack: not a mod, kept apart
     te::mods::SetOrder("gamma,beta,alpha");
     te::mods::Configure({"beta"});   // ps2r.ini had mods.beta.enabled = on at start-up (the launcher's switch)
     te::mods::SetDiscRegion("PAL");
 
     // --- the registry keeps every mod: the built-ins, then the folder's disc mods; only the built-ins apply live
-    CHECK_EQ(te::mods::Count(), 5u);
-    const uint32_t level_select = IndexOf("level_select"), speedrun = IndexOf("speedrun");
-    CHECK(te::mods::AppliesLive(level_select) && te::mods::AppliesLive(speedrun));
+    CHECK_EQ(te::mods::Count(), 6u);
+    const uint32_t level_select = IndexOf("level_select"), speedrun = IndexOf("speedrun"), lives = IndexOf("infinite_lives");
+    CHECK(te::mods::AppliesLive(level_select) && te::mods::AppliesLive(speedrun) && te::mods::AppliesLive(lives));
     for (const char* id : {"alpha", "beta", "gamma"}) CHECK(IndexOf(id) < te::mods::Count() && !te::mods::AppliesLive(IndexOf(id)));
     CHECK(!te::mods::AppliesLive(te::mods::Count()) && !te::mods::AppliesLive(te::mods::page::kNoMod));
     CHECK(te::mods::Enabled("beta") && te::mods::AnyEnabled());   // on from the start: the -mods card rule counts it (unchanged)
 
     // --- the page: the built-ins alone, in registration order; a row past them is no mod
-    CHECK_EQ(te::mods::page::Count(), 2u);
-    CHECK_EQ(ps2e_system_mod_count(), 2);
+    CHECK_EQ(te::mods::page::Count(), 3u);
+    CHECK_EQ(ps2e_system_mod_count(), 3);
     CHECK_EQ(te::mods::page::Entry(0), level_select);
     CHECK_EQ(te::mods::page::Entry(1), speedrun);
-    for (uint32_t row : {2u, 3u, 4u, 17u}) CHECK_EQ(te::mods::page::Entry(row), te::mods::page::kNoMod);
-    CHECK(te::mods::page::Label(0) == "level select" && te::mods::page::Label(1) == "speedrun mode");
-    CHECK(SeamLabel(0) == "level select" && SeamLabel(1) == "speedrun mode");
-    for (int32_t row : {2, 3, 4, -1}) CHECK(SeamLabel(row).empty());   // the registry's folder mods are past the page
+    CHECK_EQ(te::mods::page::Entry(2), lives);
+    for (uint32_t row : {3u, 4u, 5u, 17u}) CHECK_EQ(te::mods::page::Entry(row), te::mods::page::kNoMod);
+    CHECK(te::mods::page::Label(0) == "level select" && te::mods::page::Label(1) == "speedrun mode" && te::mods::page::Label(2) == "infinite lives");
+    CHECK(SeamLabel(0) == "level select" && SeamLabel(1) == "speedrun mode" && SeamLabel(2) == "infinite lives");
+    for (int32_t row : {3, 4, 5, -1}) CHECK(SeamLabel(row).empty());   // the registry's folder mods are past the page
     CHECK_EQ(ps2e_system_mod_has_switch(0), 0);   // level select: its row opens its page
     CHECK_EQ(ps2e_system_mod_has_switch(1), 1);
+    CHECK_EQ(ps2e_system_mod_has_switch(2), 1);   // infinite lives: an off / on row, no page
     CHECK(ps2e_system_mod_page_rows(0) > 0);
     CHECK_EQ(ps2e_system_mod_page_rows(2), 0);
-    CHECK_EQ(ps2e_system_mod_page_row_chosen(2, 0), ps2e_s32(te::mods::ActionNone));
-    ps2e_system_mod_page_label(3, kScratch, 48);
+    CHECK_EQ(ps2e_system_mod_page_rows(3), 0);
+    CHECK_EQ(ps2e_system_mod_page_row_chosen(3, 0), ps2e_s32(te::mods::ActionNone));
+    ps2e_system_mod_page_label(4, kScratch, 48);
     CHECK(std::string(reinterpret_cast<const char*>(te::GuestPointer(kScratch, 48))).empty());
 
-    // --- a row past the page switches nothing: beta (the registry's index 3) stays on, nothing is written
-    CHECK_EQ(ps2e_system_mod_enabled(3), 0);
-    ps2e_system_set_mod_enabled(3, 0);
-    ps2e_system_set_mod_enabled(2, 1);
+    // --- a row past the page switches nothing: beta (the registry's index 4) stays on, nothing is written
+    CHECK_EQ(ps2e_system_mod_enabled(4), 0);
+    ps2e_system_set_mod_enabled(4, 0);
+    ps2e_system_set_mod_enabled(3, 1);
     CHECK(te::mods::Enabled("beta") && !te::mods::Enabled("alpha") && te::mods::AnyEnabled());
 
     // --- a built-in's switch applies at once and is persisted, as before
@@ -118,6 +121,23 @@ int main() {
     te::mods::page::Choose(1, false);
     CHECK(!te::mods::Enabled("speedrun") && Read(ini).find("mods.speedrun.enabled = off") != std::string::npos);
     te::mods::page::Choose(9, true);   // past the page: nothing
+
+    // --- infinite lives: the game's question (Platform::System::InfiniteLives) answers the switch, which applies at once and is
+    // persisted like the other built-ins'
+    CHECK(!te::mods::Enabled("infinite_lives") && !te::mods::page::Shown(2));
+    CHECK_EQ(ps2e_system_infinite_lives(), 0);
+    ps2e_system_set_mod_enabled(2, 1);
+    CHECK(te::mods::Enabled("infinite_lives") && te::mods::page::Shown(2) && ps2e_system_mod_enabled(2) == 1);
+    CHECK_EQ(ps2e_system_infinite_lives(), 1);
+    CHECK(Read(ini).find("mods.infinite_lives.enabled = on") != std::string::npos);
+    te::mods::page::Choose(2, false);
+    CHECK_EQ(ps2e_system_infinite_lives(), 0);
+    CHECK(Read(ini).find("mods.infinite_lives.enabled = off") != std::string::npos);
+    te::mods::SetEnabled(lives, true, false);   // --mod infinite_lives: on for the run, nothing written
+    CHECK_EQ(ps2e_system_infinite_lives(), 1);
+    CHECK(Read(ini).find("mods.infinite_lives.enabled = off") != std::string::npos);
+    te::mods::SetEnabled(lives, false, false);
+    CHECK_EQ(ps2e_system_infinite_lives(), 0);
 
     // --- nothing the page did wrote a folder mod's key: the launcher's switch (beta = on) is as it was, the others absent
     const std::string after = Read(ini);
@@ -132,9 +152,10 @@ int main() {
 
     // --- no folder: the page is the built-ins, exactly as before
     CHECK_EQ(te::mods::ScanFolder((root / "nowhere").string()), 0u);
-    CHECK_EQ(te::mods::Count(), 2u);
-    CHECK_EQ(te::mods::page::Count(), 2u);
-    CHECK(te::mods::page::Entry(0) == 0 && te::mods::page::Entry(1) == 1 && te::mods::page::Entry(2) == te::mods::page::kNoMod);
+    CHECK_EQ(te::mods::Count(), 3u);
+    CHECK_EQ(te::mods::page::Count(), 3u);
+    CHECK(te::mods::page::Entry(0) == 0 && te::mods::page::Entry(1) == 1 && te::mods::page::Entry(2) == 2 &&
+          te::mods::page::Entry(3) == te::mods::page::kNoMod);
 
     std::error_code ec;
     fs::remove_all(root, ec);

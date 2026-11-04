@@ -9,7 +9,6 @@
 // first two) are assembled as the GS assembles a strip and recorded into the material's bucket. The distorting hexagons
 // (DrawDistortionBlock, the frame copied as their texture) are not drawn yet.
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -72,6 +71,8 @@ struct GuestTable {
 };
 static_assert(offsetof(GuestTable, steps) == 0x70 && offsetof(GuestTable, end) == 0x870, "ParticleRenderTable layout");
 static_assert(sizeof(GuestTable) <= kRenderTableBytes, "ParticleRenderTable fits");
+// A deferred particle build's input (DeferredBuild::input): the table, the matrix (16 floats), then the chain's blocks
+constexpr size_t kInputHead = sizeof(GuestTable) + 64;
 
 template <typename T>
 T* GuestMutable(uint32_t address) { return reinterpret_cast<T*>(te::GuestPointer(address, sizeof(T))); }
@@ -192,6 +193,51 @@ struct Image {
 // TE_AB=particlefull (graphics.cpp AbToggle): the previous path for an in-run A/B -- the whole image zeroed per block
 // and the full RunCCont (its working copy and MAC / STATUS chain); the same kicks
 std::atomic<bool> g_particleFull{false};
+// TE_GFX_PARTICLE_UNCLAMPED: the emitter's form. 1 (default): ZeroKick::RunCContKicksUnclamped -- the arithmetic without
+// the FMAC clamps when every float the block's program reads is finite (the clamped form otherwise; the same kicks);
+// 0: the clamped form for every block; 2: both forms for every block the unclamped one takes, their kicks compared
+// (a line for each of the first four blocks that differ and one every 1024 blocks compared)
+// (read at the first block: the Vita's args.txt sets its TE_* variables after the static initialisers ran)
+int UnclampedMode() {
+    static const int mode = [] {
+        const char* v = std::getenv("TE_GFX_PARTICLE_UNCLAMPED");
+        return v ? std::atoi(v) : 1;
+    }();
+    return mode;
+}
+std::atomic<uint64_t> g_blocksUnclamped{0}, g_blocksClamped{0}, g_checked{0}, g_checkDiffered{0}, g_checkTrianglesDiffered{0};
+void CheckUnclamped(const Vu1HleInput& in, uint8_t* memory, const Vu1HleOutput& unclamped) {
+    Vu1HleOutput clamped;
+    const bool ok = ZeroKick::RunCContKicks(in, memory, clamped);
+    const bool same = ok && clamped.kicks == unclamped.kicks;
+    const uint64_t n = g_checked.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (!same) {
+        // what the kicks draw: the triangles the GS assembly keeps (the frame's offset and the texture's size left at 0 / 1)
+        std::vector<ps2e_draw_vertex> a, b;
+        for (const auto& packet : clamped.kicks) te::gfx::LowerPackedPacket(packet, 0.f, 0.f, 1.f, 1.f, true, a);
+        for (const auto& packet : unclamped.kicks) te::gfx::LowerPackedPacket(packet, 0.f, 0.f, 1.f, 1.f, true, b);
+        if (a.size() != b.size() || (!a.empty() && std::memcmp(a.data(), b.data(), a.size() * sizeof a[0]) != 0))
+            g_checkTrianglesDiffered.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!same && g_checkDiffered.fetch_add(1, std::memory_order_relaxed) < 4) {
+        size_t k = 0, at = 0;
+        while (k < clamped.kicks.size() && k < unclamped.kicks.size() && clamped.kicks[k] == unclamped.kicks[k]) ++k;
+        if (k < clamped.kicks.size() && k < unclamped.kicks.size())
+            while (at < clamped.kicks[k].size() && at < unclamped.kicks[k].size() && clamped.kicks[k][at] == unclamped.kicks[k][at]) ++at;
+        uint32_t a = 0, b = 0;
+        const size_t word = at & ~size_t(3);
+        if (k < clamped.kicks.size() && word + 4 <= clamped.kicks[k].size()) std::memcpy(&a, &clamped.kicks[k][word], 4);
+        if (k < unclamped.kicks.size() && word + 4 <= unclamped.kicks[k].size()) std::memcpy(&b, &unclamped.kicks[k][word], 4);
+        std::fprintf(stderr, "[te.gfx] particle emitter check: block %llu differs (clamped form %s, %u kicks; unclamped %u kicks; "
+                     "first difference in kick %u at byte %u: %08x clamped, %08x unclamped)\n", (unsigned long long)n,
+                     ok ? "ran" : "declined", unsigned(clamped.kicks.size()), unsigned(unclamped.kicks.size()), unsigned(k),
+                     unsigned(at), unsigned(a), unsigned(b));
+    }
+    if (n % 1024 == 0)
+        std::fprintf(stderr, "[te.gfx] particle emitter check: %llu blocks run both ways, %llu differing (%llu in the triangles they "
+                     "draw)\n", (unsigned long long)n, (unsigned long long)g_checkDiffered.load(std::memory_order_relaxed),
+                     (unsigned long long)g_checkTrianglesDiffered.load(std::memory_order_relaxed));
+}
 bool RunBlock(const uint8_t* block, const GuestTable& table, const float (*matrix)[4], float time, std::vector<std::vector<uint8_t>>& kicks) {
     static const unsigned short profPrep = te::prof::Register("particle: block image"), profStub = te::prof::Register("particle: VU stub (RunC)"),
                                 profEmit = te::prof::Register("particle: VU emitter (RunCCont)");
@@ -246,10 +292,26 @@ bool RunBlock(const uint8_t* block, const GuestTable& table, const float (*matri
     in.start_pc = kClassCTpc;
     in.data_writes = false;   // only the kicks are read (the image is rebuilt for the next block)
     Vu1HleOutput run;
+    run.kicks.reserve(4);   // (a block's four packets)
     {
         te::prof::Scope emitScope(profEmit);
-        // the kicks alone, the program over this image in place (RunCCont's packets without its working copy and flags)
-        if (!(full ? ZeroKick::RunCCont(in, run) : ZeroKick::RunCContKicks(in, img.memory.data(), run))) return false;
+        // the kicks alone, the program over this image in place (RunCContKicks' packets without its working copy and flags)
+        if (full) {
+            if (!ZeroKick::RunCCont(in, run)) return false;
+        } else if (UnclampedMode() == 0) {
+            if (!ZeroKick::RunCContKicks(in, img.memory.data(), run)) return false;
+        } else {
+            // (the check: the particles as the block holds them, before the unclamped form clamps them in place)
+            uint8_t pairs[66 * 16];
+            if (UnclampedMode() == 2) std::memcpy(pairs, &img.memory[size_t(kTop + 1) * 16], sizeof pairs);
+            bool unclamped = false;
+            if (!ZeroKick::RunCContKicksUnclamped(in, img.memory.data(), run, &unclamped)) return false;
+            (unclamped ? g_blocksUnclamped : g_blocksClamped).fetch_add(1, std::memory_order_relaxed);
+            if (UnclampedMode() == 2 && unclamped) {
+                std::memcpy(&img.memory[size_t(kTop + 1) * 16], pairs, sizeof pairs);
+                CheckUnclamped(in, img.memory.data(), run);
+            }
+        }
     }
     kicks = std::move(run.kicks);
     return true;
@@ -258,6 +320,15 @@ bool RunBlock(const uint8_t* block, const GuestTable& table, const float (*matri
 
 namespace te::gfx {
 void SetParticleFull(bool on) { g_particleFull.store(on, std::memory_order_relaxed); }
+std::string ParticleCensusLine(double frames) {
+    if (frames <= 0) return std::string();
+    const double u = double(g_blocksUnclamped.exchange(0, std::memory_order_relaxed)) / frames;
+    const double c = double(g_blocksClamped.exchange(0, std::memory_order_relaxed)) / frames;
+    char b[256];
+    std::snprintf(b, sizeof b, "[te.gfx.vita] particle builds per present: blocks %.1f by the emitter's form: unclamped %.1f, "
+                  "clamped %.1f (TE_GFX_PARTICLE_UNCLAMPED %d)\n", u + c, u, c, UnclampedMode());
+    return b;
+}
 }
 
 extern "C" {
@@ -308,7 +379,10 @@ void ps2e_graphics_chain_particle_blocks(ps2e_u32 blocksAddress, ps2e_s32 count)
         auto* tag = GuestMutable<uint32_t[4]>(blocks[b]);
         if (!tag) continue;
         (*tag)[0] = ((*tag)[0] & ~kTagId) | kNextTag;
-        (*tag)[1] = blocks[b + 1] & 0x7FFFFFFFu;
+        // the next block's address as the game gave it: the PS2 cleared bit 31 there (the scratchpad flag; the blocks are
+        // in main memory), which a module lane's address never has (the 32 MB) and the native lane's pointer has as its
+        // own top bit (0x8xxxxxxx) -- masked, a chain stopped after its first block (GuestPointer refused the rest)
+        (*tag)[1] = blocks[b + 1];
     }
 }
 
@@ -378,32 +452,47 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
     scene.particle_triangles += deferredTriangles.exchange(0, std::memory_order_relaxed);
     scene.particle_refused += deferredRefused.exchange(0, std::memory_order_relaxed);
     if (!diagPresent && te::gfx::DeferringBuilds()) {
-        // the chain's blocks run on a worker: the blocks, the table and the matrix copied as they are now (the game
-        // re-fills the pool next frame); each block one draw, as below
-        std::vector<uint8_t> blocks;
-        for (int guard = 0; guard < 4096 && blockAddress; ++guard) {
-            const uint8_t* block = te::GuestPointer(blockAddress, kParticleBlockBytes);
+        // the chain's blocks run on a worker: the table, the matrix and the blocks copied as they are now (the game re-fills
+        // the pool next frame) into the build's own input storage, which it keeps from frame to frame (the copies cost no
+        // allocation once it has grown, and the job is small enough for the pool's blocks); each block one draw, as below
+        size_t count = 0;
+        for (uint32_t a = blockAddress; count < 4096 && a;) {
+            const uint8_t* block = te::GuestPointer(a, kParticleBlockBytes);
             if (!block) break;
-            blocks.insert(blocks.end(), block, block + kParticleBlockBytes);
-            scene.particle_blocks++;
+            ++count;
             uint32_t tag, next;
             std::memcpy(&tag, block, 4);
             std::memcpy(&next, block + 4, 4);
-            blockAddress = ((tag >> 28) & 7) == 2 ? next : 0;   // NEXT goes on, RET ends the chain
+            a = ((tag >> 28) & 7) == 2 ? next : 0;   // NEXT goes on, RET ends the chain
         }
-        if (blocks.empty()) return;
-        std::array<float, 16> m16;
-        for (int r = 0; r < 4; ++r)
-            for (int c = 0; c < 4; ++c) m16[size_t(r * 4 + c)] = matrix[r][c];
+        if (!count) return;
         te::gfx::DeferredBuild& build = te::gfx::ReserveDeferred(bucket, state);
-        te::gfx::PostBuild(build, [&build, blocks = std::move(blocks), table = *t, m16, time, offX, offY, tw, th, textured] {
+        std::vector<uint8_t>& input = build.input;
+        input.resize(kInputHead + count * kParticleBlockBytes);
+        std::memcpy(input.data(), t, sizeof(GuestTable));
+        std::memcpy(input.data() + sizeof(GuestTable), matrix, 64);
+        uint8_t* to = input.data() + kInputHead;
+        for (size_t k = 0; k < count; ++k, to += kParticleBlockBytes) {
+            const uint8_t* block = te::GuestPointer(blockAddress, kParticleBlockBytes);
+            std::memcpy(to, block, kParticleBlockBytes);
+            scene.particle_blocks++;
+            uint32_t next;
+            std::memcpy(&next, block + 4, 4);
+            blockAddress = next;   // (the walk above: the blocks before the last are NEXT tags)
+        }
+        te::gfx::PostBuild(build, [&build, time, offX, offY, tw, th, textured] {
             TE_PROF_SCOPE("particle build");
+            thread_local GuestTable table;
             thread_local std::vector<std::vector<uint8_t>> kicks;
             thread_local std::vector<ps2e_draw_vertex> verts;
-            const auto* mat = reinterpret_cast<const float(*)[4]>(m16.data());
-            for (size_t at = 0; at + kParticleBlockBytes <= blocks.size(); at += kParticleBlockBytes) {
+            const std::vector<uint8_t>& in = build.input;
+            float m16[16];
+            std::memcpy(&table, in.data(), sizeof table);
+            std::memcpy(m16, in.data() + sizeof table, sizeof m16);
+            const auto* mat = reinterpret_cast<const float(*)[4]>(m16);
+            for (size_t at = kInputHead; at + kParticleBlockBytes <= in.size(); at += kParticleBlockBytes) {
                 kicks.clear();
-                if (!RunBlock(blocks.data() + at, table, mat, time, kicks)) {
+                if (!RunBlock(in.data() + at, table, mat, time, kicks)) {
                     deferredRefused++;
                     break;
                 }

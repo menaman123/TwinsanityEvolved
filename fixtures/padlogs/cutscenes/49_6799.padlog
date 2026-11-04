@@ -1,0 +1,49 @@
+# cutscene reach fixture (tools/cutscenes/reach.py): site 6799 COM_CROWS_NEST_DIRECTOR_ACTIVATED
+# card: tools/warp_save.py --card <hub card> --chunk 'levels\ice\highseas\gpa09' --place 0xFFFF --character crash --story 10
+# chunk=levels\ice\highseas\gpa09
+# story=10
+# character=crash
+# test=teleport -34.0000 15.0000 42.0000@2731;message act_NGIN 192 act_BATTLESHIP_NGIN_POST2@2856;message act_NGIN 192 act_BATTLESHIP_NGIN_POST2@2916;message act_NGIN 192 act_BATTLESHIP_NGIN_POST2@2976  (TE_TEST_ACTIONS: what the recording's plan asked of the game; the legs set it)
+# reach: TEST MEANS at High Seas' story 10: the player teleported onto the battleship's deck beside the crow's nest (the game's way there is N. Gin's hovering platform, which stops short of it), a walk into the first-entry volume (-34.2, 14.6, 37.9) that tells N. Gin 170 (COM_NGIN_BATTLESHIP_START); then his three hits as the game gives them -- message 192 from a post of the crow's nest (a post hit by an explosion sends it, COM_BATTLESHIP_NGIN_POST_HIT_CHECK), each while his fight is in its phase (2943 s3); at the third his start graph tells the director 87
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# text-language=english
+# speech-language=english
+1 0000 128 128 128 128  # NONE
+1271 0008 128 128 128 128  # START
+1276 0000 128 128 128 128  # NONE
+1354 0040 128 128 128 128  # DOWN
+1357 0000 128 128 128 128  # NONE
+1404 4000 128 128 128 128  # CROSS
+1409 0000 128 128 128 128  # NONE
+1804 0040 128 128 128 128  # DOWN
+1807 0000 128 128 128 128  # NONE
+1904 4000 128 128 128 128  # CROSS
+1907 0000 128 128 128 128  # NONE
+2681 4000 128 128 128 128  # CROSS
+2684 0000 128 128 128 128  # NONE
+2771 0000 255 122 128 128  # NONE
+2773 0000 255 121 128 128  # NONE
+2774 0000 255 120 128 128  # NONE
+2775 0000 255 119 128 128  # NONE
+2776 0000 255 118 128 128  # NONE
+2777 0000 255 117 128 128  # NONE
+2779 0000 255 116 128 128  # NONE
+2780 0000 255 115 128 128  # NONE
+2781 0000 255 114 128 128  # NONE
+2782 0000 255 113 128 128  # NONE
+2783 0000 255 112 128 128  # NONE
+2784 0000 255 110 128 128  # NONE
+2785 0000 255 109 128 128  # NONE
+2786 0000 255 107 128 128  # NONE
+2787 0000 255 106 128 128  # NONE
+2788 0000 255 104 128 128  # NONE
+2789 0000 255 101 128 128  # NONE
+2790 0000 255 99 128 128  # NONE
+2791 0000 255 95 128 128  # NONE
+2792 0000 255 91 128 128  # NONE
+2793 0000 255 86 128 128  # NONE
+2794 0000 255 79 128 128  # NONE
+2795 0000 255 72 128 128  # NONE
+2796 0000 128 128 128 128  # NONE
+2983 0000 128 128 128 128  # NONE
+# end at boundary 4800

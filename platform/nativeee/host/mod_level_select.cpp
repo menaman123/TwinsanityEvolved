@@ -37,7 +37,7 @@ const Row kRows[] = {
     {"ice climb", "levels\\ice\\iceclimb\\caveent", kNoCharacter, ActionWarp},                   // 8
     {"slip slide icecapades", "levels\\ice\\slipslide\\l05start", kNoCharacter, ActionWarp},     // 9
     {"high seas hi-jinks", "levels\\ice\\highseas\\gpa01", kNoCharacter, ActionWarp},            // 10
-    {"boss: dingodile", "levels\\ice\\highseas\\gpa01", kNoCharacter, ActionWarp},               // 11 (his hut opens the level)
+    {"boss: dingodile", "levels\\school\\boiler\\boiler_6", kNoCharacter, ActionWarp},           // 11 (the boiler room's arena)
     {"boss: uka uka", "levels\\ice\\iceclimb\\ukafight", kNoCharacter, ActionWarp},              // 12
     {"academy of evil", "levels\\school\\sch_hub\\sch_hub", kNoCharacter, ActionWarp},           // 13: the hub
     {"boiler room doom", "levels\\school\\boiler\\boiler_1", kNoCharacter, ActionWarp},          // 14

@@ -4,6 +4,7 @@
 #include "game/animation.h"
 #include "game/behaviours.h"
 #include "game/clock.h"
+#include "game/cutsceneskip.h"
 #include "game/layout.h"
 #include "game/memory.h"
 #include "game/navigation.h"
@@ -116,6 +117,132 @@ u32 FinishInterpolation(ObjectNode* node, ControlPacket* packet, u32 joint)
     }
 
     return 1;
+}
+
+// TwinsanityEvolved: a skipped motion's end is a warp, as PositionWarp's (WarpTo): the frame's start the place it is put at, so the
+// frame has no move of it -- a pinned character's controller turns the frame's move into its velocity (ControlsNode::Update,
+// the motion driven controls), and a whole route's move in one frame would be run into the walls
+void SettleSkippedMove(ObjectNode* node, BehaviourRunner* runner)
+{
+    if (runner->joint != GameOGI::NoJoint || runner->packet == nullptr || runner->packet->settings.translates == 0)
+    {
+        return;
+    }
+
+    ObjectPlace* place = node->owner->place;
+    place->SyncPosition();
+    node->frameStart = place->position;
+}
+
+// TwinsanityEvolved: a skipped cutscene's agent's move that states no time finished at once (game/cutsceneskip.h), as its last step
+// finishes it: a move that goes to a target until it gets there (a spring, the chases) where it gets there -- the edge of its
+// tolerance on its way in (ChaseArrived: within the tolerance), the target itself without one -- a throw (a projectile) at the
+// target, one that lands where its flight's time runs out where its flight puts it then (its velocity and gravity over the time
+// left), the move's turn done with it as the step does. The timed motions (the interpolation, a turn) end in their order
+// (OrderWaits); the motions that move by their velocity alone are done at once anyway
+void FinishSkippedMotion(ObjectNode* node, BehaviourRunner* runner)
+{
+    ControlPacket* packet = runner->packet;
+    MotionState* motion = node->motion;
+    u32 kind = packet->settings.motion;
+    u32 joint = runner->joint;
+    Trajectory* trajectory = node->trajectory;
+    bool toTarget = kind == ControlPacket::Spring || kind == ControlPacket::Projectile || kind == ControlPacket::GroundChase ||
+                    kind == SecondGroundChase || kind == ControlPacket::AirChase || kind == SecondAirChase ||
+                    kind == ControlPacket::ClimbingChase;
+    if (packet->settings.translates == 0 || motion->bits.translationDone || !toTarget)
+    {
+        return;
+    }
+
+    Vector4 end = node->translator->target;
+    f32 tolerance = runner->tolerance;
+    if (kind != ControlPacket::Projectile && 0.0f < tolerance)
+    {
+        ObjectPlace* place = node->owner->place;
+        place->SyncPosition();
+        Vector4 here = place->position;
+        f32 dx = here.x - end.x;
+        f32 dy = here.y - end.y;
+        f32 dz = here.z - end.z;
+        f32 distance = __builtin_sqrtf(dx * dx + dy * dy + dz * dz);
+        f32 reach = __builtin_sqrtf(tolerance);
+        if (distance <= reach)
+        {
+            end = here;
+        }
+        else
+        {
+            f32 share = reach / distance;
+            end.x = end.x + dx * share;
+            end.y = end.y + dy * share;
+            end.z = end.z + dz * share;
+        }
+    }
+    else if (kind == ControlPacket::Projectile && packet->settings.landsWhereItIs != 0)
+    {
+        TimeClock* clock = GetContextClock(node->owner);
+        f32 flight = static_cast<f32>(static_cast<s32>(clock->time - runner->packetStart)) * g_SecondsPerClockUnit;
+        f32 left = motion->duration - flight;
+        ObjectPlace* place = node->owner->place;
+        place->SyncPosition();
+        end = place->position;
+        if (0.0f < left)
+        {
+            f32 gravity = node->physics->parameters[ProjectileGravity];
+            end.x = end.x + motion->velocity.x * left;
+            end.y = end.y + motion->velocity.y * left - gravity * (left * left * 0.5f);
+            end.z = end.z + motion->velocity.z * left;
+        }
+    }
+
+    if (joint == GameOGI::NoJoint)
+    {
+        MoveInstance(node, packet, &end);
+    }
+
+    motion->bits.translationDone = 1;
+    motion->bits.rotationDone = 1;
+    if (trajectory != nullptr)
+    {
+        trajectory->position = end;
+    }
+
+    SettleSkippedMove(node, runner);
+}
+
+// TwinsanityEvolved: a skipped cutscene's agent's untimed move (a spring, a throw, a chase) steps at the frames the watched
+// cutscene steps it at (PacketFrame); one its physics body steers is the physics', finished at once (FinishSkippedMotion)
+bool StepsAtWatchedFrames(const ObjectNode* node, const BehaviourRunner* runner)
+{
+    u32 kind = runner->packet->settings.motion;
+    bool untimed = kind == ControlPacket::Spring || kind == ControlPacket::Projectile || kind == ControlPacket::GroundChase ||
+                   kind == SecondGroundChase || kind == ControlPacket::AirChase || kind == SecondAirChase ||
+                   kind == ControlPacket::ClimbingChase;
+    return untimed && node->rigidBody == nullptr;
+}
+
+// The frames a skipped untimed move is stepped on through for its end (a minute)
+constexpr s32 MostMoveFrames = 3600;
+// The runner's count of a skipped move's watched frames stepped: its bit for a move begun in the skip (without it the move was
+// stepped every frame until the skip), the frames below it
+constexpr u32 SkippedFromStart = 0x80000000u;
+
+// Whether a skipped agent's interpolation is at a frame past the one after the last it was stepped at (the runner's count of its
+// watched frames, unused by interpolations otherwise: the frame after the last stepped, 0 none yet); the count moved to it
+bool SkippedInterpolationJumped(ObjectNode* node, BehaviourRunner* runner)
+{
+    TimeClock* clock = GetContextClock(node->owner);
+    s32 step = static_cast<s32>(clock->advance);
+    if (step <= 0)
+    {
+        return true;
+    }
+
+    u32 at = static_cast<u32>(static_cast<s32>(clock->time - runner->packetStart) / step);
+    u32 stepped = runner->skippedFrames & ~SkippedFromStart;
+    runner->skippedFrames = (runner->skippedFrames & SkippedFromStart) | (at + 1);
+    return stepped != 0 && stepped < at;
 }
 
 // An interpolation's frame a fraction of the way: done when within the tolerance
@@ -598,6 +725,8 @@ void StartPacketMotion(BehaviourRunner* runner, TimeClock* clock)
     runner->packetStart = clock->time;
     runner->lastPacket = nullptr;
     runner->syncUnit = 0;
+    // TwinsanityEvolved: a skipped agent's move begun in the skip has its watched frames counted from its start (PacketFrame)
+    runner->skippedFrames = CutsceneSkips(node) != 0 ? SkippedFromStart : 0;
     runner->flags.packetWaiting = 1;
     runner->flags.packetEnded = 0;
     runner->packetEnd = 0;
@@ -1145,7 +1274,11 @@ void CheckPacketEnd(BehaviourRunner* runner, TimeClock* clock, u32, InstanceCont
     EndRunningPacket(runner);
 }
 
-void PacketFrame(BehaviourRunner* runner, TimeClock* clock)
+namespace
+{
+// A packet's motion over a frame (PacketFrame's but its end): its target followed, its turn and its move stepped, the instance
+// facing the way it moves or rolled along its natural axis. Whether its move and its turn are done
+bool MotionFrame(BehaviourRunner* runner, TimeClock* clock)
 {
     using Packet = ControlPacket;
     auto* node = static_cast<ObjectNode*>(runner->agentNode);
@@ -1177,9 +1310,31 @@ void PacketFrame(BehaviourRunner* runner, TimeClock* clock)
             FollowTarget(node->translator, runner, node);
         }
 
+        // TwinsanityEvolved: a skipped cutscene's agent's move steps at the watched frames of its agent's time (game/cutsceneskip.h:
+        // its agent's time moved on in whole frames: OrderWaits): an interpolation at the frame that time is at, an untimed move
+        // through every frame up to it (PacketFrame); one its physics body steers is finished at once at its destination
+        if (CutsceneEndsWaits(node) != 0 && !StepsAtWatchedFrames(node, runner))
+        {
+            FinishSkippedMotion(node, runner);
+        }
+
         if (motionKind == Packet::LinearInterpolation)
         {
-            StepInterpolation(node, runner);
+            if (CutsceneSkips(node) != 0)
+            {
+                // The frame's move a watched frame's when it is the frame after the last one stepped (the frames the skip passes
+                // step it one at a time); a warp when it jumped frames (an agent whose frames are not passed)
+                bool jumped = SkippedInterpolationJumped(node, runner);
+                StepSkippedInterpolation(node, runner);
+                if (jumped)
+                {
+                    SettleSkippedMove(node, runner);
+                }
+            }
+            else
+            {
+                StepInterpolation(node, runner);
+            }
         }
         else
         {
@@ -1291,12 +1446,82 @@ void PacketFrame(BehaviourRunner* runner, TimeClock* clock)
             }
         }
 
-        if (motion->bits.translationDone && motion->bits.rotationDone)
-        {
-            EndRunningPacket(runner);
-            motion->bits.translationDone = 0;
-            motion->bits.rotationDone = 0;
-        }
+        return motion->bits.translationDone && motion->bits.rotationDone;
+    }
+
+    return false;
+}
+
+// TwinsanityEvolved: frame `frame` of a skipped agent's packet as the watched cutscene steps it, `step` clock units a frame from
+// the packet's start: the clocks read that frame's time and the node's last update the frame before it while it runs
+bool WatchedMotionFrame(BehaviourRunner* runner, TimeClock* clock, s32 frame, s32 step)
+{
+    auto* node = static_cast<ObjectNode*>(runner->agentNode);
+    TimeClock* context = GetContextClock(node->owner);
+    u32 time = clock->time;
+    u32 contextTime = context->time;
+    u32 last = node->time;
+    u32 at = static_cast<u32>(runner->packetStart + frame * step);
+    clock->time = at;
+    context->time = at;
+    node->time = at - static_cast<u32>(step);
+    bool done = MotionFrame(runner, clock);
+    clock->time = time;
+    context->time = contextTime;
+    node->time = last;
+    return done;
+}
+
+// A skipped agent's untimed move's watched frames before this one, from the last one stepped (one begun before the skip was
+// stepped every frame until it, one begun in it none yet); the frame's own move from where the frame before it leaves the agent,
+// as when watched (a character's motion-driven controls take it as its velocity). Whether one of them ended the move
+bool CatchUpSkippedMove(BehaviourRunner* runner, TimeClock* clock)
+{
+    s32 step = static_cast<s32>(clock->advance);
+    if (step <= 0)
+    {
+        return false;
+    }
+
+    auto* node = static_cast<ObjectNode*>(runner->agentNode);
+    s32 at = static_cast<s32>(clock->time - runner->packetStart) / step;
+    u32 counted = runner->skippedFrames;
+    s32 stepped = counted == 0 ? at - 1 : static_cast<s32>(counted & ~SkippedFromStart);
+    bool done = false;
+    for (s32 frame = stepped + 1; frame < at && !done; frame++)
+    {
+        done = WatchedMotionFrame(runner, clock, frame, step);
+    }
+
+    runner->skippedFrames = SkippedFromStart | static_cast<u32>(at);
+    ObjectPlace* place = node->owner->place;
+    place->SyncPosition();
+    node->frameStart = place->position;
+    return done;
+}
+}
+
+void PacketFrame(BehaviourRunner* runner, TimeClock* clock)
+{
+    auto* node = static_cast<ObjectNode*>(runner->agentNode);
+    MotionState* motion = node->motion;
+    bool done = false;
+    if (motion != nullptr && runner->packet->settings.motion != ControlPacket::NoMotion && CutsceneSkips(node) != 0 &&
+        StepsAtWatchedFrames(node, runner))
+    {
+        done = CatchUpSkippedMove(runner, clock);
+    }
+
+    if (!done)
+    {
+        done = MotionFrame(runner, clock);
+    }
+
+    if (done)
+    {
+        EndRunningPacket(runner);
+        motion->bits.translationDone = 0;
+        motion->bits.rotationDone = 0;
     }
 
     if (runner->packet != nullptr)
@@ -1304,6 +1529,106 @@ void PacketFrame(BehaviourRunner* runner, TimeClock* clock)
         // The retail code hands on whatever its last callee left in a3; the instance stands in for it
         CheckPacketEnd(runner, clock, 0, node->owner);
     }
+}
+
+void PassPacketFrame(BehaviourRunner* runner, TimeClock* clock)
+{
+    auto* node = static_cast<ObjectNode*>(runner->agentNode);
+    if (node->motion == nullptr || runner->packet->settings.motion == ControlPacket::NoMotion)
+    {
+        return;
+    }
+
+    // A frame that ends the move (none should: the skip passes the frames before its agents' soonest wait, and a move's end is
+    // one) leaves its done bits for the next game frame's PacketFrame, which ends the packet and runs what follows
+    if (CutsceneSkips(node) != 0 && StepsAtWatchedFrames(node, runner) && CatchUpSkippedMove(runner, clock))
+    {
+        return;
+    }
+
+    MotionFrame(runner, clock);
+}
+
+s32 SkippedMoveEndFrame(ObjectNode* node, BehaviourRunner* runner, s32 step)
+{
+    MotionState* motion = node->motion;
+    if (step <= 0 || runner->packet == nullptr || runner->flags.packetWaiting == 0 || motion == nullptr ||
+        runner->packet->settings.motion == ControlPacket::NoMotion || !StepsAtWatchedFrames(node, runner))
+    {
+        return NoMoveEnd;
+    }
+
+    // What its frames change, put back after (nothing the world sees)
+    ObjectPlace* place = node->owner->place;
+    ObjectPlace* stored = node->storedPlace;
+    Translator* translator = node->translator;
+    Rotator* rotator = node->rotator;
+    Trajectory* trajectory = node->trajectory;
+    u8 placeCopy[sizeof(ObjectPlace)];
+    u8 storedCopy[sizeof(ObjectPlace)];
+    u8 motionCopy[sizeof(MotionState)];
+    u8 translatorCopy[sizeof(Translator)];
+    u8 rotatorCopy[sizeof(Rotator)];
+    u8 trajectoryCopy[sizeof(Trajectory)];
+    __builtin_memcpy(placeCopy, place, sizeof(ObjectPlace));
+    __builtin_memcpy(motionCopy, motion, sizeof(MotionState));
+    if (stored != nullptr)
+    {
+        __builtin_memcpy(storedCopy, stored, sizeof(ObjectPlace));
+    }
+
+    if (translator != nullptr)
+    {
+        __builtin_memcpy(translatorCopy, translator, sizeof(Translator));
+    }
+
+    if (rotator != nullptr)
+    {
+        __builtin_memcpy(rotatorCopy, rotator, sizeof(Rotator));
+    }
+
+    if (trajectory != nullptr)
+    {
+        __builtin_memcpy(trajectoryCopy, trajectory, sizeof(Trajectory));
+    }
+
+    u32 flags = node->flags.value;
+    TimeClock* clock = GetContextClock(node->owner);
+    s32 at = static_cast<s32>(clock->time - runner->packetStart) / step;
+    s32 end = NoMoveEnd;
+    for (s32 frame = at + 1; frame <= at + MostMoveFrames; frame++)
+    {
+        if (WatchedMotionFrame(runner, clock, frame, step))
+        {
+            end = frame * step;
+            break;
+        }
+    }
+
+    __builtin_memcpy(place, placeCopy, sizeof(ObjectPlace));
+    __builtin_memcpy(motion, motionCopy, sizeof(MotionState));
+    if (stored != nullptr)
+    {
+        __builtin_memcpy(stored, storedCopy, sizeof(ObjectPlace));
+    }
+
+    if (translator != nullptr)
+    {
+        __builtin_memcpy(translator, translatorCopy, sizeof(Translator));
+    }
+
+    if (rotator != nullptr)
+    {
+        __builtin_memcpy(rotator, rotatorCopy, sizeof(Rotator));
+    }
+
+    if (trajectory != nullptr)
+    {
+        __builtin_memcpy(trajectory, trajectoryCopy, sizeof(Trajectory));
+    }
+
+    node->flags.value = flags;
+    return end;
 }
 
 void SetTranslationTarget(Translator* translator, BehaviourRunner* runner, LayoutPosition* key, AiPosition* step,
@@ -2237,6 +2562,123 @@ u32 StepAcceleratedInterpolation(ObjectNode* node, BehaviourRunner* runner)
     }
 
     return Interpolate(node, runner, packet, joint, AcceleratedFraction(node, packet, seconds));
+}
+
+// TwinsanityEvolved: a skipped cutscene's agent's interpolation at the frames the watched cutscene steps it at (game/cutsceneskip.h):
+// a frame's clock step apart from the packet's start, the first a step after it
+namespace
+{
+// The frames an interpolation is looked through for its end (ten minutes)
+constexpr s32 MostInterpolationFrames = 36000;
+
+// The share of its time an interpolation's frame at `elapsed` clock units is at (StepInterpolation's and
+// StepAcceleratedInterpolation's t: over at 1), and the share of the way it is then (along)
+f32 InterpolationTime(ObjectNode* node, BehaviourRunner* runner, s32 elapsed, f32* along)
+{
+    if (node->flags.accelerates)
+    {
+        f32 seconds = static_cast<f32>(elapsed) * g_SecondsPerClockUnit;
+        f32 t = seconds * node->motion->inverseDuration;
+        *along = 1.0f <= t || t <= -1.0f ? 1.0f : AcceleratedFraction(node, runner->packet, seconds);
+        return t;
+    }
+
+    f32 t = static_cast<f32>(elapsed) * g_SecondsPerClockUnit * node->motion->inverseDuration;
+    f32 share = t;
+    if (runner->packet->settings.acceleration == ControlPacket::SmoothCurve)
+    {
+        share = t * (t * 3.0f) - (t + t) * t * t;
+    }
+
+    *along = share;
+    return t;
+}
+
+// Whether the interpolation's frame at `elapsed` ends it: past its time, or its point within its tolerance of the target
+// (Interpolate's test, in its arithmetic)
+bool InterpolationEndsAt(ObjectNode* node, BehaviourRunner* runner, s32 elapsed)
+{
+    f32 along;
+    f32 t = InterpolationTime(node, runner, elapsed, &along);
+    if (1.0f <= t || t <= -1.0f)
+    {
+        return true;
+    }
+
+    f32 tolerance = runner->tolerance;
+    if (runner->packet->settings.translates == 0 || tolerance == 0.0f)
+    {
+        return false;
+    }
+
+    const Translator* translator = node->translator;
+    f32 px = translator->start.x + (translator->target.x - translator->start.x) * along;
+    f32 py = translator->start.y + (translator->target.y - translator->start.y) * along;
+    f32 pz = translator->start.z + (translator->target.z - translator->start.z) * along;
+    f32 x = px - translator->target.x;
+    f32 y = py - translator->target.y;
+    f32 z = pz - translator->target.z;
+    return x * x + y * y + z * z < tolerance;
+}
+
+// The interpolation's frame at `elapsed` (StepInterpolation's frame at that time)
+u32 InterpolationFrame(ObjectNode* node, BehaviourRunner* runner, s32 elapsed)
+{
+    ControlPacket* packet = runner->packet;
+    u32 joint = runner->joint;
+    f32 along;
+    f32 t = InterpolationTime(node, runner, elapsed, &along);
+    if (1.0f <= t || t <= -1.0f)
+    {
+        return FinishInterpolation(node, packet, joint);
+    }
+
+    return Interpolate(node, runner, packet, joint, along);
+}
+}
+
+s32 InterpolationEndFrame(ObjectNode* node, BehaviourRunner* runner, s32 step)
+{
+    if (step <= 0)
+    {
+        return 0;
+    }
+
+    s32 frame = 1;
+    while (frame < MostInterpolationFrames && !InterpolationEndsAt(node, runner, frame * step))
+    {
+        frame++;
+    }
+
+    return frame * step;
+}
+
+u32 StepSkippedInterpolation(ObjectNode* node, BehaviourRunner* runner)
+{
+    TimeClock* clock = GetContextClock(node->owner);
+    s32 step = static_cast<s32>(clock->advance);
+    if (step <= 0)
+    {
+        return StepInterpolation(node, runner);
+    }
+
+    node->flags.moves = 1;
+    s32 elapsed = static_cast<s32>(clock->time - runner->packetStart);
+    s32 at = elapsed < step ? step : elapsed / step * step;
+    s32 end = InterpolationEndFrame(node, runner, step);
+    if (at < end)
+    {
+        return InterpolationFrame(node, runner, at);
+    }
+
+    // The frame before its end moves it where the watched run has it when the end comes (the end within its tolerance doesn't
+    // move it), then the end frame itself
+    if (step < end)
+    {
+        InterpolationFrame(node, runner, end - step);
+    }
+
+    return InterpolationFrame(node, runner, end);
 }
 
 namespace

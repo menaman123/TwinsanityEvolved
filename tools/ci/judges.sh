@@ -11,10 +11,15 @@
 #              recompiled reference's heights, the frozen heap layout
 #   features   the speedrun HUD, level select, the language table (text and speech, two lists) and the pairs chosen apart, the fps counter, the cavern crystals, the title
 #              orb, mod saves namespaced, the mods folder's disc overlay (a text bank, a level chunk, the order, nothing on =
-#              identical), the mod importer (images, xdelta / PPF / BPS, Mod Crates, executables, the base check), speedrun mode, the language setting, decals, display settings, the CT16 present,
+#              identical), the mod importer (images, xdelta / PPF / BPS, Mod Crates, executables, the base check), speedrun mode, infinite lives
+#              (the hub's deaths: the lives counted down to the game over without it, kept with it), the language setting, decals, display settings, the CT16 present,
 #              the intro ocean seams (the fixture's frozen maximum; the oracle comparison needs the oracle dump), voice pitch,
 #              the Arabic language pack (picked in the options and drawn, length, the language judges with it present), the game's Mods page with a mods
-#              folder (the built-ins only: no folder mod's row or note; the overlays still apply)
+#              folder (the built-ins only: no folder mod's row or note; the overlays still apply), the loads at the device's speed (LOAD
+#              GAME's two loads in a few dozen boundaries and under a second, the loading picture shown, the level the console's),
+#              CROSS in the in-game cutscenes (every scripted
+#              cutscene a test reaches: skipped it leaves the watched state and plays on, or the cross button is refused there and
+#              it plays exactly as watched)
 #   title      tools/judges/run_graphics_judges.sh: the self-test frames and the title's legal screen + world
 #   launcher   the launcher (--launcher-build, default build-launcher): the cold run of the prebuilt-install flow against
 #              a local release server whose asset is BIN zipped (launcher_cold_judge), every Settings row through ps2r.ini
@@ -96,6 +101,9 @@ features() {
   # archive entry by its name, and with --ntsc-iso a USA crate made from the North American disc (SKIPPED without it)
   if [ -n "$NTSC_ISO" ]; then j mods_import mods_import_judge --ntsc-iso "$NTSC_ISO"; else j mods_import mods_import_judge; fi
   j speedrun speedrun_judge
+  # infinite lives: the hub's death route without the mod (the lives 5 -> 0, the fifth death the game over) and with it (seven
+  # deaths, the lives kept, a restart at the checkpoint after each); nothing else differs
+  j infinite_lives infinite_lives_judge
   j language language_judge
   # the Arabic language pack (mods/arabic, not a mod): picked in GAME OPTIONS > TEXT LANGUAGE and drawn right (forms,
   # direction, boxes), every text fitting, and the disc's languages unchanged with it present
@@ -104,9 +112,16 @@ features() {
   j language_arabic language_judge --fixture fixtures/judges/language_arabic_pal.json
   j language_table_arabic language_table_judge --fixture fixtures/judges/language_table_arabic_pal.json
   j decals decal_judge
+  # CROSS in the in-game cutscenes: a skipped one leaves what the watched one leaves (by the fixture's rule: the state exact, places
+  # within what two watchings differ by, the world's own time allowed per agent with its reason), a refused one plays as watched
+  # (every cutscene of the fixture a test reaches; tools/cutscenes/verify.py's legs, four at a time)
+  j cutscene_skip cutscene_skip_judge --fixture fixtures/judges/cutscene_skip_pal.json
   j display display_judge
   j present_ct16 present_ct16_judge
   j intro_ocean ocean_seam_judge --no-oracle
+  # the loads at the device's speed: LOAD GAME's two loads short in boundaries and wall time (windows, vsync off and on), every
+  # boundary paced, the picture fading in as the console's, the level after the load the console's, the console's pace kept
+  j loading_screen loading_screen_judge
   if [ -d "$BUILD/padlog_smoke/mc_hub" ]; then
     local dir="$OUT/voice_pitch.d"; rm -rf "$dir"; mkdir -p "$dir"; waitidle
     local t0; t0=$(date +%s)

@@ -18,6 +18,11 @@ replacement each construct needs on ARM instead of on wasm:
   R5 the `lq/sq` quadword copy: a 16-byte __builtin_memcpy between the 16-byte-aligned addresses.
   (R6, te_cxx.py's rename of CallEabiFloat's asm label to CallEabiTrampolineF, is applied as for wasm: one symbol per
    return kind.)
+  R8 the casts to integer types, `static_cast<s32>(x)` (u8 ... u64, s8 ... s64, the C names): te_int_cast<s32>(x)
+     (platform/nativeee/native/int_cast.h, included at the head of every unit): a float or double that does not fit
+     the type gets the wasm module's answer (LLVM's guard: INT_MIN for an s32, 0 for a u32) instead of the saturation
+     of the Cortex-A9's VCVT; in range, and for every other operand, the cast as written. The game has no implicit
+     float-to-integer conversion (-Wfloat-conversion finds none), so its explicit casts are all of them.
 
 Flags: te_cxx.py's (gnu++26, -D_EE, no exceptions/RTTI/thread-safe statics, -fno-strict-aliasing, -ffp-contract=off,
 -fno-delete-null-pointer-checks, function/data sections) plus what the MIPS ABI the game was written for implies on this
@@ -55,10 +60,17 @@ CXXFLAGS_ARM = [
 # same bits as the wasm build's (and the PS2's) for every object of the heap, whatever address the block was loaded at.
 RE_STAGGER = re.compile(r"\(\s*reinterpret_cast\s*<\s*u32\s*>\s*\(\s*this\s*\)\s*>>\s*8\s*\)")
 
+# R8: the casts to the integer types the game and its headers name (the decomp has no C-style or functional casts to them)
+INT_CAST_HEADER = Path(__file__).resolve().parent.parent / "platform" / "nativeee" / "native" / "int_cast.h"
+RE_INT_CAST = re.compile(r"\bstatic_cast(\s*<\s*(?:[su](?:8|16|32|64)|ps2e_[su](?:8|16|32|64)|u?int(?:8|16|32|64)_t|"
+                         r"(?:(?:un)?signed\s+)?(?:char|short|int|long\s+long|long)|unsigned|signed)\s*>\s*\()")
+
 
 def rewrite_arm(text):
     log = {"fences": 0, "thunks_export": [], "thunks_import": [], "raw_blocks": [], "touch": 0, "lqsq": 0,
            "unrecognised_asm": 0, "trampoline_f_renamed": 0, "kept_portable_asm": 0, "stagger": 0}
+
+    text, log["int_casts"] = RE_INT_CAST.subn(r"te_int_cast\1", text)
 
     def stagger(m):
         log["stagger"] += 1
@@ -132,7 +144,8 @@ def main():
     defs = [f"-D{d}" for d in a.defs]
     report = {"src": a.src, "out": a.out, "ok": False, "stage": None, "rewrites": None, "errors": [], "stderr": "",
               "target": "armv7 (arm-vita-eabi)"}
-    r = subprocess.run([a.gxx, "-E", *flags, *inc, *defs, a.src], capture_output=True, text=True)
+    r = subprocess.run([a.gxx, "-E", *flags, *inc, *defs, "-include", str(INT_CAST_HEADER), a.src], capture_output=True,
+                       text=True)
     if r.returncode != 0:
         report["stage"] = "preprocess"
         report["stderr"] = r.stderr

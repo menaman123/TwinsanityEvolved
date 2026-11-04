@@ -2,6 +2,7 @@
 #include "stream_service.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include "engine/services/read_timing.h"
 #include "savestate.h"
 #include "te_host.h"
+#include "te_link_ahead.h"
 #include "te_prof.h"
 #include "te_services.h"
 
@@ -24,8 +26,8 @@ bool Trace() {
     static const bool on = std::getenv("TE_STREAM_TRACE") && std::getenv("TE_STREAM_TRACE")[0] == '1';
     return on;
 }
-// TE_STREAM_DRIVE_SCALE=x: the drive's time scaled (1 = the modelled DVD; 0.25 = a drive four times as fast: the
-// FEATURES "load turbo"; floor 0.01). The deliveries stay deterministic at any scale.
+// TE_STREAM_DRIVE_SCALE=x: the drive's time scaled (1 = the modelled DVD; 0.25 = a drive four times as fast; floor 0.01).
+// The deliveries stay deterministic at any scale.
 double DriveScale() {
     static const double scale = [] {
         const char* s = std::getenv("TE_STREAM_DRIVE_SCALE");
@@ -34,6 +36,19 @@ double DriveScale() {
     }();
     return scale;
 }
+// TE_STREAM_WAIT_CARD=1: in play a landing waits for the card as it did before (the game thread blocked until the reader
+// thread has the bytes, at the drive model's time), and a load's poll for as long as the card takes -- for an A/B against
+// the default, where the read stays in flight
+bool WaitCardKnob() {
+    static const bool on = std::getenv("TE_STREAM_WAIT_CARD") && std::getenv("TE_STREAM_WAIT_CARD")[0] == '1';
+    return on;
+}
+// A read of the archive this close to its entry's end needs no read-ahead of the rest (the span read-ahead brings 256 KB)
+constexpr size_t kEntryAheadMin = 256 * 1024;
+// ... and an entry's rest is read ahead up to this much
+constexpr uint64_t kEntryAheadMax = 8u << 20;
+// A wait parks frames for the card at most this long, then waits on the reader (its own fallback reads a job still queued)
+constexpr double kCardParkMaxMs = 3000.0;
 // The services' disc (opened on first use: a seam body reached before System::Initialise constructs what it needs).
 const IsoFs* Disc() {
     te::Disc& disc = te::Services::Get().disc();
@@ -55,12 +70,24 @@ void StreamService::Reset() {
     last_size_ = 0;
     hooked_ = false;
     instant_set_ = false;
+    loading_ = false;
+    device_ = {};
     count_ = {};
+    card_ = {};
 }
 
 void StreamService::SetInstant(bool instant) {
     instant_ = instant;
     instant_set_ = true;
+}
+
+void StreamService::SetLoading(bool loading) {
+    if (loading == loading_) return;
+    loading_ = loading;
+    te::io::PauseLinks(loading);   // a load's reads have the card to themselves (the linked chunks after it)
+    // what is in flight as a load begins lands as soon as its bytes are there (the reads issued in the load stay so after it)
+    if (loading_)
+        for (auto& [channel, p] : pending_) p.device = true;
 }
 
 void StreamService::EnsureTiming() {
@@ -75,6 +102,11 @@ void StreamService::EnsureTiming() {
         cfg.poll_latency_scale = DriveScale();
         cfg.latency_scale = DriveScale();
         timing_.reset(new ReadTiming(cfg));
+    }
+    static bool exit_line = false;
+    if (!exit_line && te::io::Async()) {
+        exit_line = true;
+        std::atexit([] { LogWindow(0, 0); });   // the run's landings for the card at exit
     }
     if (!hooked_) {
         // The boundary hook: the reads whose drive end lies inside the frame that ended land before the next frame.
@@ -313,10 +345,54 @@ void StreamService::LandPending(int32_t channel, const char* site) {
     Land(channel, p);
 }
 
+bool StreamService::LandingWaits() { return te::GetSettings().deterministic || WaitCardKnob(); }
+
+bool StreamService::Due(const Pending& p, double frame_end_ms) {
+    // a load's read: in place once its bytes are -- at once under the deterministic profile (the landing waits for the reader
+    // thread: the same landings as a computer's synchronous read), else once the reader thread is done with it
+    if (p.device) return !p.read || te::GetSettings().deterministic || te::io::Done(p.read.get());
+    // the drive model's time; and in play, a read on the reader thread once the card has given its bytes too (the card slower
+    // than the drive: the read stays in flight and lands at the first poll / boundary after that -- the game polls on, as it
+    // did with a slow DVD; under the deterministic profile the landing waits for them: the model's exact landings)
+    return p.end_ms <= frame_end_ms && (!p.read || LandingWaits() || te::io::Done(p.read.get()));
+}
+
+void StreamService::NoteLate(Pending& p) {
+    // the drive model's time has come and the card has not given the bytes: the read put off (once per read)
+    if (p.late) return;
+    p.late = true;
+    ++card_.late_reads;
+    card_.late_bytes += p.read ? p.read->size : 0;
+}
+
+bool StreamService::LoadPollWaits() { return LoadPollBudgetMs() > 0; }
+
+double StreamService::LoadPollBudgetMs() {
+    // a frame of a load spends up to three quarters of its field on the load (the card's reads and the game's parse of what
+    // they bring); the rest is the loading picture's
+    const double field_ms = te::GetSettings().field_hz == 50 ? 20.0 : kFrameMs;
+    return 0.75 * field_ms - te::Services::Get().clock().MsSinceRelease();
+}
+
 void StreamService::ForceChannel(int32_t channel) {
-    if (pending_.count(channel) == 0) return;
+    const auto it = pending_.find(channel);
+    if (it == pending_.end()) return;
+    if (it->second.read && !te::io::Done(it->second.read.get())) ++card_.forced_waits;   // (the landing waits for the card)
     ++count_.forced;
     LandPending(channel, "force");
+}
+
+void StreamService::AheadEntry(uint64_t at, size_t bytes) {
+    // the rest of the archive entry this read starts (the game reads its entries through: 128 KB blocks every few frames,
+    // pieces several a frame): read ahead whole in the reader's big pieces, this read its first (disc_reader.h, Ahead::Entry)
+    if (!te::io::AheadBudget()) return;
+    archive::Entry entry;
+    if (!archive::EntryAt(at, entry)) return;
+    const uint64_t end = std::min<uint64_t>(entry.image + entry.size, at + kEntryAheadMax);
+    if (at + bytes > end || end - (at + bytes) <= kEntryAheadMin) return;
+    const IsoFs* iso = Disc();
+    if (!iso || te::io::AheadHas(iso, at, at + bytes)) return;
+    if (te::io::ReadAhead(iso, at, end, te::io::Ahead::Entry, "entry", bytes)) ++card_.entries_ahead;
 }
 
 void StreamService::Issue(int32_t channel, int32_t file, uint32_t offset, uint32_t size, uint32_t destination, bool bank, uint32_t bank_id) {
@@ -339,6 +415,7 @@ void StreamService::Issue(int32_t channel, int32_t file, uint32_t offset, uint32
         // the count, which the extents give (ReadRange's clamps).
         bytes = ExpectedBytes(image_offset, file_size, offset, size);
         if (bytes) {
+            AheadEntry(image_offset + offset, bytes);
             p.read.reset(new te::io::Job);
             p.read->offset = image_offset + offset;
             p.read->size = bytes;
@@ -346,13 +423,40 @@ void StreamService::Issue(int32_t channel, int32_t file, uint32_t offset, uint32
             te::io::Submit(p.read.get(), Disc());
         }
         if (bytes != size) ++count_.short_reads;
+    } else if (loading_) {
+        // a load at the device's speed: the device's own read, timed for the census
+        const auto t0 = std::chrono::steady_clock::now();
+        ReadRange(file, offset, size, p.bytes);
+        device_.read_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        bytes = p.bytes.size();
     } else {
         ReadRange(file, offset, size, p.bytes);
         bytes = p.bytes.size();
     }
-    if (instant_ || !known || bytes == 0) {
-        // The instant model, or nothing to transfer (an unknown/closed file, a read past the end): complete now.
+    if (loading_ && known && bytes) {
+        // A load at the device's speed: its reads counted, and the drive model's head left where this one ends (the first
+        // read after the load seeks from there; the model's busy time is not advanced)
+        ++device_.reads;
+        device_.bytes += bytes;
+        ReadTiming::Position at = timing_->Capture();
+        at.head_lba = static_cast<uint32_t>((image_offset + offset + bytes - 1) / IsoFs::kSectorSize + 1);
+        timing_->Restore(at);
+        if (Trace())
+            std::fprintf(stderr, "[stream] ch%d read at the device's speed: #%d +0x%X %zu bytes @%llu (%s)\n", channel, file, offset, bytes,
+                         (unsigned long long)p.issue_boundary, p.read ? "on the reader thread" : "in the call");
+    }
+    if (instant_ || !known || bytes == 0 || (loading_ && !p.read)) {
+        // The instant model, nothing to transfer (an unknown/closed file, a read past the end), or a load's read whose bytes
+        // are here (read in the call): complete now.
         Land(channel, p);
+        return;
+    }
+    if (loading_) {
+        // A load's read on the reader thread (the PS Vita): in place once the card's read ends -- the first poll, boundary or
+        // wait after that (a save state records it due at once: this frame's end)
+        p.device = true;
+        p.end_ms = FrameEndMs();
+        pending_[channel] = std::move(p);
         return;
     }
     // The drive: issued at this frame's start, after whatever the drive is still doing; the seek from where its head
@@ -389,13 +493,24 @@ bool StreamService::IsReading(int32_t channel) {
     if (!ValidChannel(channel)) { ++count_.bad_channel; return false; }
     const auto it = pending_.find(channel);
     if (it == pending_.end()) return false;
-    if (it->second.end_ms <= FrameEndMs()) {
-        // The drive finishes inside this frame: the console's EE saw the read complete at this poll
+    const double edge = FrameEndMs();
+    // A load's read the reader thread still has: the poll waits for the card for what is left of this frame's three quarters
+    // of a field (te::Clock::MsSinceRelease) -- the reads at the card's own speed, the loading picture's frames kept
+    // (TE_STREAM_WAIT_CARD=1: the poll waits for the card however long, as before)
+    const bool load_read = it->second.device && it->second.read && !Due(it->second, edge) && LoadPollWaits() &&
+                           (WaitCardKnob() || te::io::WaitFor(it->second.read.get(), LoadPollBudgetMs(), "a load's poll"));
+    if (load_read || Due(it->second, edge)) {
+        // The drive finishes inside this frame: the console's EE saw the read complete at this poll. A load's read: the
+        // reader thread has its bytes
         ++count_.poll_delivered;
         LandPending(channel, "poll");
         return false;
     }
     // Still reading: the poll cost the EE a STREAM status round trip (the frame budget loops see it)
+    if (!it->second.device && it->second.end_ms <= edge) {
+        NoteLate(it->second);   // (the drive is done; the card is not)
+        ++card_.late_polls;
+    }
     ++count_.busy_polls;
     te::Services::Get().clock().ChargeInFrame(kPollChargeTicks);
     if (Trace() && (count_.busy_polls % 500) == 0)
@@ -411,11 +526,25 @@ int32_t StreamService::Wait(int32_t channel) {
     // The EE blocks until the drive is done: whole frames pass (the boundary: field tick, pads, checkpoint) while the
     // end lies past the frame's edge. The map may change under Boundary() (the hook lands other channels; a
     // checkpoint may resume in another process): re-find after each park.
+    double card_since = -1;
     while (true) {
         const auto it = pending_.find(channel);
         if (it == pending_.end()) return 0;
-        if (it->second.end_ms <= FrameEndMs()) break;
-        ++count_.wait_parks;
+        Pending& p = it->second;
+        if (p.device) break;   // (a load's read: the landing waits for its bytes)
+        if (p.end_ms > FrameEndMs()) {
+            ++count_.wait_parks;
+            te::Services::Get().clock().Boundary();
+            continue;
+        }
+        if (!p.read || LandingWaits() || te::io::Done(p.read.get())) break;
+        // In play the card slower than the drive: whole frames parked for it as for the drive (the boundary's field tick,
+        // the pads, the sound), not the game thread blocked in the reader's wait; past kCardParkMaxMs the landing waits
+        const double now = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (card_since < 0) card_since = now;
+        if (now - card_since > kCardParkMaxMs) break;
+        NoteLate(p);
+        ++card_.parks;
         te::Services::Get().clock().Boundary();
     }
     ++count_.wait_delivered;
@@ -432,7 +561,14 @@ void StreamService::OnBoundary(uint64_t boundary) {
     const double ended = static_cast<double>(boundary) * FrameMs();
 #endif
     std::vector<int32_t> due;
-    for (const auto& [channel, p] : pending_) if (p.end_ms <= ended) due.push_back(channel);
+    for (auto& [channel, p] : pending_) {
+        if (Due(p, ended)) {
+            due.push_back(channel);
+        } else if (!p.device && p.end_ms <= ended) {
+            NoteLate(p);   // (the drive is done; the card is not: in place at a later boundary or poll)
+            ++card_.late_boundaries;
+        }
+    }
     for (int32_t channel : due) {
         ++count_.boundary_delivered;
         LandPending(channel, "boundary");
@@ -569,6 +705,29 @@ bool StreamService::Restore(const std::vector<uint8_t>& payload, std::string* er
         }
     }
     return true;
+}
+
+void LogWindow(uint64_t from, uint64_t to) {
+    static StreamService::CardCount last;
+    static uint64_t last_music = 0;
+    const StreamService::CardCount now = Service().Card();
+    const uint64_t music = te::audio::Service().MusicCardPutOffs();
+    if (from || to) {
+        if (now.late_reads == last.late_reads && now.parks == last.parks && now.forced_waits == last.forced_waits &&
+            now.entries_ahead == last.entries_ahead && music == last_music)
+            return;
+    }
+    std::fprintf(stderr, "[te.stream] presents %llu-%llu: %llu reads put off for the card (%.1f MB: the drive model's time came before "
+                 "the card's bytes; the game polled on -- %llu polls and %llu boundaries found them still reading), %llu frames "
+                 "parked for the card in a wait, %llu landings forced while the card had them; %llu archive entries read ahead "
+                 "from their first read; the music not ready yet for the card %llu times (its window's first blocks)\n",
+                 (unsigned long long)from, (unsigned long long)to, (unsigned long long)(now.late_reads - last.late_reads),
+                 double(now.late_bytes - last.late_bytes) / 1048576.0, (unsigned long long)(now.late_polls - last.late_polls),
+                 (unsigned long long)(now.late_boundaries - last.late_boundaries), (unsigned long long)(now.parks - last.parks),
+                 (unsigned long long)(now.forced_waits - last.forced_waits), (unsigned long long)(now.entries_ahead - last.entries_ahead),
+                 (unsigned long long)(music - last_music));
+    last = now;
+    last_music = music;
 }
 
 StreamService& Service() {

@@ -376,9 +376,21 @@ constexpr const char* kDiagnosisEnv[][2] = {
     {"TE_GFX_SUMMARY_EVERY", "300"},
     {"TE_PROF", "1"},
     {"TE_PROF_EVERY", "300"},
-    // every tick over 50 ms (two and a half fields at 50 Hz: a hitch) logged with its load work -- textures, model parts,
-    // native meshes, the waits, vitaGL's allocations -- and the game thread's sections sampled in it (te_load_census.h)
-    {"TE_TICK_LOG_MS", "50"},
+    // every tick over 25 ms (a field and a quarter at 50 Hz: a missed field) logged with its load work -- textures, model
+    // parts, native meshes, the waits, vitaGL's allocations -- and the game thread's sections sampled in it
+    // (te_load_census.h). At most 40 such lines a census window (TE_TICK_LOG_CAP): past them only the ticks of 50 ms or
+    // more and the window's longest so far, the others counted by their profile's top section in the window's "[te.load]
+    // ... slow ticks not logged" line -- a device log of a heavy view at 30 ticks a second had up to 450 ticks over 25 ms
+    // in one window
+    {"TE_TICK_LOG_MS", "25"},
+    {"TE_TICK_LOG_CAP", "40"},
+    // the drawing side of the same: every picture over 25 ms on the drawing thread (its wait for the GPU's room, its
+    // drawing, its present call), with the drawing thread's sections sampled in it (graphics.cpp SlowPictureLine: "[te.gfx]
+    // picture: present N took ...") -- under the low-latency hand-over the game thread never waits for the drawing thread,
+    // so a burst of particles or blended pieces that the GPU or the builds cannot keep up with shows here and not in the
+    // tick log; capped as the ticks are
+    {"TE_PICTURE_LOG_MS", "25"},
+    {"TE_PICTURE_LOG_CAP", "40"},
     // (the lean PS2 programs are always on -- their off arm would also turn the raw mesh draws off, which need a
     // lean mesh-path program -- so the log's PS2 program lines and GPU probes are the lean programs' throughout;
     // the game thread's fast seams (TE_GAMECPU2) are always on, no TE_AB; the Vita's tick lock runs its default
@@ -389,10 +401,12 @@ constexpr const char* kDiagnosisEnv[][2] = {
     // window in both mesh forms; the native meshes' A/B -- TE_GFX_VITA_MESH_INDEX=ab600 -- gave no comparable windows
     // (different scenes in each arm). Both now run their defaults: packets on, the meshes indexed (an earlier build's were the
     // triangle lists); every census line that an arm changes says which arm its window ran.)
-    // the GPU's own fill census (engine/render/backends/gl/gl_fill_census.h): one frame in 32 every draw counts the samples
-    // that pass its depth / stencil tests in a GXM visibility counter, with its true screen box and its vertices -- the
-    // "[te.gfx.vita] fill per sampled frame" lines (2 GXM calls a draw on the sampled frames only)
-    {"TE_GFX_VITA_FILL", "32"},
+    // (NO GPU FILL CENSUS: TE_GFX_VITA_FILL is not in the built-in set. It is the one entry that changes what the GPU runs
+    // -- one frame in 32 every draw counts its samples in a GXM visibility counter, the punch-through (alpha-tested) draws
+    // included, whose samples the GPU knows only once their pixel programs have run -- and the built-in arguments are
+    // every player's run. A player's console locked up in that stage: a punch-through draw of the frame target with its
+    // pixel tasks resident, no memory fault, the counters on. An args.txt token TE_GFX_VITA_FILL=32 still runs it for a
+    // device measurement: the "[te.gfx.vita] fill per sampled frame" lines.)
     // the profile's tail: 40 rows per thread down to 0.2 % of its samples (te_prof.cpp; defaults 16 / 0.5 %) --
     // the game thread's seams below the top 16 (each 0.2-0.8 % of a hub tick on the device) get their own rows
     {"TE_PROF_ROWS", "40"},
@@ -408,6 +422,16 @@ constexpr const char* kDiagnosisEnv[][2] = {
     // compared with the replica's -- the player's real sticks and buttons check it on the device (a line every 100 checks:
     // "pad check ... N compared with SDL's own read, M differ"); ~0.4 ms once in 60 ticks, no effect on the pad's sample
     {"TE_VITA_PAD_CHECK", "60"},
+    // the processor's and the memory's ceilings measured once at start-up before the game runs (~0.2 s;
+    // platform/nativeee/host/te_machine_bench.cpp): the "[te.machine]" lines -- a VFP / NEON operation's latency and
+    // throughput, a VMRS flag transfer, a load's latency in L1 / L2 / DRAM by working set, the streaming bandwidth of one
+    // core and of two at once, a call, a division, a thread_local read -- what the game's measured cycles are set against
+    {"TE_MACHINE_BENCH", "1"},
+    // a line each time a chunk's files, link depths, scenery or drawing change (platform/nativeee/host/te_link_ahead.h
+    // TE_CHUNK_LOG): when the next part of a level was in, against when the player looked into it -- walls missing through a
+    // doorway are a chunk still loading, a chunk reached with nothing drawn, or a chunk drawn (the draws then lack what they
+    // sample). At most 1000 lines a run; read-only (the game's loaders' and chunks' words)
+    {"TE_CHUNK_LOG", "1"},
 };
 
 void ApplyDiagnosisEnv() {

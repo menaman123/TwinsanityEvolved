@@ -1,0 +1,27 @@
+# cutscene reach fixture (tools/cutscenes/reach.py): site 5721 COM_FINAL_BOSS_DEFAULT
+# card: tools/warp_save.py --card <hub card> --chunk 'levels\altearth\core\throne' --place 0xFFFF --character crash --story 23
+# chunk=levels\altearth\core\throne
+# story=23
+# character=crash
+# reach: the throne room at story 23: walk 9 units forward into the first-entry volume at z -54.9, which tells the final boss 87 (its default, after starting its actors, waits for any message)
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# text-language=english
+# speech-language=english
+1 0000 128 128 128 128  # NONE
+1271 0008 128 128 128 128  # START
+1276 0000 128 128 128 128  # NONE
+1354 0040 128 128 128 128  # DOWN
+1357 0000 128 128 128 128  # NONE
+1404 4000 128 128 128 128  # CROSS
+1409 0000 128 128 128 128  # NONE
+1804 0040 128 128 128 128  # DOWN
+1807 0000 128 128 128 128  # NONE
+1904 4000 128 128 128 128  # CROSS
+1907 0000 128 128 128 128  # NONE
+2751 4000 128 128 128 128  # CROSS
+2754 0000 128 128 128 128  # NONE
+2801 0000 129 1 128 128  # NONE
+2816 0000 130 1 128 128  # NONE
+2820 0000 128 128 128 128  # NONE
+2821 0000 128 128 128 128  # NONE
+# end at boundary 7200

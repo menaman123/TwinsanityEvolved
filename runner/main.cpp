@@ -51,9 +51,13 @@
 #include "te_display.h"
 #include "te_input.h"
 #include "te_language.h"
+#include "te_link_ahead.h"
+#include "te_loading.h"
 #include "te_mods.h"
 #include "te_autopilot.h"
 #include "te_probe.h"
+#include "te_cutscenes.h"
+#include "te_test_requests.h"
 #include "te_profile.h"
 #include "te_prof.h"
 #include "te_savestate.h"
@@ -95,7 +99,7 @@ std::string g_load_now;   // the path the host restores when the fiber yields wi
 
 void Usage() {
     std::fprintf(stderr, "usage: twinsanityevolved (--iso <image> [--elf-in-iso NAME] [--region-map FILE] | --elf <file>) [--dry-run] [--verify-disc] [--verbose] [--run-seconds N] [--test-trap] [--trace-state]\n"
-                         "       [--deterministic] [--hz 60|50] [--language <name>|0..7] [--text-language <name>] [--speech-language <name>] [--language-bank N] [--config ps2r.ini|none] [--aspect auto|4:3|16:9|16:10|21:9] [--frame-rate 30|60|120|144|240|uncapped] [--fps-counter on|off] [--mod ID ...] [--mc-dir DIR] [--mods-dir DIR] [--no-sdl-input] [--no-kbm] [--press 0xBUTTONS] [--no-audio] [--skip-movies] [--stream-instant]\n"
+                         "       [--deterministic] [--hz 60|50] [--language <name>|0..7] [--text-language <name>] [--speech-language <name>] [--language-bank N] [--config ps2r.ini|none] [--aspect auto|4:3|16:9|16:10|21:9] [--frame-rate 30|60|120|144|240|uncapped] [--fps-counter on|off] [--mod ID ...] [--mc-dir DIR] [--mods-dir DIR] [--no-sdl-input] [--no-kbm] [--press 0xBUTTONS] [--no-audio] [--skip-movies] [--disc-speed device|console] [--stream-instant]\n"
                          "       [--save-state PATH@BOUNDARY ...] [--load-state PATH] [--stop-at BOUNDARY] [--present-ct16]\n"
                          "       [--record-pad FILE] [--play-pad FILE] [--pad-script FILE] [--inject-key KEY@FROM-TO ...] [--close-at BOUNDARY]\n"
                          "       [--harness-out DIR]\n"
@@ -105,10 +109,14 @@ void Usage() {
 // The checkpoint (te::savestate::Checkpoint, the last statement of te::Clock::Boundary) on the game fiber: yield to
 // the host when a save is due; the host writes it and resumes. Nothing else happens here.
 void OnCheckpoint(uint64_t boundary) {
-    for (SaveRequest& r : g_save_requests) {
-        if (r.done || boundary < r.at) continue;
-        r.done = true;
-        g_save_now = r.path;
+    // By index, re-read after every Yield: a state saved from inside this loop carries this frame on the game fiber's stack, and
+    // a later load in ANOTHER process resumes it there -- an iterator or reference into the saving process's vector storage
+    // would be a stale pointer then (a state saved by a run with two --save-state requests and loaded by a run with none
+    // faulted on the second one). The loading process's own vector (empty, or its own requests) is read through the global.
+    for (size_t i = 0; i < g_save_requests.size(); ++i) {
+        if (g_save_requests[i].done || boundary < g_save_requests[i].at) continue;
+        g_save_requests[i].done = true;
+        g_save_now = g_save_requests[i].path;
         te::game::Yield(te::game::Reason::Checkpoint, 0, boundary);
     }
     // The paths go straight into the globals: NO heap-owning local may be live across a Yield here -- the saved stack carries
@@ -153,6 +161,8 @@ int main(int argc, char** argv) {
     uint32_t press = 0;
     std::string load_state, record_pad, play_pad, pad_script, harness_out, autopilot, dump_collision, config_path, aspect_override, frame_rate_override;
     int fps_counter_override = -1;   // --fps-counter on|off for this run (the judge's arms); -1 = the file's / off
+    int disc_speed_override = -1;    // --disc-speed console|device for this run (te_loading.h): 0 / 1; -1 = the file's / the profile's
+    int disc_speed_from_file = -1;   // ps2r.ini's disc.speed as the file sets it (-1: not there)
     bool hz_given = false;           // --hz on the command line wins over ps2r.ini's game.hz
     bool hz_from_settings = false;   // a settings file is in play: the GAME RATE row reads its (or the default) value back
     char hz_source[112] = "the default 60: no settings file";   // where the game rate came from (the Vita's start-up line)
@@ -202,7 +212,7 @@ int main(int argc, char** argv) {
         else if (a == "--language-bank") { std::string v; next(v); settings.language_bank = std::atoi(v.c_str()); }   // a slot of the game's language table (diagnostic)
         else if (a == "--config") next(config_path);
         else if (a == "--fps-counter") { std::string v; next(v); fps_counter_override = (v == "on" || v == "1") ? 1 : 0; }   // render fps + game Hz through the game's text system
-        else if (a == "--mod") { std::string v; next(v); mods_on.push_back(v); }   // a built-in mod (level_select, speedrun) on for this run
+        else if (a == "--mod") { std::string v; next(v); mods_on.push_back(v); }   // a built-in mod (level_select, speedrun, infinite_lives) on for this run
         else if (a == "--aspect") { std::string v; next(v); aspect_override = v; }
         else if (a == "--frame-rate") { std::string v; next(v); frame_rate_override = v; }   // the presenter's cadence for this run (30|60|120|144|240|uncapped)   // the display shape for this run (auto|4:3|16:9|16:10|21:9; the judge's arm)   // the settings file read (and written by the Options menu); default <home>/.twinsanityevolved/ps2r.ini, `none` = no file
         else if (a == "--mc-dir") { next(settings.mc_dir); mc_dir_arg = settings.mc_dir; }
@@ -213,6 +223,11 @@ int main(int argc, char** argv) {
         else if (a == "--no-audio") no_audio = true;   // mix without opening the SDL audio device (headless / CI)
         else if (a == "--skip-movies") settings.skip_movies = true;   // FEATURES: every movie skipped (the stub's behaviour)
         else if (a == "--stream-instant") settings.stream_instant = true;   // A/B: the pre-drive-model stream façade (reads complete in the call)
+        else if (a == "--disc-speed") {   // a load's reads at the device's speed (device) or the console's (console), for this run
+            std::string v; next(v);
+            if (v != "device" && v != "console") { std::fprintf(stderr, "[twinsanityevolved] --disc-speed: device|console\n"); return 2; }
+            disc_speed_override = v == "device" ? 1 : 0;
+        }
         else if (a == "--present-ct16") settings.present_ct16 = true;   // the retail look -- the dithered 16-bit present (TE_GFX_PRESENT_CT16=1 too)
         else if (a == "--trace-state") trace_state = true;   // log GameController::State() changes at the boundaries (title judge)
         else if (a == "--trace-player") { std::string v; next(v); trace_player = unsigned(std::atoi(v.c_str())); if (!trace_player) trace_player = 1; }   // authoring probe: position/chunk/state every N boundaries
@@ -368,6 +383,11 @@ int main(int argc, char** argv) {
                 {   // display.fps_counter / video.frame_rate -- read by name so the port still builds against an engine without the keys
                     std::string v;
                     if (cfg.Get("display.fps_counter", &v)) display.fps_counter = v == "on";
+                    // disc.speed only as the file sets it (the default is the profile's: below)
+                    if (ps2r::SettingsFile::GetFromText(text, "disc.speed", &v)) {
+                        if (v == "device" || v == "console") disc_speed_from_file = v == "device" ? 1 : 0;
+                        else std::fprintf(stderr, "[twinsanityevolved] settings: disc.speed = %s is not device or console: the default\n", v.c_str());
+                    }
                     ps2r::ps2e::PresentPacer::Rate rate;
 #if defined(__vita__)
                     // the Vita: the FRAME RATE row is the tick lock -- display.tick_lock = auto (60/30) | 60 | 30
@@ -536,6 +556,12 @@ int main(int argc, char** argv) {
         settings.mc_dir += "-" + region.entry->serial;
         std::fprintf(stderr, "[twinsanityevolved] saves: %s keeps its own memory card: %s\n", region.entry->disc_words.c_str(), settings.mc_dir.c_str());
     }
+    // THE DISC SPEED (te_loading.h): --disc-speed for the run, else the file's disc.speed, else the profile's -- the device's in
+    // play mode (a player's), the console's under --deterministic (the reference profile: the fixtures' timelines, every judge)
+    settings.disc_speed_given = disc_speed_override >= 0 || disc_speed_from_file >= 0;
+    settings.disc_speed = (disc_speed_override >= 0 ? disc_speed_override == 1 : disc_speed_from_file >= 0 ? disc_speed_from_file == 1
+                                                                                                          : !settings.deterministic)
+                              ? te::Settings::DiscSpeed::Device : te::Settings::DiscSpeed::Console;
     te::SetSettings(settings);
     // the built-in mods (all off unless ps2r.ini or --mod says so; the switches persist through the Options > Mods page),
     // then the mods folder's beside them
@@ -846,8 +872,27 @@ int main(int argc, char** argv) {
     if (!pad_script.empty() && !te::padlog::Script(pad_script, &pad_error)) { std::fprintf(stderr, "[twinsanityevolved] padlog: %s\n", pad_error.c_str()); return 2; }
     if (!autopilot.empty() && !te::autopilot::Load(autopilot, &pad_error)) { std::fprintf(stderr, "[twinsanityevolved] autopilot: %s\n", pad_error.c_str()); return 2; }
     if (!record_pad.empty() && !te::padlog::Record(record_pad, &pad_error)) { std::fprintf(stderr, "[twinsanityevolved] padlog: %s\n", pad_error.c_str()); return 2; }
+    // The loads (te_loading.h): the game's state at every boundary tells the stream service when a load reads at the device's
+    // speed (the disc speed is settled: the run's, the file's, the profile's or the pad log's)
+    te::loading::Install();
+    // The chunks the current chunk links to, read ahead from the card before the game asks for them (te_link_ahead.h: the
+    // reader thread's -- the PS Vita's -- and nothing elsewhere)
+    te::link_ahead::Install();
     if (trace_player) te::probe::Install(trace_player, dump_collision);
     if (trace_bodies) te::probe::InstallBodies(trace_bodies);
+    // The cutscenes' diagnostics (runner/te_cutscenes.h): the scripts' census, the state lines a watched and a skipped run compare
+    if (std::getenv("TE_CUTSCENE_CENSUS")) te::cutscenes::InstallCensus();
+    if (const char* every = std::getenv("TE_CUTSCENE_STATE")) te::cutscenes::InstallState(every);
+    if (const char* start = std::getenv("TE_CUTSCENE_START")) te::cutscenes::InstallStart(start);
+    if (const char* links = std::getenv("TE_CUTSCENE_LINKS")) te::cutscenes::InstallLinks(links);
+    if (std::getenv("TE_CUTSCENE_STARTS")) te::cutscenes::InstallStarts();
+    // what a test asks of the game (platform/nativeee/host/te_test_requests.h): named instances found by the cutscene census's
+    // lookup; TE_TEST_ACTIONS = a fixture's requests at their boundaries (the autopilot's plan steps queue their own)
+    te::test_requests::SetFinder(&te::cutscenes::FindInstance);
+    if (const char* actions = std::getenv("TE_TEST_ACTIONS")) {
+        std::string why;
+        if (!te::test_requests::InstallFromSpec(actions, &why)) { std::fprintf(stderr, "[twinsanityevolved] %s\n", why.c_str()); return 2; }
+    }
     if (trace_state) {
         // The game controller's state word (te::harness::ReadGameState: include/game/gamecontroller.h GameControllerStates
         // through the retail global G_GameController) at every boundary: one line per change, so a run log records when

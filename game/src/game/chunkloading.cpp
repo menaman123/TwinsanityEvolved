@@ -20,6 +20,7 @@
 #include "game/shadows.h"
 #include "game/sound.h"
 #include "game/stream.h"
+#include "platform/system.h"
 #include "retail/libc.h"
 
 // The chunks' loading: loaders of the chunks wanted around what the loading follows, and the links between chunks
@@ -1009,7 +1010,12 @@ bool ChunkLoaderBase::StepStates(bool now)
             {
                 next = Queued;
             }
-            else if ((now || delay < elapsed) && StartLoading(0, now))
+            // TwinsanityEvolved: the second's wait is the streaming's, made for play (a chunk a link reaches is loaded once it
+            // has been wanted a second, so a link brushed past loads nothing). A level loading behind its loading picture moves
+            // nothing and waits it twice, for its chunk and then for the chunks linked to it: the platform ends the wait once
+            // every read the game asked for is in, reading the disc at its device's speed (Platform::System::LoadReadsDone;
+            // the PS2 waits its second)
+            else if ((now || delay < elapsed || Platform::System::LoadReadsDone() != 0) && StartLoading(0, now))
             {
                 next = Loading;
             }

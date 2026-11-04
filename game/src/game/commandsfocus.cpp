@@ -5,6 +5,7 @@
 #include "game/chunkloading.h"
 #include "game/clock.h"
 #include "game/controllers.h"
+#include "game/cutsceneskip.h"
 #include "game/events.h"
 #include "game/instances.h"
 #include "game/layout.h"
@@ -433,7 +434,12 @@ void RunOn(ObjectNode* node, ObjectNode* other, InstanceContext* instance, Scrip
         other->sourceNode = node;
     }
 
-    CallVirtual<u32>(other, other->vtable, ObjectNode::StartBehaviourSlot, starter, instance, 1u, slot.runnerSlot);
+    // TwinsanityEvolved: a behaviour a cutscene agent starts, when the other takes it up (not refused for the one it runs), makes
+    // its instance one of the cutscene's (game/cutsceneskip.h)
+    if (CallVirtual<u32>(other, other->vtable, ObjectNode::StartBehaviourSlot, starter, instance, 1u, slot.runnerSlot) != 0)
+    {
+        NoteCutsceneAgent(node->owner, other->owner);
+    }
 }
 }
 

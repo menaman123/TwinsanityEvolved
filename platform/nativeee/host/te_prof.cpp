@@ -21,6 +21,7 @@
 #endif
 
 #include "disc_reader.h"
+#include "stream_service.h"
 #include "engine/platform/host/platform.h"
 #include "te_mesh_builder.h"
 #include "vita_gpu_census.h"
@@ -58,6 +59,10 @@ struct TickSample {
 };
 TickSample g_tick_ring[kTickRing];
 std::atomic<uint32_t> g_tick_at{0};
+// the drawing thread's samples stamped with the picture it is on (PictureBegin / PictureSections): the same ring's shape
+std::atomic<uint32_t> g_picture{0};
+TickSample g_picture_ring[kTickRing];
+std::atomic<uint32_t> g_picture_at{0};
 // The sampler's period (TE_PROF_US, microseconds). The device: a wake-up every 0.5 ms cost the te-prof thread 2.2 % of a
 // core (device-run6 [te.cpu] te-prof 2.89 ms per present at 7.6 fps, ~11 us a wake-up, each one preempting a busy thread at
 // priority 72) -- 2 ms there is a quarter of that and still ~2500 samples a thread in a 300-present window at 60 fps.
@@ -85,9 +90,6 @@ const char* const kSeamSection[kSeamGroups] = {
     "seam: VU0 matrices (products, transforms)",        "seam: bounds (GetBbox / TriangleBounds)",
     "seam: shadow meshes",                              "seam: particle views",
     "seam: decals",                                     "seam: sky"};
-// the calls: written by the game thread only (a relaxed load and store, no exclusive access), read by the report on the
-// thread that presents
-std::atomic<uint32_t> g_seam_calls[kSeamGroups];
 uint32_t g_seam_calls_seen[kSeamGroups];
 // the report window's wall-clock start (the game seams' milliseconds a present = their share of the samples x the window)
 int64_t g_window_us = 0;
@@ -132,6 +134,10 @@ void Sampler() {
             if (s == kGame && id < kIds) {
                 TickSample& t = g_tick_ring[g_tick_at.fetch_add(1, std::memory_order_relaxed) % kTickRing];
                 t.tick.store(g_tick.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                t.id.store(uint16_t(id), std::memory_order_relaxed);
+            } else if (s == kRender && id < kIds) {
+                TickSample& t = g_picture_ring[g_picture_at.fetch_add(1, std::memory_order_relaxed) % kTickRing];
+                t.tick.store(g_picture.load(std::memory_order_relaxed), std::memory_order_relaxed);
                 t.id.store(uint16_t(id), std::memory_order_relaxed);
             }
         }
@@ -294,11 +300,7 @@ void SeamLine(uint64_t from, uint64_t to, const std::vector<std::pair<uint32_t, 
 
 // ---- the game seams' groups (te_prof.h SeamScope) ------------------------------------------------------------------
 unsigned short g_seam_id[kSeamGroups];
-
-void CountSeam(SeamGroup group) {
-    std::atomic<uint32_t>& c = g_seam_calls[group];
-    c.store(c.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
-}
+std::atomic<uint32_t> g_seam_calls[kSeamGroups];
 
 // ---- the CPU census (the Vita) --------------------------------------------------------------------------------------
 namespace {
@@ -390,7 +392,8 @@ void CpuCensus(uint64_t presents) {
                  (unsigned long long)uint32_t(clamped - clamped_seen));
     fast_seen = fast;
     clamped_seen = clamped;
-    te::io::LogWindow(g_cpu_from + 1, presents);   // the disc reader's window (disc_reader.h)
+    te::io::LogWindow(g_cpu_from + 1, presents);       // the disc reader's window (disc_reader.h)
+    te::stream::LogWindow(g_cpu_from + 1, presents);   // the landings the card put off (stream_service.h)
     g_cpu_wall_us = now;
     g_cpu_from = presents;
 #else
@@ -439,6 +442,7 @@ void StartFromEnv() {
 #else
     BindThread(kGame);
 #endif
+    MachineBench();   // TE_MACHINE_BENCH=1: before the game's threads run
     if (const char* b = std::getenv("TE_PROF_BENCH"); b && (*b == '1' || *b == '2')) Bench();
     const char* v = std::getenv("TE_PROF");
     if (!(v && *v == '1') || g_active) return;
@@ -459,22 +463,42 @@ void TickBegin(uint64_t tick) {
     if (g_active) g_tick.store(uint32_t(tick), std::memory_order_relaxed);
 }
 
-std::string TickSections(uint64_t tick, int rows) {
-    if (!g_active) return std::string();
+void PictureBegin(uint64_t picture) {
+    if (g_active) g_picture.store(uint32_t(picture), std::memory_order_relaxed);
+}
+
+namespace {
+// A ring's samples stamped `tick` (the game thread's ticks, the drawing thread's pictures), by section: (samples, id), the
+// most sampled first; their number in *total
+std::vector<std::pair<uint32_t, unsigned>> TickCounts(const TickSample* ring, uint64_t tick, uint32_t* total) {
     const uint32_t want = uint32_t(tick);
     std::vector<std::pair<uint32_t, unsigned>> counts;   // (samples, id)
-    uint32_t total = 0;
+    *total = 0;
     for (unsigned k = 0; k < kTickRing; ++k) {
-        if (g_tick_ring[k].tick.load(std::memory_order_relaxed) != want) continue;
-        const unsigned id = g_tick_ring[k].id.load(std::memory_order_relaxed);
-        ++total;
+        if (ring[k].tick.load(std::memory_order_relaxed) != want) continue;
+        const unsigned id = ring[k].id.load(std::memory_order_relaxed);
+        ++*total;
         bool found = false;
         for (auto& c : counts)
             if (c.second == id) { ++c.first; found = true; break; }
         if (!found) counts.emplace_back(1u, id);
     }
-    if (!total) return std::string();
     std::sort(counts.begin(), counts.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    return counts;
+}
+
+const char* TopSection(const TickSample* ring, uint64_t tick) {
+    if (!g_active) return nullptr;
+    uint32_t total = 0;
+    const auto counts = TickCounts(ring, tick, &total);
+    return total ? NameOf(counts[0].second) : nullptr;
+}
+
+std::string Sections(const TickSample* ring, uint64_t tick, int rows) {
+    if (!g_active) return std::string();
+    uint32_t total = 0;
+    const auto counts = TickCounts(ring, tick, &total);
+    if (!total) return std::string();
     std::string out;
     char buf[160];
     for (size_t i = 0; i < counts.size() && int(i) < rows; ++i) {
@@ -484,6 +508,12 @@ std::string TickSections(uint64_t tick, int rows) {
     }
     return out;
 }
+}  // namespace
+
+const char* TickTopSection(uint64_t tick) { return TopSection(g_tick_ring, tick); }
+std::string TickSections(uint64_t tick, int rows) { return Sections(g_tick_ring, tick, rows); }
+const char* PictureTopSection(uint64_t picture) { return TopSection(g_picture_ring, picture); }
+std::string PictureSections(uint64_t picture, int rows) { return Sections(g_picture_ring, picture, rows); }
 
 void OnPresent(uint64_t presents) {
     if (!g_active || presents % uint64_t(g_every) != 0) return;

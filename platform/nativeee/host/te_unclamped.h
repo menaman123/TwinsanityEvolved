@@ -27,7 +27,17 @@
 
 namespace te::unclamped {
 
+#if defined(__vita__)
+// the FPSCR's rounding field read in line (bits 22-23; 3 = toward zero, newlib's FE_TOWARDZERO): fegetround is a library call,
+// made on every scale blend and collision edge test (~1200 a picture at the rooftop's far view)
+inline bool Applies() {
+    uint32_t fpscr;
+    asm volatile("vmrs %0, fpscr" : "=r"(fpscr));
+    return ((fpscr >> 22) & 3u) == 3u;
+}
+#else
 inline bool Applies() { return std::fegetround() == FE_TOWARDZERO; }
+#endif
 
 inline bool FiniteWords(const float* words, size_t n) {
     uint32_t special = 0;
@@ -86,10 +96,9 @@ inline bool StartEdgesApply(const Vector& start, const Vector& end, const title:
     return Applies() && FiniteXyz(start) && FiniteXyz(end) && FiniteXyz(triangle[0]) && FiniteXyz(triangle[1]) &&
            FiniteXyz(triangle[2]);
 }
-// EvaluateStartEdges, statement for statement
-inline title::CollisionMath::EdgeSetup StartEdges(const Vector& start, const Vector& end,
-                                                 const title::CollisionMath::Triangle& triangle) {
-    title::CollisionMath::EdgeSetup result{};
+// EvaluateStartEdges, statement for statement, written into `result` (every member: nothing of its earlier value is left)
+inline void StartEdgesInto(const Vector& start, const Vector& end, const title::CollisionMath::Triangle& triangle,
+                           title::CollisionMath::EdgeSetup& result) {
     result.direction = SubtractPoints(end, start);
     result.diagonal = SubtractPoints(triangle[2], triangle[0]);
     for (size_t edge = 0; edge < 3; ++edge) {
@@ -104,6 +113,30 @@ inline title::CollisionMath::EdgeSetup StartEdges(const Vector& start, const Vec
     for (size_t i = 0; i < 6; ++i) result.pending[i] = SubtractPoints(triangle[vertices[i]], start);
     for (size_t i = 0; i < 2; ++i) result.pending[i] = MultiplyPoints(result.pending[i], result.edge_normals[0]);
     result.last_cross_products = CrossTerms(result.direction, result.edges[2]);
+}
+inline title::CollisionMath::EdgeSetup StartEdges(const Vector& start, const Vector& end,
+                                                 const title::CollisionMath::Triangle& triangle) {
+    title::CollisionMath::EdgeSetup result{};
+    StartEdgesInto(start, end, triangle, result);
+    return result;
+}
+
+// ---- the animations' scale blend (title::JointMath::Lerp, joint_math.cpp) -------------------------------------------
+// ScalarSum / ScalarDifference / ScalarProduct pass both operands and the result through MacroClamp (an infinity or a NaN
+// becomes the largest finite number of its sign): 45 clamps a call, each a VFP-to-core transfer and back on the
+// Cortex-A9. The same argument as above: with every operand finite and the thread rounding toward zero, every clamp is the
+// identity. Per lane (from + 0) - from * share, then + to * share; w = 1. (The w lanes are never read.)
+inline bool LerpApplies(const Vector& from, const Vector& to, float share) {
+    return FiniteXyz(from) && FiniteXyz(to) && FiniteWords(&share, 1) && Applies();
+}
+inline Vector Lerp(const Vector& from, const Vector& to, float share) {
+    Vector result{};
+    for (size_t lane = 0; lane < 3; ++lane) {
+        float accumulated = from[lane] + 0.0f;
+        accumulated = accumulated - from[lane] * share;
+        result[lane] = accumulated + to[lane] * share;
+    }
+    result[3] = 1;
     return result;
 }
 

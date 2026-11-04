@@ -4,6 +4,7 @@
 #include "engine/platform/host/platform.h"
 #include PS2R_GL_HEADER
 
+#include "engine/render/backends/gl/gl_gpu_lifetime.h"
 #include "engine/render/backends/gl/gl_state_cache.h"
 
 namespace ps2r {
@@ -70,6 +71,7 @@ void GlTexturePool::Retire(uint32_t tex, int width, int height, GlStateCache& st
 #if !PS2R_HOST_VITA
         if (v.fence) glDeleteSync(static_cast<GLsync>(v.fence));
 #endif
+        if (gpu_lifetime::On()) gpu_lifetime::Texture(v.tex, v.w, v.h, gpu_lifetime::Event::Free, "the pool's eviction");
         st.DeleteTextures(1, &v.tex);
         bytes_ -= static_cast<uint64_t>(v.w) * v.h * 4ull;
         entries_[oldest] = entries_.back();
@@ -82,6 +84,7 @@ void GlTexturePool::DropAll(GlStateCache& st) {
 #if !PS2R_HOST_VITA
         if (e.fence) glDeleteSync(static_cast<GLsync>(e.fence));
 #endif
+        if (gpu_lifetime::On()) gpu_lifetime::Texture(e.tex, e.w, e.h, gpu_lifetime::Event::Free, "the pool emptied");
         st.DeleteTextures(1, &e.tex);
     }
     entries_.clear();

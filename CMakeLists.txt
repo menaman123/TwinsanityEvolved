@@ -43,12 +43,13 @@ option(TE_VITA "The PlayStation Vita lane: cross-compiled through cmake/vita.too
 if(TE_VITA AND NOT VITA)
     message(FATAL_ERROR "TwinsanityEvolved: TE_VITA=ON needs the Vita toolchain -- configure with --preset vita-release (cmake/vita.toolchain.cmake)")
 endif()
-# TE_VITA_NATIVE (the Vita lane only; OFF = the wasm32 + wasm2c module as before): the game's code compiled NATIVELY for
-# the Vita's armv7 by the Vita's GCC (cmake/native_lane.cmake, runner/te_native.h) instead of wasm32 -> wasm2c -> C. The
-# desktop lanes keep the module (the decomp is ILP32: a 64-bit host cannot compile it natively).
+# TE_VITA_NATIVE (the Vita lane only): the game's code compiled NATIVELY for the Vita's armv7 by the Vita's GCC
+# (cmake/native_lane.cmake, runner/te_native.h) instead of wasm32 -> wasm2c -> C. The vita-release preset (the PS Vita's
+# package) sets it ON; vita-module-release keeps the wasm2c module (OFF) for A/B. The desktop lanes keep the module (the
+# decomp is ILP32: a 64-bit host cannot compile it natively).
 option(TE_VITA_NATIVE "Vita: the game code compiled natively for ARM (no wasm2c module)" OFF)
 if(TE_VITA_NATIVE AND NOT TE_VITA)
-    message(FATAL_ERROR "TwinsanityEvolved: TE_VITA_NATIVE=ON is the Vita lane's (configure with --preset vita-native-release)")
+    message(FATAL_ERROR "TwinsanityEvolved: TE_VITA_NATIVE=ON is the Vita lane's (configure with --preset vita-release)")
 endif()
 if(TE_VITA_NATIVE)
     add_compile_definitions(TE_NATIVE=1)   # the runner and the host side (te_host.h's address model, runner/te_native.h)
@@ -682,7 +683,8 @@ else()
 endif()
 add_executable(twinsanityevolved runner/main.cpp runner/te_env.cpp runner/te_run.c runner/te_startup.cpp
     runner/te_fiber.c ${TE_FIBER_SWITCH} runner/te_game.cpp ${TE_SAVESTATE_RUNNER}
-    runner/te_probe.cpp runner/te_autopilot.cpp runner/te_profile.cpp runner/te_disc_log.cpp runner/te_region.cpp)
+    runner/te_probe.cpp runner/te_autopilot.cpp runner/te_profile.cpp runner/te_disc_log.cpp runner/te_region.cpp
+    runner/te_cutscenes.cpp)
 # the game folder (ps2r.ini beside the game, its memory cards and mods): shared host code the launcher resolves the same way
 target_sources(twinsanityevolved PRIVATE "${TE_ENGINE}/app/host/game_folder.cpp")
 set_target_properties(twinsanityevolved PROPERTIES C_STANDARD 99 C_EXTENSIONS ON)   # te_run.c: as tegame (above)
@@ -735,7 +737,9 @@ if(TE_VITA)
                        sceGxmShaderPatcherReleaseVertexProgram sceGxmShaderPatcherReleaseFragmentProgram
                        sceGxmShaderPatcherUnregisterProgram sceGxmShaderPatcherForceUnregisterProgram
                        # vitaGL's level transfers, not made while the GL backend writes a chain's levels itself
-                       sceGxmTransferDownscale)
+                       sceGxmTransferDownscale
+                       # vitaGL's uniform ring, seen by the GPU-lifetime audit (TE_GFX_GPU_LIFETIME=1)
+                       vglReserveUniformCircularPoolBuffer)
         target_link_options(twinsanityevolved PRIVATE "-Wl,--wrap=${te_wrapped}")
     endforeach()
     # vita-elf-create appends its module data (4 KB and more) after the code segment, in the space before the data
@@ -822,6 +826,17 @@ if(TE_VITA)
     endforeach()
     list(LENGTH TE_VITA_SHADER_SEED_FILES TE_VITA_SHADER_SEED_COUNT)
     message(STATUS "TwinsanityEvolved: the shipped shader cache -- ${TE_VITA_SHADER_SEED_COUNT} programs from ${TE_VITA_SHADER_SEED_DIR}")
+    # The LiveArea: the bubble's icon (icon0.png, 128x128), the picture shown while the game starts (pic0.png, 960x544), the
+    # page's background (bg.png, 840x500) and its gate (startup.png, 280x158) with the layout (template.xml) -- 8-bit indexed PNGs,
+    # as the console requires; tools/vita/livearea/. The game's art, not game data: the package's content rule (release.yml) allows
+    # sce_sys/ and the asset scan passes over it.
+    set(TE_VITA_LIVEAREA_DIR "${CMAKE_SOURCE_DIR}/tools/vita/livearea")
+    list(APPEND TE_VITA_VPK_EXTRA
+        FILE "${TE_VITA_LIVEAREA_DIR}/icon0.png" sce_sys/icon0.png
+        FILE "${TE_VITA_LIVEAREA_DIR}/pic0.png" sce_sys/pic0.png
+        FILE "${TE_VITA_LIVEAREA_DIR}/bg.png" sce_sys/livearea/contents/bg.png
+        FILE "${TE_VITA_LIVEAREA_DIR}/startup.png" sce_sys/livearea/contents/startup.png
+        FILE "${TE_VITA_LIVEAREA_DIR}/template.xml" sce_sys/livearea/contents/template.xml)
     vita_create_vpk(twinsanityevolved.vpk ${VITA_TITLEID} eboot.bin VERSION ${VITA_VERSION} NAME ${VITA_APP_NAME} ${TE_VITA_VPK_EXTRA})
     add_custom_target(twinsanityevolved_vpk ALL DEPENDS twinsanityevolved.vpk)
     message(STATUS "TwinsanityEvolved: the Vita lane -- ${CMAKE_BINARY_DIR}/twinsanityevolved.vpk (title id ${VITA_TITLEID}); the judges' tools and the tests are host-only and skipped")

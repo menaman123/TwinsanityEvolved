@@ -117,7 +117,7 @@ void Note(const Draw& d) {
     Box b;
     if (d.mesh) {
         float bx[4];
-        if (d.skin_joints || !ps2e_draw_mesh_screen_box(g_cs.device, d.mesh, &d.mesh_params, bx)) {
+        if (d.skin_joints || !ps2e_draw_mesh_screen_box(g_cs.device, d.mesh, &d.Params(), bx)) {
             DirtyAll();
             return;
         }

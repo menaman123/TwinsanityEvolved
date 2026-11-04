@@ -1,0 +1,60 @@
+# hub_deaths authoring plan (records fixtures/padlogs/hub_deaths.padlog, --stop-at 6000, --mod infinite_lives): NEW GAME on an
+# empty card (hub_entry.plan's presses anchored on the GameController states), then seven walks into the nitro crate west of
+# the start on N. Sanity Beach (levels\earth\hub\beach), each a death and the checkpoint restart after it (FadingOut 21 ->
+# Restarting 22 -> StartingPlay 11 -> Playing 12). Recorded with infinite lives on (all seven walks); replayed without it the
+# fifth death is the game over (the lives 5 -> 0).
+until-gstate 7 3000
+idle 11
+hold START 5
+until-gstate 8 300
+idle 128
+hold CROSS 5
+idle 295
+hold UP 3
+idle 97
+hold CROSS 3
+idle 247
+hold DOWN 3
+idle 67
+hold CROSS 3
+until-gstate 12 2000
+idle 151
+hold CROSS 3
+wait 60
+goto -10 -20 1.0 900
+goto -14.8 -7.9 0.5 160
+until-gstate 21 900
+until-gstate 12 900
+wait 60
+goto -10 -20 1.0 900
+goto -14.8 -7.9 0.5 160
+until-gstate 21 900
+until-gstate 12 900
+wait 60
+goto -10 -20 1.0 900
+goto -14.8 -7.9 0.5 160
+until-gstate 21 900
+until-gstate 12 900
+wait 60
+goto -10 -20 1.0 900
+goto -14.8 -7.9 0.5 160
+until-gstate 21 900
+until-gstate 12 900
+wait 60
+goto -10 -20 1.0 900
+goto -14.8 -7.9 0.5 160
+until-gstate 21 900
+until-gstate 12 900
+wait 60
+goto -10 -20 1.0 900
+goto -14.8 -7.9 0.5 160
+until-gstate 21 900
+until-gstate 12 900
+wait 60
+goto -10 -20 1.0 900
+goto -14.8 -7.9 0.5 160
+until-gstate 21 900
+until-gstate 12 900
+wait 60
+wait 120
+stop

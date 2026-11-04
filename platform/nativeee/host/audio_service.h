@@ -149,6 +149,8 @@ public:
                  ring_padded = 0;
     };
     Counters Count() const;
+    // The times IsMusicReady answered "not yet" in play because a window's first blocks were still on the card (not state)
+    uint64_t MusicCardPutOffs() const { return music_card_put_offs_; }
 
     // Save state (savestate.h, kTagAudio): title::Audio's snapshot (AudioState codec: samples, voices, pending loads)
     // + this façade's music streams/windows and counters. Music windows are read from the disc again on restore.
@@ -187,6 +189,8 @@ private:
     // The parent's window read off the game thread (te::io::Async()): its tracks taken into the stream once their first
     // blocks are in place (the rest lands behind the voices: title::SampleLanding). mutex_ held; released while waiting.
     void TakeMusicRead(uint32_t parent, std::unique_lock<std::mutex>& lock);
+    // Whether IsMusicReady answers at once for a window still on the card (the deterministic profile; TE_STREAM_WAIT_CARD=1)
+    static bool MusicReadyWaitsForCard();
     void StartMusic(uint32_t parent);
     void StopStream(uint32_t stream, Phase phase);
     uint32_t ParentOf(uint32_t stream) const;
@@ -215,6 +219,7 @@ private:
     std::array<te::io::Handle<MusicRead>, kStreams> music_jobs_;   // (no braces: their init would need MusicRead here)
     uint64_t generation_ = 0;
     Counters count_;
+    uint64_t music_card_put_offs_ = 0;   // (MusicCardPutOffs)
     static constexpr uint32_t kSoundMemoryBase = 0x5010;   // past the SPU2's reserved low 20 KB, as libsd leaves it
     // The real-time producer. mutex_ guards the mix state (audio_, mixer_, streams_, count_, hz_) and the ring's
     // producer side between the game thread and the device thread's refill. realtime_/movie_live_ are written by the

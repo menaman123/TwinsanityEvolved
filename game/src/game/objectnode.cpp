@@ -8,6 +8,7 @@
 #include "game/chunkloading.h"
 #include "game/context.h"
 #include "game/controllers.h"
+#include "game/cutsceneskip.h"
 #include "game/events.h"
 #include "game/hull.h"
 #include "game/layout.h"
@@ -371,7 +372,13 @@ void ObjectNodeBase::OnTriggerMessage(u32 received)
         ResourceTable* scripts = G_GameResourcesObjectPointer->scripts;
         auto* starter = id != NoScriptId ? static_cast<ScriptStarter*>(scripts->items[id & ResourceIndexMask]) : nullptr;
         u32 runner = behaviour->runner;
-        CallVirtual<u32>(this, vtable, StartBehaviourSlot, starter, messageSender, 0u, runner);
+        // TwinsanityEvolved: a cutscene agent's message starting a behaviour this takes up (not one refused for the behaviour it
+        // runs) makes this one of the cutscene's agents (game/cutsceneskip.h)
+        if (CallVirtual<u32>(this, vtable, StartBehaviourSlot, starter, messageSender, 0u, runner) != 0)
+        {
+            NoteCutsceneAgent(messageSender, owner);
+        }
+
         return;
     }
 }

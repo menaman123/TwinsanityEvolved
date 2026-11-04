@@ -1,0 +1,24 @@
+# cutscene reach fixture (tools/cutscenes/reach.py): site 6223 COM_DOCAMOK_BEEHIVE_ACTIVATED
+# card: tools/warp_save.py --card <hub card> --chunk 'levels\earth\docamok\docamok2' --place 0xFFFF --character crash --story 4
+# chunk=levels\earth\docamok\docamok2
+# story=4
+# character=crash
+# reach: the bear ride's second chunk at story 4: the start's checkpoint activates the summoner, which places Cortex and sends him 273; his route's phase (COM_CORTEX_DOCAMOK_EARTH_PHASE*) sends 87 to the beehive above him
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# text-language=english
+# speech-language=english
+1 0000 128 128 128 128  # NONE
+1271 0008 128 128 128 128  # START
+1276 0000 128 128 128 128  # NONE
+1354 0040 128 128 128 128  # DOWN
+1357 0000 128 128 128 128  # NONE
+1404 4000 128 128 128 128  # CROSS
+1409 0000 128 128 128 128  # NONE
+1804 0040 128 128 128 128  # DOWN
+1807 0000 128 128 128 128  # NONE
+1904 4000 128 128 128 128  # CROSS
+1907 0000 128 128 128 128  # NONE
+2964 4000 128 128 128 128  # CROSS
+2967 0000 128 128 128 128  # NONE
+3000 0000 128 128 128 128  # NONE
+# end at boundary 7200

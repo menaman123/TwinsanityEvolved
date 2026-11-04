@@ -61,9 +61,12 @@
     "bank": "Language\\Code\\American.txt",
     "from": "graphic options",
     "to": "graphic optionz",
+    "text_bank": "Language\\AgentLab\\American.txt",
+    "text_bank_added": 3,
     "music_mh_byte": 100,
     "files_changed": [
       "CRASH6/CRASH.BD",
+      "CRASH6/CRASH.BH",
       "CRASH6/MUSIC.MH"
     ],
     "region": "NTSC-U",
@@ -75,7 +78,8 @@
       "Classic Slide Jump for Crash",
       "Classic Explosion Damage"
     ],
-    "european_warning_starts": "it looks made for the North American disc: 1 of its archive entries",
-    "why": "a USA Mod Crate's shape (a real USA crate's: a lower-case layer0/crash6/ folder, layer1 entries by the North American index's names, a '!' line asking for Crate Mod Loader settings) made at run time from --ntsc-iso, never kept: imported against that disc -- base NTSC-U / SLUS_209.09 / its Redump name, the '!' lines kept as notes, the warning naming the settings the port cannot apply, MUSIC.MH replaced whole, the archive a recipe with the bank's one changed line; verify, this judge's recomposition, inspect the same; over --iso (the European disc) it imports with the warning that it looks made for the North American disc (American.txt is not this disc's entry). The real crate is never a judge input"
+    "european_warning_starts": "it looks made for the North American disc: 2 of its archive entries",
+    "european_text_warning_starts": "its text bank Language\\AgentLab\\American.txt (an entry of the North American disc's archive) has ",
+    "why": "a USA Mod Crate's shape (a real USA crate's: a lower-case layer0/crash6/ folder, layer1 entries by the North American index's names, a '!' line asking for Crate Mod Loader settings) made at run time from --ntsc-iso, never kept: imported against that disc -- base NTSC-U / SLUS_209.09 / its Redump name, the '!' lines kept as notes, the warning naming the settings the port cannot apply, MUSIC.MH replaced whole, the archive a recipe with the Code bank's one changed line and the AgentLab bank 3 texts longer (the index changes with it); verify, this judge's recomposition, inspect the same; over --iso (the European disc) it imports with the warning that it looks made for the North American disc (the two American.txt are not this disc's entries) and the one naming the texts past that disc's Language\\AgentLab banks (a USA crate's new sign texts: on the European disc the game's table ends before them). The real crate is never a judge input"
   }
 }

@@ -1,5 +1,6 @@
 #include "game/instances.h"
 
+#include "game/cutsceneskip.h"
 #include "game/events.h"
 #include "game/layout.h"
 #include "game/memory.h"
@@ -49,6 +50,9 @@ void TellInstances(MessageTriggerNode* node, const u16* message, InstanceContext
             told = MakeEvent(*message, instance, kinds);
         }
 
+        // TwinsanityEvolved: what a cutscene agent's entry makes the trigger tell is one of the cutscene's agents (the message is
+        // the agent's: game/cutsceneskip.h)
+        NoteCutsceneTold(instance, node->instances[index]);
         Queue(node->instances[index], told);
     }
 }
@@ -157,13 +161,17 @@ void MessageTriggerNode::BeginCheck()
     events[EntryOrStayMessage] = nullptr;
 }
 
+// TwinsanityEvolved: an entry or an exit while the cutscene skip passes a frame of its agents is an event the frames after it wait
+// for the answer to (game/cutsceneskip.h); what is told every frame something stays in it is not
 void MessageTriggerNode::EnteredFirstTime(InstanceContext* instance)
 {
+    NoteCutscenePassedEvent();
     events[FirstEntryMessage] = Tell(messages[FirstEntryMessage], instance, events[FirstEntryMessage]);
 }
 
 void MessageTriggerNode::EnteredEveryTime(InstanceContext* instance)
 {
+    NoteCutscenePassedEvent();
     events[EveryEntryMessage] = Tell(messages[EveryEntryMessage], instance, events[EveryEntryMessage]);
 }
 
@@ -174,5 +182,6 @@ void MessageTriggerNode::EnteredOrStayed(InstanceContext* instance)
 
 void MessageTriggerNode::Left(InstanceContext* instance)
 {
+    NoteCutscenePassedEvent();
     TellInto(this, ExitMessage, instance);
 }

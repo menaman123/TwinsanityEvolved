@@ -2,6 +2,7 @@
 #include "te_harness.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -24,6 +25,7 @@ struct Harness {
     uint64_t presents = 0, boundaries = 0, state_lines = 0;
     uint64_t last_state_key = ~0ull;
     std::string state_trace;   // "Name@boundary;..." for run.meta
+    std::string out_dir;       // the leg's folder (TE_HARNESS_SAVE writes its pictures there)
     int w = 0, h = 0;
 } g;
 
@@ -122,6 +124,7 @@ bool Arm(const std::string& out_dir, const std::string& build_id, std::string* e
     extra.push_back({"port", "twinsanityevolved"});
     if (!g.host->Arm(cfg, build_id, "slus_20909_crash_twinsanity", err, extra)) { g.host.reset(); return false; }
     g.host->SetMemLane(false);   // the game's memory is the module's: not the oracle's lane; frames + audio only
+    g.out_dir = out_dir;
     g.state_f = std::fopen((out_dir + "/state.trace").c_str(), "w");
     g.pdesc_f = std::fopen((out_dir + "/frames.pdesc").c_str(), "w");
     if (g.pdesc_f) std::fprintf(g.pdesc_f, "# key,w,h,lum_sky,lum_mid,lum_ground,mean_r,mean_g,mean_b,clear_share,dhash\n");
@@ -162,6 +165,27 @@ void OnPresent(ps2e_draw* dev, uint64_t key) {
     if (g.pdesc_f) {
         std::fprintf(g.pdesc_f, "%llu,%s\n", (unsigned long long)key, Describe(g.topdown.data(), w, h, 4).c_str());
         std::fflush(g.pdesc_f);
+    }
+    // TE_HARNESS_SAVE=1: each picture the leg reads back written beside its hash as <leg>/frame_<key>.ppm (a keyed leg's few
+    // pictures -- TE_HARNESS_KEYS -- as a console's pixels for a picture A/B, without TE_GFX_DUMP_DIR's read-back of every
+    // frame)
+    static const bool save = [] {
+        const char* v = std::getenv("TE_HARNESS_SAVE");
+        return v && v[0] == '1';
+    }();
+    if (save && !g.out_dir.empty()) {
+        char path[1024];
+        std::snprintf(path, sizeof path, "%s/frame_%06llu.ppm", g.out_dir.c_str(), (unsigned long long)key);
+        if (std::FILE* f = std::fopen(path, "wb")) {
+            std::fprintf(f, "P6\n%d %d\n255\n", w, h);
+            std::vector<uint8_t> rgb(size_t(w) * 3);
+            for (int y = 0; y < h; ++y) {
+                const uint8_t* src = g.topdown.data() + size_t(y) * w * 4;
+                for (int x = 0; x < w; ++x) std::memcpy(&rgb[size_t(x) * 3], src + size_t(x) * 4, 3);
+                std::fwrite(rgb.data(), 1, rgb.size(), f);
+            }
+            std::fclose(f);
+        }
     }
     g.presents++;
     g.w = w; g.h = h;

@@ -1629,6 +1629,13 @@ void main() {
 // per-vertex attribute (the first form, all five rows per instance) the arithmetic was arranged otherwise (USSE classes
 // from instruction 17 on differed from the mesh path's; pictures differed by a vertex's rounding). Its GXM twin draws a run
 // of draws of one packet, one mesh range and one shift as ONE instanced draw.
+// THE MATRIX PRODUCT'S ORDER. The compiler arranges kLeanPs2VertSrc's `u_mesh[3] + u_mesh[0] * x + u_mesh[1] * y +
+// u_mesh[2] * z` (uniform rows) as ((u_mesh[3] + z * u_mesh[2]) + y * u_mesh[1]) + x * u_mesh[0] -- its USSE: VMAD i1 =
+// i0.zzzz * sa8 + i1, then i0.yyyy * sa4, then i0.xx * sa0 / sa2 -- while the same expression over attribute rows came out
+// in the source's order, x first (VMAD i0.xxxx * pa12 first, z last): another rounding of the sums, a vertex a 1/16
+// pixel off now and then (the earlier pictures' edge differences in Vita3K, and on the console as well: the GPU runs these
+// instructions). Written here in the mesh program's own order, row 3 then z, y, x, the instanced program makes the
+// same products and sums in the same order: the same bits.
 const char* const kLeanPs2InstVertSrc = R"GLSL(
 #version 410 core
 
@@ -1652,7 +1659,7 @@ void main() {
     vec3 position = a_position;
     vec3 texcoord = a_texcoord;
     vec4 color = a_color;
-    vec4 c = a_mesh3 + a_mesh0 * a_position.x + a_mesh1 * a_position.y + a_mesh2 * a_position.z;
+    vec4 c = a_mesh3 + a_mesh2 * a_position.z + a_mesh1 * a_position.y + a_mesh0 * a_position.x;
     float rq = 1.0 / c.w;
     position = vec3(floor(c.xy * rq) / 16.0 - u_mesh_shift.xy, floor(c.z * rq));
     texcoord = vec3((a_texcoord.xy + u_mesh_shift.zw) * rq, a_texcoord.z * rq);

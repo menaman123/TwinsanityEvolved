@@ -1,13 +1,15 @@
 // test_time.cpp -- time.h over te::Clock: ticks are a pure function of boundaries (9600 per field at 60 Hz, 11520 at 50 =
 // TicksPerSecond 576000 a second of fields at either rate), Initialise starts them from 0 once, hooks run in order, the
 // Play pacer delivers fields at the wall rate, LocalTime is the emulated RTC, a state loaded under another field rate keeps
-// the game's clock continuous.
+// the game's clock continuous, and the slow-tick log's cap a window (TE_TICK_LOG_CAP) prints the ticks its rule names.
 #include <chrono>
+#include <cstdlib>
 #include <string>
 #include <thread>
 
 #include "engine/core/savestate/savestate_format.h"
 #include "ps2e_seam.h"
+#include "te_load_census.h"
 #include "te_test.h"
 
 int main() {
@@ -158,6 +160,41 @@ int main() {
         CHECK_EQ(te::Services::Get().clock().Ticks(), 960000u + 11520u);
         te::Services::Get().clock().Boundary();
         CHECK_EQ(te::Services::Get().clock().Ticks(), 960000u + 11520u + 9600u);
+    }
+    // --- the slow-tick lines' cap (te_load_census.h): TE_TICK_LOG_CAP=3 at a 25 ms tick log -- a window's first 3 slow
+    // ticks printed, then only a tick of 50 ms or more or the window's longest so far; the others counted for the window line
+    // (the caps are read at their first use: none before this in this process, TE_TICK_LOG_MS being unset)
+    setenv("TE_TICK_LOG_CAP", "3", 1);
+    setenv("TE_PICTURE_LOG_CAP", "1", 1);
+    {
+        const double ms[] = {30, 26, 27, 28, 31, 29, 55, 40, 31.4};
+        const bool printed[] = {true, true, true, false, true, false, true, false, false};
+        for (int k = 0; k < 9; ++k) {
+            const bool wanted = te::load::TickLineWanted(ms[k], 25.0);
+            CHECK(wanted == printed[k]);
+            if (!wanted) te::load::NoteTickNotLogged(100 + k, ms[k], k == 8 ? "rt b" : "a");
+        }
+        const std::string line = te::load::TickLogLine(1, 300);
+        CHECK(line.rfind("[te.load] presents 1-300: slow ticks not logged 4 of 9 over 25 ms (TE_TICK_LOG_MS=25, TE_TICK_LOG_CAP=3: 5 "
+                         "logged", 0) == 0);
+        CHECK(line.find("the ones not logged 128 ms, the longest 40.0 ms at boundary 107") != std::string::npos);
+        CHECK(line.find("by the top section of their profile: a 3 (97 ms), rt b 1 (") != std::string::npos);
+        // the window started over: nothing to report, and its first ticks are printed again
+        CHECK(te::load::TickLogLine(301, 600).empty());
+        CHECK(te::load::TickLineWanted(26, 25.0));
+        CHECK(te::load::TickLogLine(601, 900).empty());
+    }
+    // --- the drawing thread's slow pictures by the same rule (TE_PICTURE_LOG_CAP=1), in the same window line
+    {
+        CHECK(te::load::PictureLineWanted(30, 25.0));    // the first
+        CHECK(!te::load::PictureLineWanted(27, 25.0));   // past the cap, not the longest
+        te::load::NotePictureNotLogged(42, 27, "rt submit");
+        CHECK(te::load::PictureLineWanted(60, 25.0));    // twice the threshold
+        const std::string line = te::load::TickLogLine(901, 1200);
+        CHECK(line.rfind("[te.load] presents 901-1200: slow pictures not logged 1 of 3 over 25 ms (TE_PICTURE_LOG_MS=25, "
+                         "TE_PICTURE_LOG_CAP=1: 2 logged", 0) == 0);
+        CHECK(line.find("the longest 27.0 ms at present 42; by the top section of their profile: rt submit 1 (27 ms)") != std::string::npos);
+        CHECK(line.find("slow ticks") == std::string::npos);
     }
     te::Services::ResetForTest();
     return Finish("test_time");

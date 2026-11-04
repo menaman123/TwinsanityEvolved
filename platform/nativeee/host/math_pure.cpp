@@ -15,6 +15,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#if defined(__vita__)
+#include <arm_neon.h>
+#endif
+
 #include "graphics_internal.h"
 #include "ps2e_seam.h"
 #include "te_host.h"
@@ -104,6 +108,35 @@ TE_BOUNDS_INLINE U4 BitsOf(const V4& v) { U4 u; std::memcpy(&u, &v, 16); return 
 TE_BOUNDS_INLINE V4 FloatsOf(const U4& u) { V4 v; std::memcpy(&v, &u, 16); return v; }
 // The integer picks apply: the fast game-thread paths on (TE_GAMECPU2) and the thread flushes to zero
 bool BitsPicks() { return te::gfx::GameCpuFast() && FlushesToZero(); }
+// FzKey::Min / Max on NEON integer lanes, the four lanes at once (bit tests, shifts, signed compares and selects -- no
+// floating-point operation): per lane x NaN -> y, else y NaN -> x, else the smaller (larger) signed-magnitude key's
+// operand, the second one on a tie -- FzKey's choices exactly; the callers keep the w lane as the scalar picks leave it.
+// TakeMinBits / TakeMaxBits were ~12 core instructions a lane and a pick (a triangle's bounds: ~450 instructions)
+TE_BOUNDS_INLINE int32x4_t FzKeys(uint32x4_t b) {
+    const uint32x4_t magnitude = vandq_u32(b, vdupq_n_u32(0x7FFFFFFFu));
+    // (a zero exponent -- a zero or a denormal -- keys as 0; the sign negates: (m ^ s) - s with s = 0 or -1)
+    const uint32x4_t kept = vandq_u32(magnitude, vtstq_u32(b, vdupq_n_u32(0x7F800000u)));
+    const int32x4_t sign = vshrq_n_s32(vreinterpretq_s32_u32(b), 31);
+    return vsubq_s32(veorq_s32(vreinterpretq_s32_u32(kept), sign), sign);
+}
+TE_BOUNDS_INLINE uint32x4_t FzNans(uint32x4_t b) { return vcgtq_u32(vandq_u32(b, vdupq_n_u32(0x7FFFFFFFu)), vdupq_n_u32(0x7F800000u)); }
+TE_BOUNDS_INLINE uint32x4_t FzMin(uint32x4_t x, uint32x4_t y) {
+    uint32x4_t pick = vbslq_u32(vcltq_s32(FzKeys(x), FzKeys(y)), x, y);
+    pick = vbslq_u32(FzNans(y), x, pick);
+    return vbslq_u32(FzNans(x), y, pick);
+}
+TE_BOUNDS_INLINE uint32x4_t FzMax(uint32x4_t x, uint32x4_t y) {
+    uint32x4_t pick = vbslq_u32(vcgtq_s32(FzKeys(x), FzKeys(y)), x, y);
+    pick = vbslq_u32(FzNans(y), x, pick);
+    return vbslq_u32(FzNans(x), y, pick);
+}
+// the lanes x, y, z of `picked` with the w lane of `keep`
+TE_BOUNDS_INLINE uint32x4_t KeepW(uint32x4_t picked, uint32x4_t keep) {
+    static const uint32_t kXyz[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0u};
+    return vbslq_u32(vld1q_u32(kXyz), picked, keep);
+}
+TE_BOUNDS_INLINE uint32x4_t LoadBits(const V4* v) { return vld1q_u32(reinterpret_cast<const uint32_t*>(v)); }
+TE_BOUNDS_INLINE void StoreBits(V4* v, uint32x4_t b) { vst1q_u32(reinterpret_cast<uint32_t*>(v), b); }
 #else
 void TakeMin(V4& m, const V4& p) { m.x = std::fmin(m.x, p.x); m.y = std::fmin(m.y, p.y); m.z = std::fmin(m.z, p.z); }
 void TakeMax(V4& m, const V4& p) { m.x = std::fmax(m.x, p.x); m.y = std::fmax(m.y, p.y); m.z = std::fmax(m.z, p.z); }
@@ -153,6 +186,18 @@ void ps2e_vu0_points_box(ps2e_u32 points, ps2e_s32 count, ps2e_u32 box) {
     if (!p) return;
 #if defined(__vita__)
     if (BitsPicks()) {   // the same picks on the stored bits (FzKey)
+        if (te::gfx::SeamLean()) {   // (on NEON lanes; w: the first point's, read before any store)
+            const uint32x4_t first = LoadBits(&p[0]);
+            uint32x4_t lo = first, hi = first;
+            for (int32_t i = 1; i < count; ++i) {
+                const uint32x4_t q = LoadBits(&p[i]);
+                lo = FzMin(lo, q);
+                hi = FzMax(hi, q);
+            }
+            StoreBits(&out->min, KeepW(lo, first));
+            StoreBits(&out->max, KeepW(hi, first));
+            return;
+        }
         U4 lo = BitsOf(p[0]), hi = lo;
         for (int32_t i = 1; i < count; ++i) { const U4 q = BitsOf(p[i]); TakeMinBits(lo, q); TakeMaxBits(hi, q); }
         out->min = FloatsOf(lo);
@@ -177,6 +222,14 @@ void ps2e_vu0_triangle_bounds(ps2e_u32 box, ps2e_u32 first, ps2e_u32 second, ps2
     // "The corners' w stay what vf11 and vf12 had": the box's w components are left as they were
 #if defined(__vita__)
     if (BitsPicks()) {   // the same picks on the stored bits (FzKey)
+        if (te::gfx::SeamLean()) {   // (on NEON lanes: the three points read first, then the box's w lanes, then the stores)
+            const uint32x4_t ua = LoadBits(a), ub = LoadBits(b), uc = LoadBits(c);
+            const uint32x4_t lo = FzMin(FzMin(ua, ub), uc), hi = FzMax(FzMax(ua, ub), uc);
+            const uint32x4_t keepMin = LoadBits(&out->min), keepMax = LoadBits(&out->max);
+            StoreBits(&out->min, KeepW(lo, keepMin));
+            StoreBits(&out->max, KeepW(hi, keepMax));
+            return;
+        }
         const U4 ua = BitsOf(*a), ub = BitsOf(*b), uc = BitsOf(*c);
         U4 lo = ua, hi = ua;
         TakeMinBitsCall(lo, ub); TakeMaxBitsCall(hi, ub);
@@ -211,7 +264,20 @@ void ps2e_vu0_get_bbox(ps2e_u32 points, ps2e_s32 count, ps2e_u32 box, ps2e_u32 m
     V4 first = Transform(*m, p[0]);
     V4 lo = first, hi = first;
 #if defined(__vita__)
-    if (BitsPicks()) {   // the same transforms, the same picks on the stored bits (FzKey)
+    if (BitsPicks() && te::gfx::SeamLean()) {   // the same transforms, the same picks on NEON lanes (w: the first point's)
+        const uint32x4_t firstBits = vld1q_u32(reinterpret_cast<const uint32_t*>(&first));
+        uint32x4_t ulo = firstBits, uhi = firstBits;
+        for (int32_t i = 1; i < count; ++i) {
+            const V4 q = Transform(*m, p[i]);
+            const uint32x4_t qb = vld1q_u32(reinterpret_cast<const uint32_t*>(&q));
+            ulo = FzMin(ulo, qb);
+            uhi = FzMax(uhi, qb);
+        }
+        ulo = KeepW(ulo, firstBits);
+        uhi = KeepW(uhi, firstBits);
+        vst1q_u32(reinterpret_cast<uint32_t*>(&lo), ulo);
+        vst1q_u32(reinterpret_cast<uint32_t*>(&hi), uhi);
+    } else if (BitsPicks()) {   // the same transforms, the same picks on the stored bits (FzKey)
         U4 ulo = BitsOf(first), uhi = ulo;
         for (int32_t i = 1; i < count; ++i) {
             const U4 q = BitsOf(Transform(*m, p[i]));

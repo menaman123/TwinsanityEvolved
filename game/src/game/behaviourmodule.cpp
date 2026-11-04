@@ -1,5 +1,6 @@
 #include "game/array.h"
 #include "game/behaviours.h"
+#include "game/cutsceneskip.h"
 #include "game/events.h"
 #include "game/memory.h"
 #include "game/objectnode.h"
@@ -69,8 +70,13 @@ void ScriptEvent::Apply(ObjectNodeBase* node, GameResources* resources)
     auto* found = index != NoScriptId ? static_cast<ScriptStarter*>(scripts->items[index & ResourceIndexMask]) : nullptr;
     if (found != nullptr)
     {
-        CallVirtual<u32>(node, node->vtable, ObjectNode::StartBehaviourSlot, found, originator, u32{bits.forced},
-                         u32{slot});
+        // TwinsanityEvolved: a cutscene agent's behaviour started here, when the node takes it up (not refused for the one it
+        // runs), makes the node's instance one of the cutscene's (game/cutsceneskip.h)
+        if (CallVirtual<u32>(node, node->vtable, ObjectNode::StartBehaviourSlot, found, originator, u32{bits.forced},
+                             u32{slot}) != 0)
+        {
+            NoteCutsceneAgent(originator, node->owner);
+        }
     }
 }
 

@@ -63,3 +63,9 @@ private:
 };
 
 }  // namespace title
+
+#if defined(__vita__)
+// (the Vita: the definitions in line -- joint_math_bodies.inl)
+#define TE_JM_DEF inline __attribute__((always_inline))
+#include "games/slus_20909_crash_twinsanity/hle/math/joint_math_bodies.inl"
+#endif

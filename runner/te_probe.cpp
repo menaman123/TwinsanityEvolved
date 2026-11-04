@@ -60,6 +60,7 @@ constexpr uint32_t kGameObjectName = 0x14;     // GameObject::name (String)
 constexpr uint32_t kObjectFlags = 0x04;        // ReferencedObject::flags
 constexpr uint32_t kObjectBox = 0x10 + 0x30;   // ReferencedObject::collision.box (Box: min, max)
 constexpr uint32_t kInstanceId = 0x154;        // InstanceContext::id
+constexpr uint32_t kProgressCounts = 0x500;    // GameController::progress (GameProgress::counts first: ProgressCounts)
 constexpr uint32_t kDiskManager = 0x0031B4B8;  // g_DiskManager (D_0031B4B8); handles[] at 0x58, DiskNode::memory at 4
 
 // Guest memory through te::GuestPointer (the wasm lanes' bounds checks; the Vita's native build: the pointer itself), retail
@@ -381,6 +382,7 @@ bool Read(State& s) {
     s = State{};
     const uint32_t gc = Rd32(R(kGameController));
     if (InRange(gc, 16)) { uint64_t v; std::memcpy(&v, At(gc + 8), 8); s.game_state = unsigned((v >> 44) & 63); }
+    if (InRange(gc, kProgressCounts + 4)) s.lives = (Rd32(gc + kProgressCounts) >> 7) & 0x7F;   // ProgressCounts: wumpa 7 bits, lives 7
     s.clock = Rd32(R(kGlobalClock) + 4);
     const uint32_t tc = Rd32(R(kGameClockController));
     if (InRange(tc, 8)) s.frame_time = Rd32(tc + 4);
@@ -411,10 +413,10 @@ bool Read(State& s) {
 
 void Print(uint64_t boundary, const State& s) {
     std::fprintf(stderr, "[probe] @%llu pos (%.3f %.3f %.3f) vel (%.3f %.3f %.3f) face (%.2f %.2f) mode %u standing %u ground %u dead %u "
-                         "cam (%.1f %.1f %.1f) look (%.2f %.2f) gstate %u chunk %s clock %u frame_time %u\n",
+                         "cam (%.1f %.1f %.1f) look (%.2f %.2f) gstate %u chunk %s clock %u frame_time %u lives %u\n",
                  (unsigned long long)boundary, s.x, s.y, s.z, s.vx, s.vy, s.vz, s.face_x, s.face_z, s.mode, s.standing, s.ground, s.dead,
                  s.cam_x, s.cam_y, s.cam_z, s.look_x, s.look_z, s.game_state, s.chunk_path.empty() ? "-" : s.chunk_path.c_str(),
-                 s.clock, s.frame_time);
+                 s.clock, s.frame_time, s.lives);
 }
 
 namespace {

@@ -101,3 +101,8 @@ __pycache__/
 # --- manual play dirs and build logs in the checkout (never committed) ---
 my_play*/
 build*.log
+# The PS Vita LiveArea pictures are tracked (the asset scan names them; tools/vita/livearea/)
+!tools/vita/livearea/icon0.png
+!tools/vita/livearea/pic0.png
+!tools/vita/livearea/bg.png
+!tools/vita/livearea/startup.png

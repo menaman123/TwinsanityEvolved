@@ -1,9 +1,11 @@
 // test_system_io.cpp -- system.h (Initialise / StartServices construction order and idempotence, Language, LocalTime,
-// kputs) and io.h (no-op restart, positive driver ids, the opaque IOP heap budget) and the stream boot façade over a
-// generated ISO (synchronous reads into guest memory, FileSize, the buffer budget).
+// kputs, the cutscenes the cross button may skip) and io.h (no-op restart, positive driver ids, the opaque IOP heap budget) and
+// the stream boot façade over a generated ISO (synchronous reads into guest memory, FileSize, the buffer budget).
 #include <cstdio>
+#include <cstdlib>
 
 #include "ps2e_seam.h"
+#include "te_cutscene_skip.h"
 #include "te_language.h"
 #include "te_test.h"
 #include "te_test_iso.h"
@@ -59,6 +61,29 @@ int main() {
     WriteString(kPath, "[game] hello from kputs\n");
     ps2e_system_kputs(kPath);
     ps2e_system_kputs(0x7FFFFFF0u);
+
+    // --- system: the cutscenes the cross button may skip (te_cutscene_skip.h: the table made of the judge's fixture). Every
+    // row answers its own verdict, every cutscene names its site among its graphs, a graph no cutscene runs answers yes (the
+    // skip as it is), and TE_CUTSCENE_SKIP_ALL=1 answers yes for every graph
+    {
+        CHECK(te::cutscene_skip::kGraphCount > 0);
+        unsigned refused = 0;
+        for (unsigned i = 0; i < te::cutscene_skip::kGraphCount; ++i) {
+            const te::cutscene_skip::Graph& row = te::cutscene_skip::kGraphs[i];
+            CHECK_EQ(ps2e_system_cutscene_skippable(row.graph), int32_t(row.skippable));
+            CHECK(te::cutscene_skip::Find(row.site) != nullptr && te::cutscene_skip::Find(row.site)->site == row.site);
+            CHECK(row.skippable ? row.why[0] == '\0' : row.why[0] != '\0');
+            refused += row.skippable ? 0 : 1;
+        }
+        CHECK(te::cutscene_skip::Find(0xFFFF) == nullptr);
+        CHECK_EQ(ps2e_system_cutscene_skippable(0xFFFF), 1);
+        setenv("TE_CUTSCENE_SKIP_ALL", "1", 1);
+        for (unsigned i = 0; i < te::cutscene_skip::kGraphCount; ++i)
+            CHECK_EQ(ps2e_system_cutscene_skippable(te::cutscene_skip::kGraphs[i].graph), 1);
+        setenv("TE_CUTSCENE_SKIP_ALL", "0", 1);
+        std::printf("test_system_io: the cutscene table: %u graphs, %u of a cutscene that cannot be skipped\n",
+                    te::cutscene_skip::kGraphCount, refused);
+    }
 
     // --- io
     ps2e_io_initialise();

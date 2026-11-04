@@ -27,6 +27,10 @@
 #include "game/view.h"
 #include "platform/graphics.h"
 #include "ps2e_seam.h"
+
+// The host told before the platform's own structures (materials, shaders, textures, models) change: the seam epoch moves
+// (platform/nativeee/host/te_seam_epoch.h), so no answer the host verified against their old bytes is taken again unchecked
+inline void ResourcesChanging() { ps2e_gfx2_resources_changed(); }
 #include "te_gfx_layout.h"
 
 static_assert(sizeof(te_gfx_model) == 0x1C, "RigidModelData is 0x1C bytes (shadows.cpp ModelSize)");
@@ -121,6 +125,7 @@ bool ShaderNeedsEye(u32 type)
 
 void AskShaders(te_gfx_rigid_model* model)
 {
+    ResourcesChanging();
     model->needsEye = 0;
     model->billboard = 0;
     auto** materials = P<MaterialResource*>(model->materials);
@@ -158,6 +163,7 @@ void AskShaders(te_gfx_rigid_model* model)
 // a billboard (resources.cpp ReadRigidModelData)
 void ReadRigidModelData(te_gfx_rigid_model* model, Stream* stream)
 {
+    ResourcesChanging();
     ReadS32(stream, &model->count);
     auto** materials = static_cast<MaterialResource**>(MemoryAllocate2(model->count * sizeof(MaterialResource*)));
     model->materials = A(materials);
@@ -176,6 +182,7 @@ void ReadRigidModelData(te_gfx_rigid_model* model, Stream* stream)
 
 RigidModelData* ModelConstruct(void* memory, u32 id)
 {
+    ResourcesChanging();
     auto* model = static_cast<te_gfx_model*>(memory);
     ConstructResourceHeader(model, id);
     model->subModelCount = 0;
@@ -188,6 +195,7 @@ RigidModelData* ModelConstruct(void* memory, u32 id)
 
 void ModelDestroy(te_gfx_model* model, u32 flags)
 {
+    ResourcesChanging();
     ps2e_gfx2_model_released(A(model));
     auto* handles = P<s32>(model->subModels);
     for (u32 index = 0; index < model->subModelCount; index++)
@@ -224,6 +232,7 @@ void ModelDestroy(te_gfx_model* model, u32 flags)
 // Each submodel's data after its packet is read and dropped (resources.cpp ModelRead); the packet's bytes go to the host once
 void ModelRead(te_gfx_model* model, Stream* stream)
 {
+    ResourcesChanging();
     ReadS32(stream, &model->subModelCount);
     s32* handles = NewHandles(model->subModelCount);
     model->subModels = A(handles);
@@ -255,6 +264,7 @@ void ModelRead(te_gfx_model* model, Stream* stream)
 
 RigidModel* RigidModelConstruct(void* memory, u32 id)
 {
+    ResourcesChanging();
     auto* model = static_cast<te_gfx_rigid_model*>(memory);
     ConstructResourceHeader(model, id);
     model->materials = 0;
@@ -270,6 +280,7 @@ RigidModel* RigidModelConstruct(void* memory, u32 id)
 
 void RigidModelDestroy(te_gfx_rigid_model* model, u32 flags)
 {
+    ResourcesChanging();
     auto** materials = P<MaterialResource*>(model->materials);
     for (u32 index = 0; index < model->count; index++)
     {
@@ -291,6 +302,7 @@ void RigidModelDestroy(te_gfx_rigid_model* model, u32 flags)
 // The version is read and dropped
 void RigidModelRead(te_gfx_rigid_model* model, Stream* stream)
 {
+    ResourcesChanging();
     s32 version = 0;
     stream->ReadS32(&version);
     ReadRigidModelData(model, stream);
@@ -298,6 +310,7 @@ void RigidModelRead(te_gfx_rigid_model* model, Stream* stream)
 
 Skin* SkinConstruct(void* memory, u32 id)
 {
+    ResourcesChanging();
     auto* skin = static_cast<te_gfx_skin*>(memory);
     ConstructResourceHeader(skin, id);
     skin->materials = 0;
@@ -311,6 +324,7 @@ Skin* SkinConstruct(void* memory, u32 id)
 
 void SkinDestroy(te_gfx_skin* skin, u32 flags)
 {
+    ResourcesChanging();
     auto** materials = P<MaterialResource*>(skin->materials);
     auto* handles = P<s32>(skin->subModels);
     for (u32 index = 0; index < skin->count; index++)
@@ -351,6 +365,7 @@ void SkinDestroy(te_gfx_skin* skin, u32 flags)
 
 void SkinRead(te_gfx_skin* skin, Stream* stream)
 {
+    ResourcesChanging();
     ReadS32(stream, &skin->count);
     auto** materials = static_cast<MaterialResource**>(MemoryAllocate2(skin->count * sizeof(MaterialResource*)));
     skin->materials = A(materials);
@@ -474,6 +489,7 @@ void BlendSubModelDestroy(te_gfx_blend_sub_model* subModel, u32 flags)
 
 BlendSkin* BlendSkinConstruct(void* memory, u32 id)
 {
+    ResourcesChanging();
     auto* skin = static_cast<te_gfx_blend_skin*>(memory);
     ConstructResourceHeader(skin, id);
     skin->materials = 0;
@@ -484,6 +500,7 @@ BlendSkin* BlendSkinConstruct(void* memory, u32 id)
 
 void BlendSkinDestroy(te_gfx_blend_skin* skin, u32 flags)
 {
+    ResourcesChanging();
     auto** materials = P<MaterialResource*>(skin->materials);
     auto** subModels = P<te_gfx_blend_sub_model*>(skin->subModels);
     for (u32 index = 0; index < skin->count; index++)
@@ -514,6 +531,7 @@ void BlendSkinDestroy(te_gfx_blend_skin* skin, u32 flags)
 
 void BlendSkinRead(te_gfx_blend_skin* skin, Stream* stream)
 {
+    ResourcesChanging();
     ReadS32(stream, &skin->count);
     ReadS32(stream, &skin->shapeCount);
     auto** materials = static_cast<MaterialResource**>(MemoryAllocate2(skin->count * sizeof(MaterialResource*)));
@@ -546,6 +564,7 @@ void BlendSkinRead(te_gfx_blend_skin* skin, Stream* stream)
 // The meshes of a LOD or sky taken from their table
 void ReadMeshes(RigidModel** meshes, u32 count, Stream* stream)
 {
+    ResourcesChanging();
     for (u32 index = 0; index < count; index++)
     {
         u32 id;
@@ -556,6 +575,7 @@ void ReadMeshes(RigidModel** meshes, u32 count, Stream* stream)
 
 Lod* LodConstruct(void* memory, u32 id)
 {
+    ResourcesChanging();
     auto* lod = static_cast<te_gfx_lod*>(memory);
     ConstructResourceHeader(lod, id);
     lod->meshes = 0;
@@ -565,6 +585,7 @@ Lod* LodConstruct(void* memory, u32 id)
 
 void LodDestroy(te_gfx_lod* lod, u32 flags)
 {
+    ResourcesChanging();
     auto** meshes = P<RigidModel*>(lod->meshes);
     for (s32 index = 0; index < lod->count; index++)
     {
@@ -586,6 +607,7 @@ void LodDestroy(te_gfx_lod* lod, u32 flags)
 // second's are stored squared. Other versions are read no further (resources.cpp LodRead)
 void LodRead(te_gfx_lod* lod, Stream* stream)
 {
+    ResourcesChanging();
     s32 version;
     stream->ReadS32(&version);
     if (version == LodDistancesVersion)
@@ -630,6 +652,7 @@ void LodRead(te_gfx_lod* lod, Stream* stream)
 
 Sky* SkyConstruct(void* memory, u32 id)
 {
+    ResourcesChanging();
     auto* sky = static_cast<te_gfx_sky*>(memory);
     ConstructResourceHeader(sky, id);
     sky->count = 0;
@@ -639,6 +662,7 @@ Sky* SkyConstruct(void* memory, u32 id)
 
 void SkyDestroy(te_gfx_sky* sky, u32 flags)
 {
+    ResourcesChanging();
     auto** models = P<RigidModel*>(sky->models);
     for (u32 index = 0; index < sky->count; index++)
     {
@@ -659,6 +683,7 @@ void SkyDestroy(te_gfx_sky* sky, u32 flags)
 // A word before the meshes is read and dropped
 void SkyRead(te_gfx_sky* sky, Stream* stream)
 {
+    ResourcesChanging();
     u32 unused;
     stream->ReadU32(&unused);
     ReadS32(stream, &sky->count);
@@ -669,6 +694,7 @@ void SkyRead(te_gfx_sky* sky, Stream* stream)
 
 void RestartMaterialAnimations(const MaterialResource* resource)
 {
+    ResourcesChanging();
     auto* material = resource != nullptr ? reinterpret_cast<te_gfx_material*>(resource->material) : nullptr;
     if (material == nullptr || material->magic != TE_GFX_MATERIAL_MAGIC)
     {
@@ -792,6 +818,7 @@ u64 BlendedShaderSettings(u64 s, u32 preset)
 
 void ReadParticlePageData(ParticlePage* page, Stream* stream, bool fromStream, bool decals)
 {
+    ResourcesChanging();
     ReadS32(stream, &page->textureId);
     ReadS32(stream, &page->materialId);
     if (fromStream)
@@ -897,6 +924,7 @@ void te_ModelRead(RigidModelData* model, Stream* stream) { ModelRead(MD(model), 
 RigidModel* te_MeshConstruct(void* memory, u32 id) { return RigidModelConstruct(memory, id); }
 void te_MeshRead(RigidModel* mesh, Stream* stream)
 {
+    ResourcesChanging();
     s32 version;
     stream->ReadS32(&version);
     ReadRigidModelData(RM(mesh), stream);
@@ -1021,6 +1049,7 @@ void ReadParticlePage(ParticlePage* page, Stream* stream, bool decals)
 // and the far set with the sides five times as far out. The host reads both arrays when planes are loaded.
 void SetViewFrustum(f32 near, f32 far, f32 aspect, const s32* fieldOfView)
 {
+    ResourcesChanging();
     s32 angle = *fieldOfView;
     ViewFrustumPlanes(near, far, aspect, 1.0f, te_gfx_ViewPlanes, &angle);
     angle = *fieldOfView;

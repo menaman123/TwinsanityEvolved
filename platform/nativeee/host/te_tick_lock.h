@@ -45,6 +45,9 @@
 // capped 4), _UP50_MS (19), _UP50_MAX_MS (24); the census lines say "50/25 Hz" and "the 50 Hz game rate".
 //
 // THE CENSUS: a line per pace window (graphics.cpp NotePace) "[te.vita.lock] ..." and one at exit (the clock census).
+// The FRAME RATE row at the full rate (60, or 50 at the 50 Hz game rate) is the lock OFF -- no fallback, the line says
+// "fixed by the FRAME RATE row: no fallback to 30 / 25" -- and its census still counts the picture ticks the lock would
+// serve: their work (tick work ms), a tick that fired more than its one field (ticks over their lock), a picture replaced.
 // Each window line ends with the GAME TIME VS WALL: "game time vs wall: G game fields / W wall fields at H Hz
 // (g s of game time in w s, R %); drift D ms this window, C ms since boundary B" -- G from the game's own clock (T0
 // counts / counts per field), W from the wall (ms x H / 1000); R = 100 % and D ~ 0 when the game runs in real time.

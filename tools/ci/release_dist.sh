@@ -122,7 +122,7 @@ cp -R "$ROOT/fixtures/padlogs" "$DIST/fixtures/padlogs"
 for m in "$ROOT"/mods/*/; do
   id=$(basename "$m")
   [ -f "$m/mod.json" ] || continue
-  grep -Eq '"kind": *"builtin"|"api": *"c"' "$m/mod.json" && continue   # the C mods (level_select, speedrun) are compiled in
+  grep -Eq '"kind": *"builtin"|"api": *"c"' "$m/mod.json" && continue   # the C mods (level_select, speedrun, infinite_lives) are compiled in
   mkdir -p "$DIST/mods/$id" && cp -R "$m"/. "$DIST/mods/$id/"
 done
 

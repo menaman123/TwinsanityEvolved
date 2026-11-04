@@ -14,9 +14,12 @@
    no traps (a fault is the device's, as with the unchecked wasm2c module). */
 void entry(void);
 
+void (*te_run_hold)(void) = 0;
+
 int te_run_entry(struct w2c_game* instance, int test_trap) {
     (void)instance;
     if (test_trap) return 1;   /* --test-trap: there is no wasm trap to unwind on this lane */
+    if (te_run_hold) te_run_hold();
     entry();
     return -1;
 }
@@ -47,10 +50,17 @@ uint32_t te_run_call_depth(void) { return 0; }
 enum { te_wasm_rt_state_is_plain = TE_CAT(WASM_RT_THREAD_LOCAL, 1) };
 #endif
 
+void (*te_run_hold)(void) = 0;
+static int te_run_armed = 0;   /* this process ran wasm_rt_impl_try: g_wasm_rt_jmp_buf is its own */
+
 int te_run_entry(struct w2c_game* instance, int test_trap) {
     wasm_rt_trap_t trap = (wasm_rt_trap_t)wasm_rt_impl_try();
     if (trap != 0) {
         return (int)trap;
+    }
+    te_run_armed = 1;
+    if (te_run_hold) {
+        te_run_hold();   // a state load: the fiber waits here; the restored context resumes it, never this call
     }
     if (test_trap) {
         wasm_rt_trap(WASM_RT_TRAP_OOB);   // self-test: must come back through the branch above
@@ -63,9 +73,11 @@ const char* te_trap_name(int trap) {
     return wasm_rt_strerror((wasm_rt_trap_t)trap);
 }
 
-// The runtime's per-thread state a save state at the frame boundary must carry: the trap jump buffer (its registers
-// point into the game fiber's te_run_entry frame, which the state carries at the same address) and the call-depth
-// counters (WASM_RT_STACK_DEPTH_COUNT). Opaque bytes to the caller.
+// The runtime's per-thread state a save state at the frame boundary must carry: the call-depth counters
+// (WASM_RT_STACK_DEPTH_COUNT) and the trap jump buffer. The buffer's words point into the game fiber's te_run_entry frame,
+// which the state carries at the same address, but the C library stores its frame, return and stack words mixed with a
+// secret of the process (Apple's libplatform _setjmp, glibc's pointer guard): the saving process's buffer is read back
+// only when this process has armed none of its own (te_run_hold lets a load arm it first). Opaque bytes to the caller.
 size_t te_run_tls_size(void) {
     return sizeof(g_wasm_rt_jmp_buf) + sizeof(uint32_t) * 2;
 }
@@ -85,7 +97,9 @@ void te_run_tls_save(void* out) {
 
 void te_run_tls_restore(const void* in) {
     const unsigned char* p = (const unsigned char*)in;
-    memcpy(&g_wasm_rt_jmp_buf, p, sizeof(g_wasm_rt_jmp_buf));
+    if (!te_run_armed) {
+        memcpy(&g_wasm_rt_jmp_buf, p, sizeof(g_wasm_rt_jmp_buf));
+    }
     p += sizeof(g_wasm_rt_jmp_buf);
 #if WASM_RT_STACK_DEPTH_COUNT
     memcpy(&wasm_rt_call_stack_depth, p, sizeof(uint32_t));

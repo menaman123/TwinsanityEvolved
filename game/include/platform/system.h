@@ -93,6 +93,50 @@ u32 ModPageRowChosen(u32 mod, u32 row);
 // After ModActionWarp: the chunk's path (as a save names it, "levels\\earth\\cavern\\cavent") and the character played there
 // (GameProgress's; NoCharacter leaves it to the chunk's start script)
 void ModWarpTarget(char* chunk, u32 size, u32* character);
+// TwinsanityEvolved: whether the player has the platform's infinite lives on (a built-in mod's switch, asked when a script
+// takes a life): 1 = the life is not taken -- the count stays where it is, so a death never brings the game over. The PS2: 0
+u32 InfiniteLives();
+
+// TwinsanityEvolved: a load's reads are in. 1 while the game loads a level behind its loading picture, the platform reading the
+// disc at its device's own speed (disc.speed), and no read the game asked for still in flight: the streaming loader then starts
+// a wanted chunk's load at once instead of a second after it became wanted (ChunkLoaderBase::StepStates). 0 otherwise -- in
+// play, where the streaming keeps the console's pace -- and always on the PS2 (its loads wait their seconds)
+u32 LoadReadsDone();
+
+// TwinsanityEvolved: whether the cross button may skip the scripted cutscene a graph directs (game/cutsceneskip.h): asked for
+// each graph a director's runner runs as its cutscene starts, and for the graphs its agents run at the cross button. 0 = not
+// skippable: the cross button then does nothing in that cutscene and it plays as watched. The platform answers from its table of the disc's cutscenes (those whose skip was checked
+// to leave what watching them leaves); the PS2 answers 0 (its cutscenes play as retail's)
+u32 CutsceneSkippable(u32 graph);
+
+// TwinsanityEvolved: what a TEST asks of the game while it plays, never the player: the platform's test tools (an autopilot
+// plan's steps, a fixture's knob) reach a cutscene whose trigger needs play a test cannot do -- a boss fight won, a route a long
+// way up. Asked at the start of every frame of play until it answers 0 (the PS2, and the platform unless a test asks): 1 = a
+// request written into `request`, which the game carries out through its own code (game/testrequests.h)
+enum TestRequestKind : u32
+{
+    // The instance (0: the player) warped to (x, y, z) in its chunk's frame, as a script's PositionWarp warps one
+    TestWarp = 1,
+    // The user message `value` sent to the instance from `other` (0: from none), as a script's SendUserMessage sends one
+    TestMessage = 2,
+    // The game counter `counter` set to `value`, as a script's SetCounter sets one
+    TestCounter = 3,
+    // The instance's own counter `counter` (0 to 3) set to `value`, as a script's SetCounter sets an agent's
+    TestAgentCounter = 4,
+};
+struct TestRequest
+{
+    u32 kind;
+    // Instances by their address in the game's memory, which the platform looks up by name
+    u32 instance;
+    u32 other;
+    u32 counter;
+    s32 value;
+    f32 x;
+    f32 y;
+    f32 z;
+};
+u32 NextTestRequest(TestRequest* request);
 
 struct DateTime
 {

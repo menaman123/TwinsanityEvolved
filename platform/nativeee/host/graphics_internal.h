@@ -8,6 +8,7 @@
 #include <new>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <string>
@@ -46,15 +47,17 @@ struct DeferredBuild;
 
 // The record in 32-byte groups (the Cortex-A9's cache line; the records are 32-byte aligned): the game thread writes a
 // record frames after the drawing thread last read it, on another core -- every line it touches is a miss. Line 0 is what
-// every reader looks at first and the whole header of the Vita's COMPACT mesh record (RecordMeshCompact: the mesh, its
-// state pool entry, the flags, no vertices); line 1 the skin / interpolation fields; lines 2-7 the mesh parameters
-// (screen, origin, scroll and the lit flag in lines 2-4); lines 8-11 the state. A compact record's game-thread writes are
-// lines 0 and 2-4 (+ the light rows when lit, lines 4-7); the drawing thread fills in the rest from the state pool when it
-// expands the bucket (ExpandBucket) -- the record then reads as RecordMeshInPlace would have written it.
+// every reader looks at first and the whole of the Vita's PART LINE (RecordCompactParts / RecordMeshBlock: the mesh, its
+// state pool entry, the flags, no vertices, its parameters in its instance's block); line 1 the skin / interpolation
+// fields; lines 2-7 the record's own mesh parameters (screen, origin, scroll and the lit flag in lines 2-4); lines 8-11 the
+// state. A compact record's game-thread writes are line 0 alone when its parameters are an instance block's, else lines 0
+// and 2-4 (+ the light rows when lit, lines 4-7: RecordMeshCompact); the drawing thread fills in the rest from the state
+// pool when it expands the bucket (ExpandBucket) -- the record then reads as RecordMeshInPlace would have written it, its
+// parameters through Params().
 struct alignas(32) Draw {
     // ---- line 0
     uint32_t mesh = 0;              // a native mesh's draw (RecordMesh): no vertices here, the device transforms the mesh
-                                    // through mesh_params
+                                    // through Params()
     // The Vita's compact mesh record (RecordMeshCompact): its state is the state pool's entry `pool` (1-based; 0 = the
     // record holds its own state); the drawing thread copies it in at ExpandBucket, with the fields a native draw of
     // DrawInstance's always has (skin_joints 0, the untagged tag, the whole frame as the box, the whole mesh). Every recycler
@@ -67,7 +70,11 @@ struct alignas(32) Draw {
     // (ExpandBucket; the frame keeps its builds until it is drawn), `verts` empty -- no copy of the built vertices on the
     // drawing thread. Every recycler of a Draw clears it (OpenDraw, RecordMesh, ReserveDeferred, ExpandBucket).
     const ps2e_draw_vertex* ext = nullptr;
-    uint32_t ext_count = 0;
+    // The draw's mesh parameters when they are not its own (`own_params`): the Vita's compact part of an instance, whose
+    // parameters -- the instance's screen matrix, the GS origin, the part's scroll, unlit, the whole frame, the whole mesh --
+    // are its INSTANCE BLOCK's (CompactBlocks), written once for all the instance's parts of that scroll. Null everywhere
+    // else: every recycler of a Draw clears it (only RecordCompactParts / RecordMeshBlock set it). Read through Params().
+    const ps2e_draw_mesh_params* params = nullptr;
     std::vector<ps2e_draw_vertex> verts;
     // ---- line 1
     uint32_t skin_joints = 0;       // a GPU-skinned mesh's draw (RecordSkinMesh; the Vita): `mesh` is a skin mesh, drawn
@@ -78,12 +85,15 @@ struct alignas(32) Draw {
     // object by instance identity with its matrices as drawn, a vertex run paired by identity and part, or the newest
     // picture's draw as it is (untagged). Stamped from the current tag at OpenDraw (SetDrawTag).
     ps2r::ps2e::InterpTag tag;
+    uint32_t ext_count = 0;         // (`ext`'s vertex count: read only where `ext` is set -- the drawing thread's own records)
     // ---- lines 2-7
-    alignas(32) ps2e_draw_mesh_params mesh_params{};
+    alignas(32) ps2e_draw_mesh_params own_params{};
     // ---- lines 8-11
     ps2e_draw_state state;
     std::vector<float> palette;     // the joints' rows, then (a blend skin's part) its vertices' displacements
     ps2r::ps2e::InterpTransform transform;
+    // the mesh parameters the draw is made with: its instance block's, else its own
+    const ps2e_draw_mesh_params& Params() const { return params ? *params : own_params; }
     const ps2e_draw_vertex* Vertices() const { return ext ? ext : verts.data(); }
     size_t VertexCount() const { return ext ? size_t(ext_count) : verts.size(); }
     // an in-place draw's vertices copied into its own storage (before something is appended to it)
@@ -100,7 +110,7 @@ struct alignas(32) Draw {
 inline void PrefetchDraw(const Draw* d) {
 #if defined(__vita__)
     const char* const s = reinterpret_cast<const char*>(&d->state);
-    const char* const m = reinterpret_cast<const char*>(&d->mesh_params);
+    const char* const m = reinterpret_cast<const char*>(&d->own_params);
     __builtin_prefetch(d);
     __builtin_prefetch(s);
     __builtin_prefetch(s + 32);
@@ -121,11 +131,29 @@ inline void PrefetchDrawHot(const Draw* d) {
     (void)d;
 #endif
 }
+// ... a compact record's: its head and its mesh parameters `params` (its own lines 2-7, or its instance block's six lines;
+// its state is its pool entry's)
+inline void PrefetchDrawParams(const Draw* d, const ps2e_draw_mesh_params* params) {
+#if defined(__vita__)
+    const char* const m = reinterpret_cast<const char*>(params);
+    __builtin_prefetch(d);
+    for (int k = 0; k < 6; ++k) __builtin_prefetch(m + 32 * k);
+#else
+    (void)d;
+    (void)params;
+#endif
+}
 
 bool EnsureDevice();
 MaterialView ReadMaterial(uint32_t address);
 // The device texture of a GameTexture (guest address; 0 none): what ReadMaterial puts in MaterialView::texture_handle
 uint32_t TextureHandleAt(uint32_t address);
+// The texture map's and the state pool's change counters (the game thread's): g_texture_epoch moves at every change of an
+// address's texture handle (graphics.cpp TextureChanged / TexturesCleared), g_pool_epoch whenever a pool entry is remade
+// for other bytes (the one change that ends an (id, generation) pair's currency) -- an answer kept with the counter's value
+// still holds while the counter has not moved (graphics_scene.cpp CachedMaterial)
+extern uint32_t g_texture_epoch;
+extern uint32_t g_pool_epoch;
 // The material's k-th shader as the view's shader (its texture, handle; the same material and bucket); shader null when the
 // material has no k-th shader. A material's later shaders are its further passes over the same geometry
 MaterialView ShaderView(const MaterialView& m, uint32_t k);
@@ -163,6 +191,9 @@ struct DeferredBuild {
         ps2e_draw_mesh_params params{};
     };
     std::vector<MeshSegment> meshes;
+    // A build's copy of what it reads from guest memory that the game rewrites before the build runs (the particle blocks,
+    // their table and matrix): the build's own storage, kept across frames as `verts` is (no allocation once grown)
+    std::vector<uint8_t> input;
     std::atomic<bool> done{false};
     // the Vita's low-latency hand-over replaced the picture this build is for before it was drawn: a worker that has not
     // started the build skips it (done all the same; nothing reads its storage) -- graphics.cpp PresentFrame / CancelBuild
@@ -305,6 +336,31 @@ ps2e_draw_mesh_params& RecordMeshInPlace(uint32_t bucket, const ps2e_draw_state&
 bool CompactMeshes();
 ps2e_draw_mesh_params& RecordMeshCompact(uint32_t bucket, uint32_t pool, const ps2e_draw_state& state, uint32_t mesh);
 bool CompactCheck();
+#if defined(__vita__)
+// One instance's parts as compact records in one call (the placement's short form, graphics_scene.cpp PlaceShort): each part
+// its bucket, pool entry, native mesh and scroll; all of them drawn whole and unlit through `screen` (16 floats) at the GS
+// origin -- the records RecordMeshCompact and its caller write for such parts, in order (`still`: the camera unmoved -- each
+// group of a record's lines stored only where it differs from the slot's). With the instance blocks (CompactBlocks): the
+// instance's block of each scroll its parts have (one as a rule), then each part's line.
+struct CompactPart {
+    uint32_t bucket, pool, mesh;
+    float scroll[2];
+};
+void RecordCompactParts(const CompactPart* parts, uint32_t n, const float* screen, float originX, float originY, bool still);
+// THE INSTANCE BLOCKS (graphics.cpp; the game thread writes, the drawing thread reads). A compact unlit part drawn whole has
+// the mesh parameters of its instance -- the screen matrix, the GS origin -- and of its material's scroll: written ONCE into
+// the picture's block stream (a ps2e_draw_mesh_params whose box / range / lights were set when its storage was made: the
+// whole frame, the whole mesh, none), and per part its record's line 0 only, `params` naming the block. ~3.8 parts an
+// instance on the rooftops: 3 lines an instance + 1 a part written, where the records were 4 a part. The stream travels with
+// the buckets at the hand-over (its storage never moves while a picture names it). TE_GFX_VITA_BLOCKS=0: each record its own
+// parameters, as before (a device A/B of the two threads' costs; the same draws either way).
+bool CompactBlocks();
+// a block of the picture's stream holding `screen` (16 floats), the origin, `scroll` (2 floats), unlit: the parameters of
+// every part drawn through it (DrawInstance's common part; RecordCompactParts makes its own)
+const ps2e_draw_mesh_params* NewBlock(const float* screen, float originX, float originY, const float* scroll);
+// a compact record whose parameters are `block`'s: its line 0 (RecordMeshCompact's header with `params` set)
+void RecordMeshBlock(uint32_t bucket, uint32_t pool, uint32_t mesh, const ps2e_draw_mesh_params* block);
+#endif
 // The state pool: draw states kept by content for the compact records (the game thread's; the drawing thread reads an entry
 // at a picture's expansion). An entry is recycled only once every picture that used it is drawn or dropped (each use stamps
 // the picture being recorded; the drawing thread publishes the last picture it has finished). PoolState: the entry of
@@ -333,6 +389,8 @@ std::string ChunkCensusLine(double frames);
 // skins) with the build pool's line (graphics.cpp PoolCensusLine) after it; empty elsewhere
 std::string BuildersCensusLine(double frames);
 std::string PoolCensusLine(double frames);
+// The particle builds' census per frame (graphics_particles.cpp): blocks built, by the emitter's form
+std::string ParticleCensusLine(double frames);
 void RetireMesh(uint32_t mesh);
 // The Vita's draw order for the GPU's hidden-surface removal (graphics_zorder.cpp; TE_GFX_VITA_ZORDER): a bucket's draw
 // ORDER (`used` pointers to its draws, graphics.cpp ExpandBucket) permuted on the drawing thread right before the draws are
@@ -341,8 +399,92 @@ void RetireMesh(uint32_t mesh);
 // knob's in-run A/B). Elsewhere a no-op. The census line per window (empty when never called).
 void ZOrderDraws(ps2e_draw* device, Draw** draws, size_t used, uint64_t presents);
 std::string ZOrderCensusLine(double frames);
+// THE PICTURE'S DRAW FACTS (the Vita; graphics.cpp ExpandBucket, TE_GFX_VITA_GATHER): what the draw order, the sky's wait,
+// the instancing plan and the instanced submit read of a bucket's draws, made ONCE a picture in the expansion's pass over
+// the records -- each phase read 4-8 of a 512-byte record's 32-byte lines again (~30 line reads a record a picture on the
+// rooftop's far view: the drawing thread waited on memory). Every fact is a function of its draw alone (its record and,
+// for a compact one, its state pool entry): the same answer whatever phase asks it. Parallel to the bucket's order through
+// `perm` (perm[k]: the facts of order entry k -- the draw order permutes the pointers and perm alike).
+enum FactKind : uint8_t { kFactUnlit = 0, kFactLit, kFactOther, kFactBlock, kFactEmpty };   // the plan's kinds (KindOf)
+enum : uint8_t { kFactDepthSafe = 1, kFactStencil = 2, kFactFrameCopy = 4, kFactAlphaTest = 8 };   // the state's answers
+constexpr int8_t kSkyNotAsked = -128;
+struct DrawFact {
+    uint8_t kind;     // FactKind (graphics_batch.cpp KindOf's answer)
+    uint8_t sbits;    // the state's answers (graphics_batch.cpp StateBitsOf)
+    uint8_t zclass;   // graphics_zorder.cpp ZClass: 0 a barrier, 1 in a run (no discard), 2 in a run, punch-through
+    int8_t sky;       // graphics.cpp SkyStopOf: -1 the sky waits on, >= 0 it stops here (why); kSkyNotAsked
+};
+// the instancing plan's tuple of an unlit mesh draw: the mesh, its range (first, count), its shift's bits (offset x / y,
+// scroll x / y) and its state pool entry -- graphics_batch.cpp TupleWords
+struct DrawTuple {
+    uint32_t w[8];
+};
+// a mesh draw's parameters as the later phases read them (its record's own or its instance block: Draw::Params) -- an
+// instanced group's member's row is its screen matrix there (ps2e_draw_mesh_params::screen), read in place; null: no mesh
+struct DrawRow {
+    const ps2e_draw_mesh_params* p;
+};
+struct PictureFacts {
+    const DrawFact* facts = nullptr;
+    const DrawTuple* tuples = nullptr;
+    const DrawRow* rows = nullptr;
+    uint32_t* perm = nullptr;   // order entry -> facts index (the draw order permutes it with the pointers)
+};
+constexpr uint8_t kFactCopyDraw = 16;   // (in sbits) the draw takes a screen copy before it (Draw::copy_frame)
+constexpr uint8_t kFactCompact = 32;    // (in sbits) a compact record: its state its pool entry's, its joints none
+// THE FACTS' ANSWERS, the one definition of each (inline: the expansion asks them of every draw of a picture) -- of the
+// draw's state `s`, its joints and its lit flag as given (a compact record's: its pool entry's state, 0, its own lit)
+// graphics_batch.cpp: opaque, depth-writing, tested GEQUAL / GREATER, no stencil, no destination-alpha test, no frame copy
+inline bool FactDepthSafe(const ps2e_draw_state& s) {
+    return (s.depth_test == PS2E_DRAW_DEPTH_GEQUAL || s.depth_test == PS2E_DRAW_DEPTH_GREATER) && s.depth_write && !s.blend &&
+           !s.no_colour_write && s.stencil == PS2E_DRAW_STENCIL_OFF && !s.dest_alpha_test && (!s.alpha_test || s.alpha_fail == 0) &&
+           s.texture != PS2E_DRAW_TEXTURE_FRAME_COPY;
+}
+// graphics_batch.cpp's state answers: depth-safe, a stencil draw, a frame-copy texture, alpha-tested
+inline uint8_t FactStateBits(const ps2e_draw_state& s) {
+    return uint8_t((FactDepthSafe(s) ? kFactDepthSafe : 0) | (s.stencil != PS2E_DRAW_STENCIL_OFF ? kFactStencil : 0) |
+                   (s.texture == PS2E_DRAW_TEXTURE_FRAME_COPY ? kFactFrameCopy : 0) | (s.alpha_test ? kFactAlphaTest : 0));
+}
+// graphics_batch.cpp KindOf from the state's answers
+inline uint8_t FactKindOf(const Draw& d, uint8_t sbits, uint32_t skin_joints, int lit) {
+    return d.copy_frame || (sbits & kFactStencil) ? kFactBlock
+           : d.mesh ? (skin_joints ? kFactBlock : (sbits & kFactFrameCopy) ? kFactOther : lit ? kFactLit : kFactUnlit)
+           : d.VertexCount() >= 3 ? kFactOther : kFactEmpty;
+}
+// graphics_batch.cpp's tuple words of a mesh draw with its parameters `m` (Draw::Params; its range as given: a compact
+// record's is the whole mesh, 0 / 0)
+inline void FactTuple(const Draw& d, const ps2e_draw_mesh_params& m, int first, int count, DrawTuple& t) {
+    t.w[0] = d.mesh;
+    t.w[1] = uint32_t(first);
+    t.w[2] = uint32_t(count);
+    std::memcpy(&t.w[3], m.offset, 8);
+    std::memcpy(&t.w[5], m.scroll, 8);
+    t.w[7] = d.pool;
+}
+// graphics_zorder.cpp ZClass: 0 keeps its place and ends a run; 1 in a run, never discards; 2 in a run, punch-through.
+// The lit meshes and the GPU skins keep their place (the characters' parts are layered: graphics_zorder.cpp's head)
+inline uint8_t FactZClass(const Draw& d, const ps2e_draw_state& s, uint32_t skin_joints, int lit) {
+    if (d.copy_frame || s.texture == PS2E_DRAW_TEXTURE_FRAME_COPY || s.stencil != PS2E_DRAW_STENCIL_OFF || s.no_colour_write ||
+        s.blend || s.dest_alpha_test || !s.depth_write ||
+        (s.depth_test != PS2E_DRAW_DEPTH_GEQUAL && s.depth_test != PS2E_DRAW_DEPTH_GREATER))
+        return 0;
+    if (!d.mesh && d.VertexCount() < 3) return 0;
+    if (d.mesh && (lit || skin_joints)) return 0;
+    if (!s.alpha_test || s.alpha_fail != 0) return 1;   // no test, or AFAIL other than KEEP: every fragment is written
+    const int ref = s.alpha_reference;
+    switch (s.alpha_method) {
+        case PS2E_DRAW_ATST_ALWAYS: return 1;
+        case PS2E_DRAW_ATST_GEQUAL: return ref <= 0 ? 1 : 2;
+        case PS2E_DRAW_ATST_LEQUAL: return ref >= 255 ? 1 : 2;
+        default: return 2;   // NEVER, LESS, EQUAL, GREATER, NOTEQUAL: some alpha fails
+    }
+}
+// ZOrderDraws with the classes made already (facts) and the permutation carried along (null: as ZOrderDraws)
+void ZOrderDrawsFacts(ps2e_draw* device, Draw** draws, size_t used, uint64_t presents, const PictureFacts* facts);
+// TE_GFX_VITA_ATEST_FOLD: the draw order changes states (an alpha test folded away) -- the facts are then not made
+bool ZOrderFoldOn();
 // THE BATCHING CENSUS and THE INSTANCING PLAN over each bucket's drawing order (graphics_batch.cpp; the Vita;
-// elsewhere no-ops). BatchCensusFrame: whether this picture is censused (1 in TE_GFX_VITA_BATCH_CENSUS, default 32), asked
+// elsewhere no-ops). BatchCensusFrame: whether this picture is censused (1 in TE_GFX_VITA_BATCH_CENSUS; 0, the default: none), asked
 // once per picture. InstancePlanMode: TE_GFX_VITA_INSTANCE (0 off, 1 instanced draws, 2 the planned order one draw at a
 // time). PlanBucket: the bucket's census (`census`) and, when `plan`, its plan -- per draw of `list` its group's next draw
 // and whether it is drawn with its group's first draw (valid until the next call); `barrier`: the index of the draw the
@@ -355,8 +497,10 @@ int InstancePlanSetting();   // TE_GFX_VITA_INSTANCE as set: 0 unset / off, 1, 2
 const char* InstancePlanArmName();   // the A/B's arm 1: "instanced" / "the planned order"
 int InstancePlanMode();      // this picture's: 0 off, 1 instanced, 2 the planned order one draw at a time (abN: 1 / 0)
 bool BatchCensusFrame(bool picture);
+// `facts` (null: none -- every pass reads the records): the full rule's plan reads the draws' kinds, state answers and
+// tuples from them (FullPass; the same groups)
 const BatchPlan* PlanBucket(ps2e_draw* device, Draw* const* list, size_t count, size_t barrier, bool census, bool plan,
-                            long picture, int bucket);
+                            long picture, int bucket, const PictureFacts* facts = nullptr);
 void NotePlannedFrame();
 std::string BatchCensusLine(double frames);
 // THE SCREEN COPIES COALESCED (graphics_copies.cpp; TE_GFX_COPY_COALESCE, every platform): a frame-copy draw's copy
@@ -386,6 +530,20 @@ void SetNativeScrolled(bool on);
 // TE_AB=gamecpu2 run them as before. The same answers either way (bit for bit); only the work differs.
 bool GameCpuFast();
 void SetGameCpuFast(bool on);
+// The game thread's leaner seam forms of the Vita (graphics_scene.cpp: the common part's short path, the material cache's
+// kept pointers and change counters, the scroll test on the bits, the screen matrix as NEON quadwords; math_vu0.cpp: the
+// animations' scale blend without its clamps where they cannot act): ON by default; TE_VITA_SEAM_LEAN=0 / the off arm of
+// TE_AB=seamlean run those parts as before (a device A/B of the game thread's cost). The same answers either way.
+extern bool g_seam_lean, g_seam_lean_read;
+void ReadSeamLean();
+inline bool SeamLean() {
+    if (__builtin_expect(!g_seam_lean_read, 0)) ReadSeamLean();
+    return g_seam_lean;
+}
+inline void SetSeamLean(bool on) {
+    g_seam_lean_read = true;
+    g_seam_lean = on;
+}
 // graphics_decals.cpp: the decal ageings DecalMath::Age answered without the VU clamps (the seams' census)
 uint64_t DecalsUnclamped();
 // The calls of the game thread's other costly seams, per present in the "[te.gfx.calls]" census line beside

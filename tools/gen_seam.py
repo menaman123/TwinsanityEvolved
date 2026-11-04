@@ -38,6 +38,20 @@ EXTRA_IMPORTS = [
      "abi.h CallEabiFloat (te_cxx.py rule R6 renames the second declaration's asm label)", True),
 ]
 
+# THE SEAM EPOCH (te_seam_epoch, platform/nativeee/host/te_seam_epoch.h): a count every host entry from the game moves --
+# the module lane's thunks, the native lane's forwarders -- except the imports below, which run between the scenery's
+# placements (scenery.cpp's loops call nothing else between two DrawPlacedModel calls): the culling's and the placement's.
+# None of them writes the platform's own structures (materials, shaders, textures, models) or the state a placement takes
+# for its whole stretch (the frame's origin, the record kind, the device); the module's own resource code tells the host
+# of its changes itself (ps2e_gfx2_resources_changed). So while the epoch stands, what a placement verified of a material
+# is still so: the host checks it once per material and epoch instead of once per part (graphics_scene.cpp).
+EPOCH_TRANSPARENT = {
+    "ps2e_graphics_load_chunk_planes", "ps2e_graphics_load_portal_planes", "ps2e_graphics_load_culling_view",
+    "ps2e_graphics_cull_load_link", "ps2e_graphics_cull_load_model", "ps2e_graphics_cull_test_box",
+    "ps2e_graphics_cull_test_box_at", "ps2e_graphics_cull_result", "ps2e_graphics_cull_matrices",
+    "ps2e_graphics_clip_box", "ps2e_graphics_clip_box_at", "ps2e_graphics_draw_placed_model",
+}
+
 PRIMS_I32 = {"u32", "s32", "u16", "s16", "u8", "s8", "int", "unsigned", "char", "short", "bool", "size_t"}
 WASM2C_TYPE = {"u32": "u32", "s32": "u32", "u64": "u64", "s64": "u64", "f32": "f32", "f64": "f64", "void": "void"}
 
@@ -293,7 +307,7 @@ def main():
 
     # ---- seam_forwarders_<header>.cpp (wasm side), one per header so each sees ONLY its own header ---------------
     forwarder_files = []
-    # TE_PROF_SEAM on the Vita's NATIVE lane (cmake --preset vita-native-release -DTE_PROF_SEAM=ON): there are no host
+    # TE_PROF_SEAM on the Vita's NATIVE lane (cmake --preset vita-release -DTE_PROF_SEAM=ON): there are no host
     # thunks there -- the forwarders call the ps2e_* bodies directly -- so the forwarders mark the game thread's profiler
     # section with the import's number, the number the wasm lane's thunks use (te_prof_seam_names' row, 1-based: the
     # Platform functions, the second seam, the thunked extras). Every other build: the marker is nothing.
@@ -314,6 +328,13 @@ def main():
         "#define TE_SEAM_SECTION(id) TeSeamSection te_seam_section_(id)",
         "#else",
         "#define TE_SEAM_SECTION(id) ((void)0)",
+        "#endif",
+        "// the seam epoch (te_seam_epoch.h): moved here on the native lane, by the host thunks on the module lane",
+        "#if defined(TE_NATIVE)",
+        "extern \"C\" unsigned te_seam_epoch;",
+        "#define TE_SEAM_EPOCH() (++te_seam_epoch)",
+        "#else",
+        "#define TE_SEAM_EPOCH() ((void)0)",
         "#endif", ""]
     for h in headers:
         if h.stem in wasm_side:
@@ -345,6 +366,8 @@ def main():
             F.append(f"{'[[noreturn]] ' if f['noreturn'] else ''}{f['ret']} {f['name']}({sig_params})")
             F.append("{")
             F.append(f"    TE_SEAM_SECTION({prof_ids[f['import']]});")
+            if f["import"] not in EPOCH_TRANSPARENT:
+                F.append("    TE_SEAM_EPOCH();")
             F += pre
             rk = f["ret_kind"]
             call = f"{f['import']}({', '.join(args)})"
@@ -373,7 +396,7 @@ def main():
         ct = {"ptr": "ps2e_u32", "u32": "ps2e_u32", "s32": "ps2e_s32", "f32": "ps2e_f32", "void": "void"}
         ps = ", ".join(f"{ct[k]} {n}" for k, n in f["params"])
         F.append(f"{ct[f['ret']]} te_second_{f['symbol']}({ps or 'void'}) asm(\"{f['symbol']}\");")
-        F.append(f"{ct[f['ret']]} te_second_{f['symbol']}({ps or 'void'}) {{ TE_SEAM_SECTION({prof_ids[f['import']]}); "
+        F.append(f"{ct[f['ret']]} te_second_{f['symbol']}({ps or 'void'}) {{ TE_SEAM_SECTION({prof_ids[f['import']]}); TE_SEAM_EPOCH(); "
                  f"{'return ' if f['ret'] != 'void' else ''}{f['import']}({', '.join(n for _, n in f['params'])}); }}")
     F += ["}", ""]
     (out / "seam_forwarders_second.cpp").write_text("\n".join(F))
@@ -398,7 +421,9 @@ def main():
          "#else",
          "#define TE_PROF_IN(id) (void)0",
          "#define TE_PROF_OUT() (void)0",
-         "#endif", ""]
+         "#endif",
+         "// The seam epoch (platform/nativeee/host/te_seam_epoch.h): every thunk moves it but the culling's and the placement's",
+         "extern unsigned te_seam_epoch;", ""]
     def w2c_sig(rt_kind, params):
         ps = ["struct w2c_env* env"]
         for t, n in params:
@@ -407,11 +432,13 @@ def main():
     prof_names = []
     def thunk_body(rt, call):
         # the import's number (1-based) is its row in te_prof_seam_names
-        prof_names.append(call.split("(")[0])
+        name = call.split("(")[0]
+        prof_names.append(name)
         n = len(prof_names)
+        epoch = "" if name in EPOCH_TRANSPARENT else " ++te_seam_epoch;"
         if rt == "void":
-            return f"    (void)env; TE_PROF_IN({n}); (void){call}; TE_PROF_OUT();"
-        return f"    (void)env; TE_PROF_IN({n}); {rt} te_r = ({rt}){call}; TE_PROF_OUT(); return te_r;"
+            return f"    (void)env;{epoch} TE_PROF_IN({n}); (void){call}; TE_PROF_OUT();"
+        return f"    (void)env;{epoch} TE_PROF_IN({n}); {rt} te_r = ({rt}){call}; TE_PROF_OUT(); return te_r;"
     for f in all_fns:
         params = []
         if f["ret_kind"] == "byval":

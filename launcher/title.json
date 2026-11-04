@@ -181,7 +181,8 @@
   "mods": {
     "builtin": [
       { "id": "level_select", "name": "Level select", "author": "TwinsanityEvolved", "switch": false, "help": "A list of every level, boss and area, started at once." },
-      { "id": "speedrun", "name": "Speedrun mode", "author": "TwinsanityEvolved", "help": "A real-time timer at the top of the screen and practice save states (F9 / F10 / F11)." }
+      { "id": "speedrun", "name": "Speedrun mode", "author": "TwinsanityEvolved", "help": "A real-time timer at the top of the screen and practice save states (F9 / F10 / F11)." },
+      { "id": "infinite_lives", "name": "Infinite lives", "author": "TwinsanityEvolved", "help": "A death costs no life: the lives stay as they are, so they never run out." }
     ]
   },
   "scan": {

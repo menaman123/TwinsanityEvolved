@@ -15,6 +15,10 @@
 //   jump                               CROSS held 10 frames
 //   spin                               SQUARE held 6 frames
 //   hold BUTTONS N [LX LY RX RY]       a raw hold of N frames (buttons as in a pad log: CROSS+START, hex, NONE)
+//   look DX DZ [TOL] [N] [MAX_FRAMES]  turn the camera (the right stick) until it looks along the world direction (DX, DZ) within TOL
+//                                      degrees (default 4), then keep it there N frames (default 0), the stick pushed back whenever the
+//                                      camera drifts out (its own recentering): a held view that replays alike where the camera's
+//                                      response differs a little (the Vita)
 //   wait N                             the neutral pad N frames (of PLAY: paused outside Playing like every movement step)
 //   idle N                             the neutral pad N frames in ANY state (the menus: a dialog's settle time)
 //   at N                               the neutral pad until boundary N (absolute: the menu prefix of a fixture)
@@ -32,6 +36,15 @@
 //                                      or set (1) -- the state bits of a hazard (a trapdoor's 0x200 = open)
 //   watch NAME                         log the named instance's place + box with every probe line from here on (learn its motion)
 //   hulls NAME                         dump the named instance's collision (ObjectCollision, OGI hulls, joint matrices) once
+//   until-graph NAME GRAPH [STATE] [MAX_FRAMES]  the neutral pad until the awake instance named NAME (an object's whole name or the
+//                                      part after its last '|') runs the behaviour graph GRAPH at a level, at its state STATE (-1:
+//                                      any): a boss in the phase a test's message is for
+// TEST REQUESTS (platform/nativeee/host/te_test_requests.h: what a test asks of the game, carried out by the game's own code at
+// the start of the next frame of play; logged "[te.test] b N: ...", which tools/cutscenes/reach.py turns into the fixture's
+// TE_TEST_ACTIONS -- the recording's pad log carries the inputs, never these):
+//   teleport X Y Z [NAME]              the player (or NAME's instance) warped to (X, Y, Z) in its chunk's frame, as PositionWarp warps
+//   message NAME ID [FROM]             the user message ID sent to NAME's instance from FROM's, as SendUserMessage sends one
+//   counter N V [NAME]                 the game counter N set to V, as SetCounter sets one (NAME: that instance's own counter N)
 //   stop                               end the plan (the runner's --stop-at ends the run)
 #include "te_autopilot.h"
 
@@ -44,13 +57,15 @@
 #include <vector>
 
 #include "padlog.h"
+#include "te_cutscenes.h"
 #include "te_probe.h"
 #include "te_services.h"
+#include "te_test_requests.h"
 
 namespace te::autopilot {
 
 namespace {
-enum class Kind { Goto, GotoJump, Dash, Jump, Spin, Hold, Wait, Idle, At, UntilChunk, UntilGState, Instances, Tables, UntilInst, UntilAir, UntilFlag, Watch, Hulls, Stop };
+enum class Kind { Goto, GotoJump, Dash, Jump, Spin, Hold, Look, Wait, Idle, At, UntilChunk, UntilGState, Instances, Tables, UntilInst, UntilAir, UntilFlag, Watch, Hulls, UntilGraph, Test, Stop };
 
 struct Step {
     Kind kind;
@@ -68,6 +83,8 @@ struct Step {
     std::string field;  // until-inst's field
     bool less = true;   // until-inst's OP
     float value = 0;    // until-inst's VALUE
+    int graph = 0, graph_state = -1;   // until-graph's GRAPH and STATE
+    te::test_requests::Request request;   // a test request's
     std::string text;   // the plan line (logged)
     unsigned line = 0;
 };
@@ -85,6 +102,7 @@ uint32_t g_step_chunk = 0;
 unsigned g_stuck_jumps = 0;
 bool g_done = false;
 bool g_paused = false;
+uint64_t g_look_in = 0;   // look: the boundary the camera first came within its tolerance (0: not yet)
 std::string g_watch;   // the instance logged with the probe lines
 uint64_t g_watch_last = 0;
 
@@ -116,13 +134,15 @@ void Begin(uint64_t boundary) {
     g_jump_until = 0;
     g_detour_until = 0;
     g_stuck_jumps = 0;
+    g_look_in = 0;
     if (g_step < g_plan.size()) {
         g_plan[g_step].jump_at = 0;
         const Step& st = g_plan[g_step];
         probe::State s;
         probe::Read(s);
         g_step_chunk = s.chunk;
-        std::fprintf(stderr, "[autopilot] @%llu step %zu (line %u): %s", (unsigned long long)boundary, g_step, st.line, st.text.c_str());
+        // (no %zu: the Vita's newlib printf has none -- it printed "zu" and the %s read the next argument as a pointer)
+        std::fprintf(stderr, "[autopilot] @%llu step %u (line %u): %s", (unsigned long long)boundary, unsigned(g_step), st.line, st.text.c_str());
         if (s.valid) std::fprintf(stderr, "  [at (%.2f %.2f %.2f) chunk %s]", s.x, s.y, s.z, s.chunk_path.c_str());
         std::fprintf(stderr, "\n");
     }
@@ -131,7 +151,7 @@ void Begin(uint64_t boundary) {
 void Next(uint64_t boundary, const char* why) {
     probe::State s;
     probe::Read(s);
-    std::fprintf(stderr, "[autopilot] @%llu step %zu done (%s) after %llu frames at (%.2f %.2f %.2f)\n", (unsigned long long)boundary, g_step, why,
+    std::fprintf(stderr, "[autopilot] @%llu step %u done (%s) after %llu frames at (%.2f %.2f %.2f)\n", (unsigned long long)boundary, unsigned(g_step), why,
                  (unsigned long long)(boundary - g_step_start), s.x, s.y, s.z);
     ++g_step;
     Begin(boundary);
@@ -175,7 +195,8 @@ Pads::Sample Compute(uint64_t boundary) {
     // the step's clocks are shifted so the frames outside play do not count (and nothing is pressed: CROSS would skip
     // the cutscene, which the fixture must let play).
     const bool movement = st.kind == Kind::Goto || st.kind == Kind::GotoJump || st.kind == Kind::Dash || st.kind == Kind::Jump || st.kind == Kind::Spin ||
-                          st.kind == Kind::Wait || st.kind == Kind::UntilChunk || st.kind == Kind::UntilInst || st.kind == Kind::UntilAir || st.kind == Kind::UntilFlag;
+                          st.kind == Kind::Wait || st.kind == Kind::Look || st.kind == Kind::UntilChunk || st.kind == Kind::UntilInst || st.kind == Kind::UntilAir || st.kind == Kind::UntilFlag ||
+                          st.kind == Kind::UntilGraph || st.kind == Kind::Test;
     if (movement && s.game_state != 12) {
         // A modal message (Paused, 15: "auto-save failed", a hint) is dismissed with CROSS (3 frames every 40); the authoring
         // never presses START, so 15 is always a message here. Other states (Watching, loads) are let play.
@@ -205,6 +226,14 @@ Pads::Sample Compute(uint64_t boundary) {
             return out;
         }
         case Kind::Hulls: probe::DumpHulls(st.name, boundary); Next(boundary, "dumped"); return Compute(boundary);
+        case Kind::UntilGraph:
+            if (cutscenes::RunsGraph(st.name, st.graph, st.graph_state)) {
+                std::fprintf(stderr, "[autopilot] @%llu until-graph: '%s' runs %d%s\n", (unsigned long long)boundary, st.name.c_str(), st.graph,
+                             st.graph_state >= 0 ? (" at s" + std::to_string(st.graph_state)).c_str() : "");
+                Next(boundary, "graph running"); return Compute(boundary);
+            }
+            return out;
+        case Kind::Test: test_requests::Ask(st.request, boundary); Next(boundary, "asked"); return Compute(boundary);
         case Kind::Watch: g_watch = st.name; g_watch_last = 0; Next(boundary, "watching"); return Compute(boundary);
         case Kind::UntilInst: {
             probe::Instance i;
@@ -238,6 +267,27 @@ Pads::Sample Compute(uint64_t boundary) {
             if (elapsed >= st.frames) { Next(boundary, "held"); return Compute(boundary); }
             out.buttons = st.buttons; out.lx = st.lx; out.ly = st.ly; out.rx = st.rx; out.ry = st.ry;
             return out;
+        case Kind::Look: {
+            if (!have) return out;
+            // the error from the camera's look (xz) to the wanted direction, wrapped to (-pi, pi]; RX 255 turns the look from
+            // +x towards +z (atan2(z, x) grows), so its sign picks the stick's side, its size the throw (at least half)
+            constexpr float kPi = 3.14159265f;
+            float e = std::atan2(st.z, st.x) - std::atan2(s.look_z, s.look_x);
+            while (e > kPi) e -= 2.f * kPi;
+            while (e <= -kPi) e += 2.f * kPi;
+            const bool within = std::fabs(e) <= st.radius * kPi / 180.f;
+            if (within && !g_look_in) {
+                g_look_in = boundary;
+                std::fprintf(stderr, "[autopilot] @%llu look: within %.1f deg of (%.2f, %.2f), the camera looks (%.2f %.2f) from (%.1f %.1f %.1f)\n",
+                             (unsigned long long)boundary, st.radius, st.x, st.z, s.look_x, s.look_z, s.cam_x, s.cam_y, s.cam_z);
+            }
+            if (g_look_in && boundary - g_look_in >= st.frames) { Next(boundary, "looking"); return Compute(boundary); }
+            if (!within) {
+                const float m = std::fmin(1.f, std::fmax(0.5f, std::fabs(e) / (30.f * kPi / 180.f)));
+                out.rx = uint8_t(std::lround(128.f + (e > 0.f ? 127.f : -127.f) * m));
+            }
+            return out;
+        }
         case Kind::UntilChunk:
             if (have && s.chunk_path.find(st.name) != std::string::npos) { Next(boundary, "chunk reached"); return Compute(boundary); }
             return out;
@@ -347,6 +397,16 @@ bool Load(const std::string& path, std::string* error) {
         else if (op == "until-air") { st.kind = Kind::UntilAir; in >> st.max_frames; }
         else if (op == "watch") { st.kind = Kind::Watch; if (!(in >> st.name)) return fail("watch NAME"); }
         else if (op == "hulls") { st.kind = Kind::Hulls; if (!(in >> st.name)) return fail("hulls NAME"); }
+        else if (op == "until-graph") {
+            st.kind = Kind::UntilGraph;
+            if (!(in >> st.name >> st.graph)) return fail("until-graph NAME GRAPH [STATE] [MAX_FRAMES]");
+            in >> st.graph_state >> st.max_frames;
+        }
+        else if (op == "teleport" || op == "message" || op == "counter") {
+            st.kind = Kind::Test;
+            std::string why;
+            if (!test_requests::Parse(line, &st.request, &why)) { if (error) *error = path + ":" + std::to_string(n) + ": " + why; return false; }
+        }
         else if (op == "until-flag") {
             st.kind = Kind::UntilFlag;
             std::string mask, want;
@@ -376,6 +436,11 @@ bool Load(const std::string& path, std::string* error) {
             if (!padlog::ParseButtons(buttons, st.buttons)) return fail("unknown button");
             int lx, ly, rx, ry;
             if (in >> lx >> ly >> rx >> ry) { st.lx = uint8_t(lx); st.ly = uint8_t(ly); st.rx = uint8_t(rx); st.ry = uint8_t(ry); }
+        } else if (op == "look") {
+            st.kind = Kind::Look;
+            if (!(in >> st.x >> st.z)) return fail("look DX DZ [TOL] [N] [MAX_FRAMES]");
+            st.radius = 4.f;
+            in >> st.radius >> st.frames >> st.max_frames;
         } else if (op == "until-chunk") {
             st.kind = Kind::UntilChunk;
             if (!(in >> st.name)) return fail("until-chunk NAME [MAX_FRAMES]");
@@ -391,7 +456,7 @@ bool Load(const std::string& path, std::string* error) {
         if (port != 0 || slot != 0) { Pads::Sample none; none.connected = false; return none; }
         return Compute(Services::Get().clock().BoundaryCount());
     });
-    std::fprintf(stderr, "[autopilot] plan %s: %zu steps\n", path.c_str(), g_plan.size());
+    std::fprintf(stderr, "[autopilot] plan %s: %u steps\n", path.c_str(), unsigned(g_plan.size()));
     return true;
 }
 

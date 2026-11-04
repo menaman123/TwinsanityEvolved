@@ -123,7 +123,7 @@ BehaviourRunner* BehaviourRunner::Construct(BehaviourRunner* runner, GameNode* a
     runner->originator = nullptr;
     runner->unused26 = 0;
     runner->depth = 0;
-    runner->unused4C = 0;
+    runner->skippedFrames = 0;
     runner->syncUnit = 0;
     runner->packetEnd = 0;
     runner->packetStart = 0;
@@ -735,7 +735,7 @@ void BehaviourRunner::Start(StarterReceivers* started, GraphData* graph)
     packet = nullptr;
     packetEnd = 0;
     syncUnit = 0;
-    unused4C = 0;
+    skippedFrames = 0;
     packetStart = 0;
     nextStarter = nullptr;
     originator = started->originator;

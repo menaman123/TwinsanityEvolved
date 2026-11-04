@@ -1,5 +1,6 @@
 #include "game/commands.h"
 
+#include "game/cutsceneskip.h"
 #include "game/memory.h"
 
 namespace
@@ -111,8 +112,14 @@ u32 DoParticleCommand::Size()
     return sizeof(DoParticleCommand);
 }
 
+// TwinsanityEvolved: a skipped cutscene's agent's sound not played (game/cutsceneskip.h)
 void DoSoundCommand::Execute(TimeClock*, BehaviourRunner* runner, BehaviourLevel*)
 {
+    if (CutsceneSkips(runner->agentNode) != 0)
+    {
+        return;
+    }
+
     CallVirtual<void>(this, vtable, ExecuteOnSlot, runner->agentNode);
 }
 

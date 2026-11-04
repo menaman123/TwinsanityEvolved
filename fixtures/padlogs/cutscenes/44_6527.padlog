@@ -1,0 +1,27 @@
+# cutscene reach fixture (tools/cutscenes/reach.py): site 6527 COM_BUSCHASE_CUTSCENE_DIRECTOR_ACTIVATED
+# card: tools/warp_save.py --card <hub card> --chunk 'levels\school\rooftop\buschase' --place 0xFFFF --character nina --story 18
+# chunk=levels\school\rooftop\buschase
+# story=18
+# character=nina
+# reach: the bus chase at story 18, played as Nina: walk 25 units forward from the start into the first-entry volume at z -62.2, which tells the director 87
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# text-language=english
+# speech-language=english
+1 0000 128 128 128 128  # NONE
+1271 0008 128 128 128 128  # START
+1276 0000 128 128 128 128  # NONE
+1354 0040 128 128 128 128  # DOWN
+1357 0000 128 128 128 128  # NONE
+1404 4000 128 128 128 128  # CROSS
+1409 0000 128 128 128 128  # NONE
+1804 0040 128 128 128 128  # DOWN
+1807 0000 128 128 128 128  # NONE
+1904 4000 128 128 128 128  # CROSS
+1907 0000 128 128 128 128  # NONE
+2526 4000 128 128 128 128  # CROSS
+2529 0000 128 128 128 128  # NONE
+2576 0000 128 255 128 128  # NONE
+2632 0000 127 255 128 128  # NONE
+2778 0000 128 128 128 128  # NONE
+2779 0000 128 128 128 128  # NONE
+# end at boundary 7200

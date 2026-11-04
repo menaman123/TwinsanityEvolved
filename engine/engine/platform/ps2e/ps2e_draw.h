@@ -263,6 +263,18 @@ int ps2e_draw_submit_mesh(ps2e_draw* device, const ps2e_draw_state* state, uint3
  * an instance stream). Returns the number of them refused (0: all drawn). */
 int ps2e_draw_submit_mesh_instances(ps2e_draw* device, const ps2e_draw_state* state, uint32_t mesh,
                                     const ps2e_draw_mesh_params* const* params, int n);
+/* The same run with each draw's transform read from `views` -- its screen matrix (16 floats), GS origin and UV scroll (2
+ * each) and box (4): the very values params[i] holds, from storage the caller reads cheaper (the drawing thread's picture
+ * facts) -- and the run's range `first` / `count` (every params[i]'s); params[i] for the rest (a draw the device makes on
+ * its own, a shadow caster's record). Returns the number refused. */
+typedef struct ps2e_draw_mesh_view {
+    const float* screen;
+    const float* offset;
+    const float* scroll;
+    const float* box;
+} ps2e_draw_mesh_view;
+int ps2e_draw_submit_mesh_views(ps2e_draw* device, const ps2e_draw_state* state, uint32_t mesh, int first, int count,
+                                const ps2e_draw_mesh_params* const* params, const ps2e_draw_mesh_view* views, int n);
 /* 1 when the device draws such runs as instanced draws (the Vita's GL backend with its instanced twins and the
  * packets on), else 0: a producer then has no reason to look for runs. */
 int ps2e_draw_mesh_instancing(const ps2e_draw* device);

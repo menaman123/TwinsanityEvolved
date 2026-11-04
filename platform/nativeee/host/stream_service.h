@@ -21,10 +21,25 @@
 //         inside the frame, then the read lands;
 //       - at a boundary (the hook) when the end has passed and nobody polled: the bytes are in place next frame.
 //     Everything is a function of the boundary count: deterministic, the same under play and deterministic.
+//     THE CARD (the PS Vita: the bytes read by the disc reader thread, te::io): the drive model decides WHEN a read lands; the
+//     card has to have given its bytes by then. Under the deterministic profile the landing waits for the reader (the model's
+//     exact landings: the fixtures). In play it does not: a read whose drive time has come and whose bytes are still on the
+//     card stays in flight -- a poll answers "reading" (charged as above), the boundary hook leaves it -- and lands at the first
+//     poll or boundary after the reader has them, as a slow DVD's read did on the console: the game's loader polls and goes
+//     on. A Wait parks whole frames for the card as it parks them for the drive. The census counts the reads put off
+//     ("[te.stream] presents ...", LogWindow). TE_STREAM_WAIT_CARD=1: the landing waits for the card in play too (the A/B).
 //     The decode of a streamed resource file is thereby paced by the drive (one reader block per delivery),
 //     which is what keeps the game tick under a field (the streaming-freeze case: 267 models in one tick).
 //   * INSTANT model (te::Settings::stream_instant, the pre-drive-model behaviour, kept for A/B): the bytes are in place
 //     when the call returns, IsReading is false, Wait returns 0.
+//   * A LOAD AT THE DEVICE'S SPEED (SetLoading, from te_loading.h's game state hook: the game behind its loading picture with
+//     disc.speed = device): a read is not modelled -- its bytes land as soon as they are read: in the call where the read is
+//     synchronous (a computer); on the PS Vita (the reader thread) at the first poll / boundary after the reader has them, a
+//     poll waiting for the card while the frame's work is under three quarters of a field (past that it answers "reading"
+//     and is charged as above, and the frame goes on to show the loading picture), in a wait at once; under the deterministic
+//     profile every landing waits for the reader (the same landings as a synchronous read). The reads in flight when
+//     it turns on land the same way. The drive model's busy time is not advanced by them; its head is left where their last
+//     sector is, so the first read after the load seeks from there.
 //   * AttachBuffer/DetachBuffer/FreeBufferMemory keep the IOP buffer pool's accounting (the game sizes its music
 //     buffers against FreeBufferMemory) and mint the opaque per-channel buffer addresses Audio::
 //     ChannelBufferAddress returns (the game hands one to the movie as lent memory; nobody dereferences it);
@@ -93,6 +108,13 @@ public:
     // A read in flight on the channel: its drive end (ms on the boundary timeline), 0 when none.
     double PendingEndMs(int32_t channel) const;
 
+    // ----- a load at the device's speed (te_loading.h) -------------------------------------------------------------
+    // On while the game loads behind its loading picture with disc.speed = device (the header's model above).
+    void SetLoading(bool loading);
+    bool Loading() const { return loading_; }
+    // A read the game asked for is not in place yet (any model)
+    bool InFlight() const { return !pending_.empty(); }
+
     // ----- inspection / tests ----------------------------------------------------------------------------------
     struct Counters {
         uint64_t opens = 0, opens_missing = 0, closes = 0, reads = 0, bank_reads = 0, delivered = 0,
@@ -104,6 +126,17 @@ public:
                  forced = 0;
     };
     Counters Count() const { return count_; }
+    // The reads of loads at the device's speed (te_loading.h's census; not state): how many, their bytes, the time the calling
+    // thread spent reading them (the synchronous reads: a computer's)
+    struct DeviceCount { uint64_t reads = 0, bytes = 0; double read_ms = 0; };
+    DeviceCount DeviceReads() const { return device_; }
+    // The landings and the card (not state): the reads whose drive time came before the card gave their bytes (and their
+    // bytes), the polls / boundaries that found such a read still reading, the frames a Wait parked for the card, the forced
+    // landings (a close, a second read) that waited for it; the archive entries read ahead from their first read
+    struct CardCount {
+        uint64_t late_reads = 0, late_bytes = 0, late_polls = 0, late_boundaries = 0, parks = 0, forced_waits = 0, entries_ahead = 0;
+    };
+    CardCount Card() const { return card_; }
     int32_t Channels() const { return channels_; }
     void Reset();   // tests: everything as before Initialise
     // Save state (savestate.h): the open files, the channel buffers, the state and counters, the reads in flight.
@@ -123,6 +156,8 @@ private:
         uint32_t bank_id = 0;
         uint64_t issue_boundary = 0;
         double end_ms = 0;
+        bool device = false;   // read at the device's speed (a load): in place once its bytes are, whatever end_ms says
+        bool late = false;     // its drive time came before the card's bytes (counted once)
         std::vector<uint8_t> bytes;
         te::io::Handle<te::io::Job> read;
     };
@@ -138,6 +173,18 @@ private:
     void Land(int32_t channel, Pending& p);
     void LandPending(int32_t channel, const char* site);
     void ForceChannel(int32_t channel);
+    // A pending read is in place now: a read at the device's speed once its bytes are (the reader thread done with them), any
+    // other once its drive end lies inside the frame that ends at `frame_end_ms`
+    static bool Due(const Pending& p, double frame_end_ms);
+    // Whether a landing waits for the card (the deterministic profile; TE_STREAM_WAIT_CARD=1)
+    static bool LandingWaits();
+    void NoteLate(Pending& p);
+    // A read of the archive at `at`: the rest of its entry read ahead whole (te::io::ReadAhead, Ahead::Entry)
+    void AheadEntry(uint64_t at, size_t bytes);
+    // A poll of a load's read the reader thread still has (play): wait for it, while this frame's work is under three quarters
+    // of a field (te::Clock::MsSinceRelease) -- the reads at the card's own speed, the loading picture's frames kept
+    static bool LoadPollWaits();
+    static double LoadPollBudgetMs();   // what is left of it (ms; <= 0: none)
     uint64_t Boundary() const;
     uint64_t DriveFrame() const;   // the drive model's frame clock (the boundaries; the fields in Vita play mode)
     // the drive clock's frame in ms: kFrameMs at 60 Hz, 20 at the 50 Hz game rate
@@ -150,6 +197,9 @@ private:
     int32_t next_file_ = 0;
     uint32_t last_size_ = 0;
     bool instant_ = false, instant_set_ = false, hooked_ = false;
+    bool loading_ = false;
+    DeviceCount device_;
+    CardCount card_;
     std::map<int32_t, File> files_;
     std::map<int32_t, Buffer> buffers_;
     std::map<int32_t, Pending> pending_;
@@ -159,5 +209,8 @@ private:
 
 // The process-wide service the ps2e_* bodies use.
 StreamService& Service();
+// The window's line of the landings and the card (te_prof.cpp beside the reader's; at exit with from = to = 0): nothing when
+// nothing was put off in a window
+void LogWindow(uint64_t from, uint64_t to);
 
 }  // namespace te::stream

@@ -5,6 +5,7 @@
 #include "game/chunkloading.h"
 #include "game/clock.h"
 #include "game/collision.h"
+#include "game/cutsceneskip.h"
 #include "game/events.h"
 #include "game/instancefactory.h"
 #include "game/instances.h"
@@ -118,6 +119,12 @@ GameEvent* MakeMessage(u32 message, InstanceContext* sender)
 
 void SendMessage(GameEvent* event, InstanceContext* target)
 {
+    // TwinsanityEvolved: what a cutscene agent messages is one of the cutscene's agents (game/cutsceneskip.h)
+    if (event != nullptr && event->argument != nullptr)
+    {
+        NoteCutsceneAgent(static_cast<InstanceContext*>(event->argument->object), target);
+    }
+
     Reference* handle = event != nullptr ? AddEventReference(event) : nullptr;
     QueueEvent(target, &handle);
 }

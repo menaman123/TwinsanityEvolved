@@ -318,6 +318,7 @@ void OnLoad(const std::string& save, const std::string& file) {
 // The built-in mods register themselves here (one function per mod source file)
 void RegisterLevelSelect();
 void RegisterSpeedrun();
+void RegisterInfiniteLives();
 
 void RegisterBuiltins() {
     static bool registered = false;
@@ -325,6 +326,7 @@ void RegisterBuiltins() {
     registered = true;
     RegisterLevelSelect();
     RegisterSpeedrun();
+    RegisterInfiniteLives();
 }
 
 void InstallBuiltins() {

@@ -3,7 +3,8 @@
 //   - the disc reader (disc_reader.h) with the reader thread on (TE_DISC_ASYNC=1) and its urgent-first order and early
 //     completion (TE_DISC_URGENT / TE_DISC_EARLY, on by default): every read's bytes are the image's, for small reads with
 //     their read-ahead spans, sequential walks served from the spans, big reads in pieces, reads submitted while others are
-//     in flight, and reads released before they are done;
+//     in flight, and reads released before they are done; and the extents (ranges read ahead whole): reads served from them,
+//     waiting on their pieces, after they are let go of, the budget's shares;
 //   - the builder pool's background queue (graphics_internal.h PostBackground): every job posted runs once, staged posts
 //     included once the frame's hand-over (FlushBuilds) hands them over;
 //   - PreparedMesh's state machine: the work runs exactly once whichever of TryMake / Ensure gets there first, a cancelled
@@ -85,6 +86,82 @@ void TestReaderBytes(const IsoFs& iso) {
                  (unsigned long long)c.passed, (unsigned long long)c.dequeue_hits);
 }
 
+// The extents (disc_reader.h: ranges read ahead whole): the bytes the image's whether a read finds its range in, waits on
+// it or comes before it; a range held twice is refused; let go of, its reads are plain reads; the budget's shares
+void TestExtents(const IsoFs& iso) {
+    const te::io::Census c0 = te::io::Count();
+    CHECK_EQ(te::io::AheadBudget(), size_t(8u << 20));   // (TE_DISC_AHEAD_MB=8 in main)
+    const uint64_t a = g_file_at + 4096, a_end = a + 1536 * 1024;
+    // reads submitted right after the read-ahead: they wait on its pieces (or come first); then from memory
+    CHECK(te::io::ReadAhead(&iso, a, a_end, te::io::Ahead::Links, "chunk a"));
+    CHECK(!te::io::ReadAhead(&iso, a + 1024, a + 2048, te::io::Ahead::Links, "chunk a"));   // held already
+    CHECK(te::io::AheadHas(&iso, a + 100, a + 200));
+    auto check = [](te::io::Job* job, uint64_t at, size_t size) {
+        te::io::Wait(job, "the test");
+        CHECK_EQ(job->got, size);
+        CHECK(job->bytes.size() == size && std::memcmp(job->bytes.data(), g_image.data() + (at - g_file_at), size) == 0);
+        te::io::Release(job);
+    };
+    std::vector<std::pair<te::io::Job*, uint64_t>> jobs;
+    for (uint64_t at = a; at + 131072 <= a_end; at += 150000) {
+        auto* job = new te::io::Job;
+        job->offset = at;
+        job->size = 131072;
+        job->site = "stream";
+        te::io::Submit(job, &iso);
+        jobs.push_back({job, at});
+    }
+    for (auto& [job, at] : jobs) check(job, at, 131072);
+    // all in memory now: a read inside is done in Submit
+    for (int k = 0; k < 200 && te::io::Count().ahead_held < 1536 * 1024; ++k) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    {
+        auto* job = new te::io::Job;
+        job->offset = a + 777777;
+        job->size = 5000;
+        job->site = "stream";
+        const uint64_t hits = te::io::Count().ahead_hits;
+        te::io::Submit(job, &iso);
+        CHECK(te::io::Done(job));
+        CHECK_EQ(te::io::Count().ahead_hits, hits + 1);
+        check(job, a + 777777, 5000);
+    }
+    // the budget's shares: the linked chunks up to 8 - 6 MB, the archive entries the rest
+    CHECK(!te::io::ReadAhead(&iso, g_file_at + (2u << 20), g_file_at + (2u << 20) + (1u << 19) + 1, te::io::Ahead::Links, "chunk b"));
+    CHECK(te::io::ReadAhead(&iso, g_file_at + (2u << 20), g_file_at + (2u << 20) + (900u << 10), te::io::Ahead::Entry, "entry", 4096));
+    // let go of: the reads inside are plain reads, their bytes the image's
+    te::io::KeepAhead(te::io::Ahead::Links, {});
+    CHECK(!te::io::AheadHas(&iso, a + 100, a + 200));
+    {
+        auto* job = new te::io::Job;
+        job->offset = a + 999;
+        job->size = 70000;
+        job->site = "stream";
+        te::io::Submit(job, &iso);
+        check(job, a + 999, 70000);
+    }
+    // the archive entry's extent read through: let go of once a read ends near its end
+    const uint64_t e = g_file_at + (2u << 20);
+    for (uint64_t at = e; at + 65536 <= e + (900u << 10); at += 65536) {
+        auto* job = new te::io::Job;
+        job->offset = at;
+        job->size = 65536;
+        job->site = "stream";
+        te::io::Submit(job, &iso);
+        check(job, at, 65536);
+    }
+    CHECK(!te::io::AheadHas(&iso, e, e + 1));
+    const te::io::Census c = te::io::Count();
+    CHECK_EQ(c.ahead_links - c0.ahead_links, 1u);
+    CHECK_EQ(c.ahead_entries - c0.ahead_entries, 1u);
+    CHECK_EQ(c.ahead_refused - c0.ahead_refused, 1u);
+    CHECK(c.ahead_hits > c0.ahead_hits);
+    CHECK_EQ(c.ahead_held, 0u);
+    std::fprintf(stderr, "  extents: %llu reads served (%llu waited on a piece), %.1f MB read in them, %llu let go of\n",
+                 (unsigned long long)(c.ahead_hits + c.ahead_waited - c0.ahead_hits - c0.ahead_waited),
+                 (unsigned long long)(c.ahead_waited - c0.ahead_waited), double(c.ahead_bytes - c0.ahead_bytes) / 1048576.0,
+                 (unsigned long long)(c.ahead_dropped - c0.ahead_dropped));
+}
+
 void TestBackgroundQueue() {
     std::atomic<int> ran{0};
     std::atomic<int> twice{0};
@@ -153,6 +230,8 @@ void TestPreparedMesh() {
 
 int main() {
     setenv("TE_DISC_ASYNC", "1", 1);   // the reader thread (the Vita's default) before its first use
+    setenv("TE_DISC_AHEAD_MB", "8", 1);   // the extents' budget (TestExtents)
+    setenv("TE_DISC_SLOW_MS", "1,1", 1);  // a card slower than a computer's disk: the reads overlap the submits
     g_image = te_test::Pattern(3 * 1024 * 1024 + 777, 0x5EED);
     const std::string path = te_test::WriteTestIso({{"CRASH6", "BIG.BD", g_image}});
     CHECK(!path.empty());
@@ -163,6 +242,7 @@ int main() {
     g_file_at = uint64_t(e.lba) * IsoFs::kSectorSize;
     te::io::Start();
     TestReaderBytes(iso);
+    TestExtents(iso);
     TestBackgroundQueue();
     TestPreparedMesh();
     return te_test::Finish("test_load_pipeline");

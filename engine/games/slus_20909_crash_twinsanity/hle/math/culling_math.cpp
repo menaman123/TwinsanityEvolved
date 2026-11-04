@@ -187,6 +187,11 @@ CullingMath::PlaneColumns CullingMath::TransformPlanes(
     return result;
 }
 
+#if defined(__vita__)
+// (in line in the box tests: their two or three classifications were calls, each loading the model's rows and the box's
+// centre and half sizes again, and the first two -- always both made -- could not interleave their VFP chains)
+__attribute__((always_inline)) inline
+#endif
 CullingMath::Classification CullingMath::ClassifyAt(
         const PlaneColumns& planes, const Matrix& model, const Vector& center, const Vector& half) {
 #if defined(__vita__)

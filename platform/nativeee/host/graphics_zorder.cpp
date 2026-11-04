@@ -96,28 +96,9 @@ void ReadOptions() {
         std::fprintf(stderr, "[te.gfx] vita draw order (TE_GFX_VITA_ZORDER=%d): %s\n", g_zo.mode, kNames[g_zo.mode]);
 }
 
-// 0 = keeps its place and ends a run; 1 = in a run, never discards; 2 = in a run, punch-through (see the file's head)
-int ZClass(const Draw& d) {
-    const ps2e_draw_state& s = d.state;
-    if (d.copy_frame || s.texture == PS2E_DRAW_TEXTURE_FRAME_COPY || s.stencil != PS2E_DRAW_STENCIL_OFF || s.no_colour_write ||
-        s.blend || s.dest_alpha_test || !s.depth_write ||
-        (s.depth_test != PS2E_DRAW_DEPTH_GEQUAL && s.depth_test != PS2E_DRAW_DEPTH_GREATER))
-        return 0;
-    if (!d.mesh && d.VertexCount() < 3) return 0;
-    // the LIT meshes and the GPU skins (the characters: parts on joints of their own -- an eyeball under a fur patch, a
-    // mouth on a face -- layered within the Vita's depth quantum, which InstanceKey's matrix does not group) keep their
-    // place: the arena cutscene's white bear lost its eye when its parts were reordered (bucket 3, lit
-    // meshes 968/969); the scenery (unlit, prelit) is where the punch-through overdraw is
-    if (d.mesh && (d.mesh_params.lit || d.skin_joints)) return 0;
-    if (!s.alpha_test || s.alpha_fail != 0) return 1;   // no test, or AFAIL other than KEEP: every fragment is written
-    const int ref = s.alpha_reference;
-    switch (s.alpha_method) {
-        case PS2E_DRAW_ATST_ALWAYS: return 1;
-        case PS2E_DRAW_ATST_GEQUAL: return ref <= 0 ? 1 : 2;
-        case PS2E_DRAW_ATST_LEQUAL: return ref >= 255 ? 1 : 2;
-        default: return 2;   // NEVER, LESS, EQUAL, GREATER, NOTEQUAL: some alpha fails
-    }
-}
+// 0 = keeps its place and ends a run; 1 = in a run, never discards; 2 = in a run, punch-through (see the file's head):
+// graphics_internal.h FactZClass (the picture's facts ask the same of a compact record's pool entry)
+int ZClass(const Draw& d) { return FactZClass(d, d.state, d.mesh ? d.skin_joints : 0, d.mesh ? d.Params().lit : 0); }
 
 // The draw's surface, for the same-surface rule: a mesh draw by its mesh, range and matrix (its translation row: another
 // instance of the mesh stands elsewhere); a vertex draw by its count and first and last vertices' positions (a second pass
@@ -126,9 +107,9 @@ uint64_t SurfaceKey(const Draw& d) {
     uint32_t w[8];
     if (d.mesh) {
         w[0] = 0x6D657368u ^ d.mesh;
-        w[1] = uint32_t(d.mesh_params.first);
-        w[2] = uint32_t(d.mesh_params.count);
-        std::memcpy(&w[3], &d.mesh_params.screen[12], 4 * sizeof(float));
+        w[1] = uint32_t(d.Params().first);
+        w[2] = uint32_t(d.Params().count);
+        std::memcpy(&w[3], &d.Params().screen[12], 4 * sizeof(float));
         w[7] = uint32_t(d.skin_joints);
     } else {
         const ps2e_draw_vertex* v = d.Vertices();
@@ -147,10 +128,10 @@ uint64_t SurfaceKey(const Draw& d) {
 float NearZ(ps2e_draw* dev, const Draw& d, bool* known) {
     *known = true;
     if (d.mesh) {
-        const float* m = d.mesh_params.screen;
+        const float* m = d.Params().screen;
         if (!d.skin_joints) {
             float zn = 0.f, zf = 0.f;
-            if (ps2e_draw_mesh_depth_range(dev, d.mesh, &d.mesh_params, &zn, &zf)) return zn;
+            if (ps2e_draw_mesh_depth_range(dev, d.mesh, &d.Params(), &zn, &zf)) return zn;
         }
         // a skin (its bind-pose bounds say nothing of where it is) or bounds not known: the model's origin
         *known = false;
@@ -180,7 +161,7 @@ int ModeNow(uint64_t presents) {
 uint64_t InstanceKey(const Draw& d) {
     if (!d.mesh) return 0;
     uint32_t w[16];
-    std::memcpy(w, d.mesh_params.screen, sizeof w);
+    std::memcpy(w, d.Params().screen, sizeof w);
     // a model's parts come one after the other through one matrix: the previous key again when the matrix's
     // bytes are the previous draw's (the same words hash to the same key; the 64-bit multiplies are the A9's dearest)
     static uint32_t last_w[16];
@@ -240,7 +221,7 @@ void FoldAlphaTests(ps2e_draw* dev, Draw** draws, size_t used) {
         g_zc.tested++;
         const Draw& d = *draws[i];
         if (d.mesh && d.skin_joints) { g_zc.unknown_floor++; continue; }
-        const int lo = ps2e_draw_alpha_floor(dev, &s, d.mesh, d.mesh ? d.mesh_params.lit : 0, d.mesh ? nullptr : d.Vertices(),
+        const int lo = ps2e_draw_alpha_floor(dev, &s, d.mesh, d.mesh ? d.Params().lit : 0, d.mesh ? nullptr : d.Vertices(),
                                                 d.mesh ? 0 : int(d.VertexCount()));
         if (lo < 0) { g_zc.unknown_floor++; continue; }
         const int ref = s.alpha_reference;
@@ -253,7 +234,14 @@ void FoldAlphaTests(ps2e_draw* dev, Draw** draws, size_t used) {
 
 }  // namespace
 
-void ZOrderDraws(ps2e_draw* dev, Draw** draws, size_t used, uint64_t presents) {
+bool ZOrderFoldOn() {
+    if (!g_zo.read) ReadOptions();
+    return g_zo.fold;
+}
+
+void ZOrderDraws(ps2e_draw* dev, Draw** draws, size_t used, uint64_t presents) { ZOrderDrawsFacts(dev, draws, used, presents, nullptr); }
+
+void ZOrderDrawsFacts(ps2e_draw* dev, Draw** draws, size_t used, uint64_t presents, const PictureFacts* facts) {
     if (!g_zo.read) ReadOptions();
     if (g_zo.fold && dev) FoldAlphaTests(dev, draws, used);
     const int mode = ModeNow(presents);
@@ -262,13 +250,21 @@ void ZOrderDraws(ps2e_draw* dev, Draw** draws, size_t used, uint64_t presents) {
     // emulated TLS -- a call chain per access)
     static std::vector<uint8_t> cls;
     static std::vector<uint64_t> surfaces;
-    static std::vector<uint32_t> opaque, order;
+    static std::vector<uint32_t> opaque, order, moved_perm;
     static std::vector<Item> punch;
     static std::vector<Draw*> moved;
     cls.resize(used);
-    for (size_t i = 0; i < used; ++i) {
-        if (i + 3 < used) PrefetchDraw(draws[i + 3]);   // (the records' first touch on this core)
-        cls[i] = uint8_t(ZClass(*draws[i]));
+    // the classes: the picture's facts (made with the records' expansion; the fold, which changes states, has none), else
+    // each record's own
+    uint32_t* const perm = facts && !g_zo.fold ? facts->perm : nullptr;
+    if (perm) {
+        const DrawFact* const f = facts->facts;
+        for (size_t i = 0; i < used; ++i) cls[i] = f[perm[i]].zclass;
+    } else {
+        for (size_t i = 0; i < used; ++i) {
+            if (i + 3 < used) PrefetchDraw(draws[i + 3]);   // (the records' first touch on this core)
+            cls[i] = uint8_t(ZClass(*draws[i]));
+        }
     }
     g_zc.draws += used;
     size_t i = 0;
@@ -277,6 +273,19 @@ void ZOrderDraws(ps2e_draw* dev, Draw** draws, size_t used, uint64_t presents) {
             g_zc.barriers++;
             ++i;
             continue;
+        }
+        {
+            // a run with no punch-through draw is left as it is (the loop below then only lists its draws as opaque: no cut,
+            // no reorder): found in one scan of the classes -- the rooftop's far view is one such run of ~3000 draws
+            size_t e = i;
+            bool punch_through = false;
+            while (e < used && cls[e] != 0) punch_through |= cls[e++] == 2;
+            if (!punch_through) {
+                g_zc.runs++;
+                g_zc.opaque += e - i;
+                i = e;
+                continue;
+            }
         }
         // the run [i, j): cut before a draw over the surface of a punch-through draw earlier in it (a material's later pass:
         // the same depths everywhere, so the order of the two must stay -- the opaque draws keep theirs, the punch-through
@@ -372,13 +381,23 @@ void ZOrderDraws(ps2e_draw* dev, Draw** draws, size_t used, uint64_t presents) {
                 // punch-through ones back
                 moved.clear();
                 for (const Item& p : punch) moved.push_back(draws[i + p.index]);
+                if (perm) {
+                    moved_perm.clear();
+                    for (const Item& p : punch) moved_perm.push_back(perm[i + p.index]);
+                }
                 size_t dst = first_punch;
                 for (uint32_t o : opaque) {
                     if (o < first_punch) continue;
-                    if (dst != o) draws[i + dst] = draws[i + o];
+                    if (dst != o) {
+                        draws[i + dst] = draws[i + o];
+                        if (perm) perm[i + dst] = perm[i + o];
+                    }
                     ++dst;
                 }
+                const size_t back = dst;
                 for (Draw* p : moved) draws[i + dst++] = p;
+                if (perm)
+                    for (size_t k = 0; k < moved_perm.size(); ++k) perm[i + back + k] = moved_perm[k];
                 moved.clear();
             }
         }
@@ -415,6 +434,8 @@ std::string ZOrderCensusLine(double frames) {
 #else
 
 void ZOrderDraws(ps2e_draw*, Draw**, size_t, uint64_t) {}
+void ZOrderDrawsFacts(ps2e_draw*, Draw**, size_t, uint64_t, const PictureFacts*) {}
+bool ZOrderFoldOn() { return false; }
 std::string ZOrderCensusLine(double) { return std::string(); }
 
 #endif

@@ -1,0 +1,10 @@
+{
+  "id": "infinite_lives",
+  "name": "infinite lives",
+  "version": "1.0.0",
+  "description": "Options > Mods > infinite lives : off | on. While it is on a death costs no life: where the played character's death script takes one (AddLivesCommand) the game asks the platform (Platform::System::InfiniteLives) and takes none, so the lives shown stay as they are and the checkpoint restart after a death never ends in a game over. Lives given still count (a hundred wumpa fruit, an extra life). Switched off, the count goes on from where it is. Saves made with it on go to the -mods card.",
+  "hooks": [],
+  "settings": {},
+  "api": "c",
+  "source": "platform/nativeee/host/mod_infinite_lives.cpp"
+}

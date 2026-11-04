@@ -8,7 +8,7 @@ target_include_directories(te_test_support PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(te_test_support PUBLIC te_platform_host)
 target_compile_options(te_test_support PRIVATE -Wall -Wextra)
 
-set(TE_TESTS test_time test_pads test_disc_files test_saves test_system_io test_audio test_sound test_stream test_movie test_savestate test_harness test_graphics_screen_models test_mods_folder test_game_folder test_disc_overlay test_mods_page test_load_pipeline)
+set(TE_TESTS test_time test_pads test_disc_files test_saves test_system_io test_audio test_sound test_stream test_movie test_savestate test_harness test_graphics_screen_models test_mods_folder test_game_folder test_disc_overlay test_mods_page test_load_pipeline test_stream_card)
 add_custom_target(te_tests)
 foreach(t ${TE_TESTS})
     add_executable(${t} ${t}.cpp)

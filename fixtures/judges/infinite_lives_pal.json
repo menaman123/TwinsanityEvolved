@@ -1,0 +1,20 @@
+{
+  "padlog": "fixtures/padlogs/hub_deaths.padlog",
+  "disc": "PAL SLES-52568; deterministic headless: --config none --deterministic --no-sdl-input --no-audio --skip-movies --trace-state --trace-player 30 --harness-out; TE_GFX_DUMP_AT=present",
+  "stop_at": 6000,
+  "run_seconds": 600,
+  "probe_every": 30,
+  "start_lives": 5,
+  "deaths_off": 5,
+  "deaths_on": 7,
+  "present": 2850,
+  "hud_region": [
+    0.70,
+    0.05,
+    0.90,
+    0.22
+  ],
+  "hud_min_pixels": 300,
+  "why": "the pad log (NEW GAME on an empty card, recorded with --mod infinite_lives from fixtures/padlogs/hub_deaths.plan) walks Crash into the nitro crate west of the beach's start seven times: each walk a death (the probe's dead 1 from ~2917, 3354, 3791, 4228, 4665, 5102, 5539) and the checkpoint restart (FadingOut 21 -> Restarting 22 -> StartingPlay 11 -> Playing 12). Mod off: the lives 5 -> 4 -> 3 -> 2 -> 1 -> 0, the fifth death goes to GameOver (18) at the boundary the mod-on run fades out at, then the game's reload. Mod on: seven 'a life kept' lines, the lives 5 throughout, no GameOver, Playing at the end. Picture 2850 is the first death's lives panel (top right, the head and its number: 3 with the mod off, 4 -- the number before the death -- with it on); every other pixel of it is identical, as is every frame before the death",
+  "frozen": "2026-11-01 product: written with the infinite lives mod (the lives branch from fixes 1703b8a); RED on a runner without the mod (--mod infinite_lives refused: exit 2)"
+}

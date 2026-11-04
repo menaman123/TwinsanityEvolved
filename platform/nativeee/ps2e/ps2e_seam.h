@@ -424,6 +424,14 @@ void ps2e_system_mod_page_row_label(ps2e_s32 mod, ps2e_s32 row, ps2e_u32 out, ps
 ps2e_s32 ps2e_system_mod_page_row_chosen(ps2e_s32 mod, ps2e_s32 row);
 // Platform::System::void ModWarpTarget(char* chunk, u32 size, u32* character);
 void ps2e_system_mod_warp_target(ps2e_u32 chunk, ps2e_s32 size, ps2e_u32 character);
+// Platform::System::u32 InfiniteLives();
+ps2e_s32 ps2e_system_infinite_lives(void);
+// Platform::System::u32 LoadReadsDone();
+ps2e_s32 ps2e_system_load_reads_done(void);
+// Platform::System::u32 CutsceneSkippable(u32 graph);
+ps2e_s32 ps2e_system_cutscene_skippable(ps2e_s32 graph);
+// Platform::System::u32 NextTestRequest(TestRequest* request);
+ps2e_s32 ps2e_system_next_test_request(ps2e_u32 request);
 // Platform::System::DateTime LocalTime();
 void ps2e_system_local_time(ps2e_u32 out);
 // ---- time.h  (group: services) ----
@@ -517,6 +525,8 @@ ps2e_s32 ps2e_text_font_read(ps2e_u32 out, ps2e_s32 size);
 ps2e_s32 ps2e_text_diag(void);
 // text: Font::Draw -- one shaped text's census (te::text::Diag in guest memory): the host prints its lines' boxes and glyphs
 void ps2e_text_shaped(ps2e_u32 record);
+// graphics: the module's resource code is about to change a material, a shader, a texture or a model (the seam epoch moves: platform/nativeee/host/te_seam_epoch.h)
+void ps2e_gfx2_resources_changed(void);
 #ifdef __cplusplus
 }
 #endif

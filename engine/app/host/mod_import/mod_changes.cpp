@@ -45,6 +45,24 @@ bool ReadAll(ByteSource& s, std::vector<uint8_t>* out) {
     return out->empty() || s.Read(0, out->data(), out->size());
 }
 
+// How many texts the game numbers in a text bank (game/src/game/language.cpp ReadTextFile): one a line break -- CR LF and
+// LF CR count once, a lone CR or LF once -- up to the first NUL
+uint32_t TextCount(const std::vector<uint8_t>& t) {
+    uint32_t breaks = 0;
+    for (size_t i = 0; i < t.size() && t[i] != 0;) {
+        const uint8_t c = t[i];
+        const bool pair = i + 1 < t.size() && ((c == '\r' && t[i + 1] == '\n') || (c == '\n' && t[i + 1] == '\r'));
+        if (pair) {
+            ++breaks;
+            i += 2;
+        } else {
+            if (c == '\r' || c == '\n') ++breaks;
+            ++i;
+        }
+    }
+    return breaks;
+}
+
 DiffControl Control(Plan* plan) {
     DiffControl c;
     c.tick = [plan](uint64_t) { return !plan || plan->Step(-1); };
@@ -485,6 +503,50 @@ bool ChangesFromCrate(const Disc& base, const std::string& crate_dir, ChangeSet*
                                             first + (n > 1 ? ", ..." : "") + ") are entries of that disc's archive, not of this disc's");
                     break;
                 }
+            }
+            // a text bank under another release's name (Language\AgentLab\American.txt over the European disc) is never read
+            // here: the game reads this disc's banks of that folder, by their own count. A crate whose bank numbers more
+            // texts than they have shows, on this disc, numbers past their end (its scripts' signs and hints)
+            for (const auto& kv : repl) {
+                const std::string& key = kv.first;
+                const size_t slash = key.rfind('\\');
+                if (have.count(key) || slash == std::string::npos || key.compare(0, 9, "LANGUAGE\\") != 0 ||
+                    key.size() < 4 || key.compare(key.size() - 4, 4, ".TXT") != 0)
+                    continue;
+                const ReleaseArchive* other = nullptr;
+                for (const ReleaseArchive& r : KnownArchives())
+                    if (OtherRelease(base, r) && r.entries.count(key)) other = &r;
+                if (!other) continue;
+                std::vector<uint8_t> bytes;
+                if (!ReadAll(*kv.second, &bytes)) continue;
+                const uint32_t theirs = TextCount(bytes);
+                const std::string folder = key.substr(0, slash + 1);
+                bool any = false;
+                uint32_t mine = 0;
+                for (const BhEntry& e : cur.entries) {
+                    const std::string k = ArchiveKey(e.name);
+                    if (k.compare(0, folder.size(), folder) != 0 || k.find('\\', folder.size()) != std::string::npos ||
+                        k.size() < 4 || k.compare(k.size() - 4, 4, ".TXT") != 0)
+                        continue;
+                    const auto own = repl.find(k);
+                    if (own != repl.end()) {
+                        if (!ReadAll(*own->second, &bytes)) continue;
+                    } else {
+                        if (uint64_t(e.offset) + e.size > cur_bd->Size()) continue;
+                        bytes.resize(e.size);
+                        if (e.size && !cur_bd->Read(e.offset, bytes.data(), e.size)) continue;
+                    }
+                    const uint32_t n = TextCount(bytes);
+                    mine = any ? std::min(mine, n) : n;
+                    any = true;
+                }
+                if (!any || theirs <= mine) continue;
+                const std::string shown_name = other->entries.at(key).first;
+                const std::string shown_folder = shown_name.substr(0, shown_name.find_last_of("\\/"));
+                out->warnings.push_back("its text bank " + shown_name + " (an entry of " + RegionDisc(other->region) + "'s archive) has " +
+                                        std::to_string(theirs) + " texts, this disc's " + shown_folder + " banks " +
+                                        std::to_string(mine) + ": its texts " + std::to_string(mine) + " to " + std::to_string(theirs - 1) +
+                                        " are not on this disc");
             }
         }
     }

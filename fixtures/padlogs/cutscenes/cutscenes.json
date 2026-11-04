@@ -1,0 +1,339 @@
+[
+ {
+  "name": "02_3503",
+  "site": 3503,
+  "director": "COM_CORTEX_TRAINING_MINIBOSS_START",
+  "chunk": "levels\\earth\\hub\\bossarea",
+  "story": 1,
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "goto -2.6 10 1.2 400",
+   "goto -2.6 -6 1.0 600"
+  ],
+  "stop": 7200,
+  "how": "the boss arena at story 1: walk south down the steps into the first-entry volume in the arena's middle, which tells the stone door and the boss trigger 156; the boss trigger hands it to the miniboss (its trigger behaviour for 156 runs the start)",
+  "padlog": "fixtures/padlogs/cutscenes/02_3503.padlog"
+ },
+ {
+  "name": "05_3953",
+  "site": 3953,
+  "director": "COM_EARTH_HUB_CUTSCENE_DIRECTOR_DEFAULT",
+  "chunk": "levels\\earth\\hub\\hubd",
+  "story": 3,
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "goto -13.2 -47 1.0 900"
+  ],
+  "stop": 7200,
+  "how": "the island hub at story 3 (the cutscene raises 4): walk down towards the emu farmer; the director (the level data's soft flag 18 set) runs COM_CUTSCENE_PROXIMITY_ACTIVATION, which starts it when the player comes within its radius",
+  "padlog": "fixtures/padlogs/cutscenes/05_3953.padlog"
+ },
+ {
+  "name": "07_4191",
+  "site": 4191,
+  "director": "COM_TOTEM_CUTSCENE_DIRECTOR_DEFAULT",
+  "chunk": "levels\\earth\\docamok\\docamok1",
+  "story": 4,
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "goto 48.2 46 1.0 900"
+  ],
+  "stop": 7200,
+  "how": "Totem Hokum's bear ride at story 4: walk north from the start into the first-entry volume at z 45.2, which tells the totem director 87 (its default waits for it with the level data's soft flag 18 clear)",
+  "padlog": "fixtures/padlogs/cutscenes/07_4191.padlog"
+ },
+ {
+  "name": "11_5385",
+  "site": 5385,
+  "director": "COM_PSYCHOTRON_CUTSCENE_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\ice\\hub\\psycho",
+  "story": 6,
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "goto 44 0.4 1.0 400"
+  ],
+  "stop": 6800,
+  "how": "the ice hub's story (6, below 11: the director's default keeps its actors); walk west from the entrance into the first-entry volume at x 46.8, which tells the director 87",
+  "padlog": "fixtures/padlogs/cutscenes/11_5385.padlog"
+ },
+ {
+  "name": "19_5721",
+  "site": 5721,
+  "director": "COM_FINAL_BOSS_DEFAULT",
+  "chunk": "levels\\altearth\\core\\throne",
+  "story": 23,
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "goto 0 -53 1.0 600"
+  ],
+  "stop": 7200,
+  "how": "the throne room at story 23: walk 9 units forward into the first-entry volume at z -54.9, which tells the final boss 87 (its default, after starting its actors, waits for any message)",
+  "padlog": "fixtures/padlogs/cutscenes/19_5721.padlog"
+ },
+ {
+  "name": "26_6077",
+  "site": 6077,
+  "director": "COM_LAB_PSYCHETRON_ROOM_CUTSCENE_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\ice\\hub\\psycho",
+  "story": 19,
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "goto 40 0.3 1.0 300",
+   "goto 28 -0.5 1.0 600"
+  ],
+  "stop": 7200,
+  "how": "story 19 (the director plays at 19 only; Madame Amberly's defeat raises it): through the big door into the same volume at x 30.4",
+  "padlog": "fixtures/padlogs/cutscenes/26_6077.padlog"
+ },
+ {
+  "name": "27_6093",
+  "site": 6093,
+  "director": "COM_SLIPSLIDE_SHED_CUTSCENE_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\ice\\slipslide\\l05chasa",
+  "story": 9,
+  "character": "crash",
+  "second": "cortex",
+  "pairing": 2,
+  "steps": [
+   "wait 20",
+   "teleport 178 58 -2"
+  ],
+  "stop": 3700,
+  "how": "TEST MEANS at story 9, Crash riding Cortex as the Humiliskate's board (the save's pairing 2, Cortex its second): the rider teleported 12 units east of the shed, on the slope the chase comes down from l05roids (the test warp starts the board again at the new place, as the vehicle starts when it is made); the board slides west into the shed's first-entry volume (166.3, 46.5, -2.1), which tells the director 87 -- the autopilot cannot steer the board along the chase",
+  "padlog": "fixtures/padlogs/cutscenes/27_6093.padlog",
+  "test": "teleport 178.0000 58.0000 -2.0000@2742"
+ },
+ {
+  "name": "30_6185",
+  "site": 6185,
+  "director": "COM_BELL_TOWER_CUTSCENE_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\school\\madame\\amberly",
+  "story": 18,
+  "character": "cortex",
+  "steps": [
+   "wait 60"
+  ],
+  "start": "act_BELL_TOWER_CUTSCENE_DIRECTOR:87@3100",
+  "stop": 7200,
+  "how": "TEST START at story 18, played as Cortex (the warp starts on the arena's hanging platform): the director given its trigger behaviour for 87. The game's trigger is the first-entry volume at amberly's (1.3, -3.6, -3.3), reached from roofcor2 as Nina after the rooftop cutscene through the one-way door (the autopilot does not open it)",
+  "padlog": "fixtures/padlogs/cutscenes/30_6185.padlog"
+ },
+ {
+  "name": "31_6223",
+  "site": 6223,
+  "director": "COM_DOCAMOK_BEEHIVE_ACTIVATED",
+  "chunk": "levels\\earth\\docamok\\docamok2",
+  "story": 4,
+  "character": "crash",
+  "steps": [],
+  "stop": 7200,
+  "how": "the bear ride's second chunk at story 4: the start's checkpoint activates the summoner, which places Cortex and sends him 273; his route's phase (COM_CORTEX_DOCAMOK_EARTH_PHASE*) sends 87 to the beehive above him",
+  "padlog": "fixtures/padlogs/cutscenes/31_6223.padlog"
+ },
+ {
+  "name": "32_6233",
+  "site": 6233,
+  "director": "COM_MAMBERLY_PLAY_FIGHT",
+  "chunk": "levels\\school\\madame\\amberly",
+  "story": 18,
+  "character": "cortex",
+  "nth": 2,
+  "steps": [
+   "wait 30",
+   "teleport 1.3 -4.0 -3.3",
+   "until-gstate 13 600",
+   "until-gstate 12 3000",
+   "wait 10",
+   "hold CROSS 4",
+   "wait 6",
+   "teleport 28.04 -2.6 -10.76",
+   "wait 60",
+   "until-graph act_MAMBERLY 2587 2 4000",
+   "wait 30",
+   "counter 1 0 act_MAMBERLY",
+   "until-graph act_MAMBERLY 2587 6 600",
+   "wait 30",
+   "message act_MAMBERLY 8",
+   "until-graph act_MAMBERLY 2587 2 4000",
+   "wait 30",
+   "counter 1 0 act_MAMBERLY",
+   "until-graph act_MAMBERLY 2587 6 600",
+   "wait 30",
+   "message act_MAMBERLY 8",
+   "until-graph act_MAMBERLY 2587 2 4000",
+   "wait 30",
+   "counter 1 0 act_MAMBERLY",
+   "until-graph act_MAMBERLY 2587 6 600",
+   "wait 30",
+   "message act_MAMBERLY 8"
+  ],
+  "stop": 10000,
+  "record_stop": 10000,
+  "how": "TEST MEANS at story 18 as Cortex: the player teleported into the bell tower's first-entry volume (1.3, -3.6, -3.3) (the game's way in is roofcor2's one-way door as Nina; the warp starts on the hanging platform 10 units of slime away); near Madame Amberly her init gives her 3 ropes (her counter 0); the bell tower cutscene, then her fight COM_MAMBERLY_PLAY_FIGHT. The player jumps off the ring (her beam phase drops the platform he stands on) and is put back on the hanging platform; in each throw phase her throws are spent (her counter 1 = 0: what the player's shots at her objects take) and in her open window (2587 s6) she gets a magnet's electric hit (message 8, which DamageBoss takes): the first two take a rope each (LOSE_ROPE), at the third her throw phase runs the CutsceneStart of her defeat",
+  "padlog": "fixtures/padlogs/cutscenes/32_6233.padlog",
+  "test": "teleport 1.2999 -4.0000 -3.2999@2703;teleport 28.0400 -2.5999 -10.7600@4046;counter 1 0 act_MAMBERLY@5036;message act_MAMBERLY 8@5069;counter 1 0 act_MAMBERLY@6873;message act_MAMBERLY 8@6906;counter 1 0 act_MAMBERLY@9142;message act_MAMBERLY 8@9175"
+ },
+ {
+  "name": "34_6257",
+  "site": 6257,
+  "director": "COM_SLIPSLIDE_DINGODILE_HUT_CUTSCENE_ACTIVATED",
+  "chunk": "levels\\ice\\highseas\\gpa01",
+  "story": 10,
+  "character": "crash",
+  "steps": [
+   "wait 60"
+  ],
+  "start": "act_SLIPSLIDE_DINGODILE_HUT_CUTSCENE:87@3100",
+  "stop": 7200,
+  "how": "TEST START at story 10 (High Seas' area): the director given its trigger behaviour for 87. The game's triggers are two first-entry volumes 10 and 29 units above the chunk's start (202 at (-10.2, -32.5, 81.8) for the hut's default, 4 at (-69.4, -13.6, 72.0) with the exit-vehicle switch): the player arrives there by vehicle",
+  "padlog": "fixtures/padlogs/cutscenes/34_6257.padlog"
+ },
+ {
+  "name": "35_6309",
+  "site": 6309,
+  "director": "COM_BR_CORTEX_PIPE_CS_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\school\\boiler\\boiler_1",
+  "story": 15,
+  "character": "crash",
+  "second": "cortex",
+  "steps": [
+   "wait 90",
+   "hold SQUARE 4",
+   "wait 60",
+   "goto 28 38.4 0.6 600",
+   "goto 24 38.4 0.5 400",
+   "wait 30",
+   "goto 33 38.4 0.3 300",
+   "hold CROSS 4",
+   "hold CROSS+CIRCLE 8"
+  ],
+  "stop": 5400,
+  "how": "boiler_1 at story 15 with Cortex along (the save's second): a spin links Crash to Cortex (his join behaviour tells Crash 57), walk west of the ball machine, then east to x 33 facing it and a jump throw (CIRCLE in the jump, half a second linked): the throw sets game counter 32 to 1, Cortex flies within 5 of the machine's exit point while its head looks at him, the machine tells Cortex 268 (sucked in) and its linked director 87",
+  "padlog": "fixtures/padlogs/cutscenes/35_6309.padlog"
+ },
+ {
+  "name": "37_6347",
+  "site": 6347,
+  "director": "COM_PSYCHETRON_ROOM_CUTSCENE_H02J_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\ice\\hub\\psycho",
+  "story": 12,
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "goto 40 0.3 1.0 300",
+   "goto 28 -0.5 1.0 600"
+  ],
+  "stop": 7200,
+  "how": "story 12 (the high seas boss fight's end raises it; the director plays at 12-13 and raises 13): through the big door (open past story 11) into the first-entry volume at x 30.4, which tells the H02J and the lab psychetron room directors 87",
+  "padlog": "fixtures/padlogs/cutscenes/37_6347.padlog"
+ },
+ {
+  "name": "38_6361",
+  "site": 6361,
+  "director": "COM_CORTEX_FOLLOW_MANAGER_ACTIVATED",
+  "chunk": "levels\\altearth\\hub\\slipjoin",
+  "story": 21,
+  "character": "crash",
+  "second": "cortex",
+  "steps": [
+   "wait 30",
+   "goto -25.7 1.4 1.0 900"
+  ],
+  "stop": 7200,
+  "how": "Twinsanity Island's junction at story 21 with Cortex along (the save's second character): walk to the first-entry volume at x -25.7, which tells the follow manager 299 (the other ways in: 297 from the end of 13 cutscenes, e.g. the psychotron's, which 11_5385 covers)",
+  "padlog": "fixtures/padlogs/cutscenes/38_6361.padlog"
+ },
+ {
+  "name": "39_6365",
+  "site": 6365,
+  "director": "COM_BEACH_AKU_CUTSCENE_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\earth\\hub\\beach",
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "goto -13.8 -57 1.0 900"
+  ],
+  "stop": 7200,
+  "how": "the beach at the start of the story: walk west into the first-entry volume at x -13.8, which tells the Aku Aku director 87 (started at load, it waits for it)",
+  "padlog": "fixtures/padlogs/cutscenes/39_6365.padlog"
+ },
+ {
+  "name": "44_6527",
+  "site": 6527,
+  "director": "COM_BUSCHASE_CUTSCENE_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\school\\rooftop\\buschase",
+  "story": 18,
+  "character": "nina",
+  "steps": [
+   "wait 30",
+   "goto 1.17 -60 1.0 600"
+  ],
+  "stop": 7200,
+  "how": "the bus chase at story 18, played as Nina: walk 25 units forward from the start into the first-entry volume at z -62.2, which tells the director 87",
+  "padlog": "fixtures/padlogs/cutscenes/44_6527.padlog"
+ },
+ {
+  "name": "45_6643",
+  "site": 6643,
+  "director": "COM_EVILCRASH_HOUSE_CUTSCENE_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\altearth\\hub\\alta",
+  "story": 20,
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "goto 32.06 100.28 1.0 4000"
+  ],
+  "stop": 7200,
+  "how": "Twinsanity Island at story 20: walk from the start to Evil Crash's house; its first-entry volume at (32.1, 100.3) tells the director 87",
+  "padlog": "fixtures/padlogs/cutscenes/45_6643.padlog"
+ },
+ {
+  "name": "47_6765",
+  "site": 6765,
+  "director": "COM_BLIMP_DEPART_CUTSCENE_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\ice\\hub\\labext",
+  "story": 13,
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "teleport 120.0 -1.0 83.2"
+  ],
+  "stop": 4200,
+  "how": "TEST MEANS at story 13 (the lab's lifts and platforms open past story 12): the player teleported onto the hovering ice platform at the airship's dock (120.0, -2.8, 83.2), 97 units above the chunk's start (the route up the lab's lifts is not authored); he lands inside the dock's first-entry volume (126.6, -1.9, 87.6), which tells the director 87; the cutscene hands over to the HUB2_TO_HUB3 director (a movie, then the airship chunk)",
+  "padlog": "fixtures/padlogs/cutscenes/47_6765.padlog",
+  "test": "teleport 120.0000 -1.0000 83.1999@2676"
+ },
+ {
+  "name": "49_6799",
+  "site": 6799,
+  "director": "COM_CROWS_NEST_DIRECTOR_ACTIVATED",
+  "chunk": "levels\\ice\\highseas\\gpa09",
+  "story": 10,
+  "character": "crash",
+  "steps": [
+   "wait 30",
+   "teleport -34 15 42",
+   "wait 40",
+   "goto -34.2 37.9 0.6 300",
+   "until-graph act_NGIN 2943 3 600",
+   "wait 60",
+   "message act_NGIN 192 act_BATTLESHIP_NGIN_POST2",
+   "wait 60",
+   "until-graph act_NGIN 2943 3 600",
+   "message act_NGIN 192 act_BATTLESHIP_NGIN_POST2",
+   "wait 60",
+   "until-graph act_NGIN 2943 3 600",
+   "message act_NGIN 192 act_BATTLESHIP_NGIN_POST2"
+  ],
+  "stop": 4800,
+  "how": "TEST MEANS at High Seas' story 10: the player teleported onto the battleship's deck beside the crow's nest (the game's way there is N. Gin's hovering platform, which stops short of it), a walk into the first-entry volume (-34.2, 14.6, 37.9) that tells N. Gin 170 (COM_NGIN_BATTLESHIP_START); then his three hits as the game gives them -- message 192 from a post of the crow's nest (a post hit by an explosion sends it, COM_BATTLESHIP_NGIN_POST_HIT_CHECK), each while his fight is in its phase (2943 s3); at the third his start graph tells the director 87",
+  "padlog": "fixtures/padlogs/cutscenes/49_6799.padlog",
+  "test": "teleport -34.0000 15.0000 42.0000@2731;message act_NGIN 192 act_BATTLESHIP_NGIN_POST2@2856;message act_NGIN 192 act_BATTLESHIP_NGIN_POST2@2916;message act_NGIN 192 act_BATTLESHIP_NGIN_POST2@2976"
+ }
+]

@@ -441,11 +441,13 @@ uint32_t PeekPlan(bool picture) {
     s.peek_eligible = false;
     if (!picture) return 0;
     ReadOnce();
-    if (!s.active || s.held) return 1;
+    // (a lock that is off on the Vita -- the FRAME RATE row at the full rate -- still marks the ticks it would serve: the
+    // census counts their work and their misses, NoteBoundary; the plan stays one field)
+    if (!s.vita_play || s.held) return 1;
     // the first picture tick after another boundary is one field (the streak starts), as is one outside the lock's states
     if (!s.prev_picture || !LockState()) return 1;
     s.peek_eligible = true;
-    return s.n;
+    return s.active ? s.n : 1;
 }
 
 void CommitPlan(uint32_t fields) {
@@ -504,6 +506,22 @@ void NoteBoundary(uint64_t boundary, uint32_t parked, uint32_t fired, double wor
     g_ticks[p].fetch_add(1, std::memory_order_relaxed);
     g_tick_fields[p].fetch_add(fired, std::memory_order_relaxed);
     if (!s.read || !s.active) {
+        if (s.read && s.vita_play) {
+            // THE LOCK OFF on the Vita (the FRAME RATE row at the full rate: fixed, no fallback): no policy, but the census
+            // still counts the ticks the lock would serve -- their work, a tick over its field, a picture replaced -- so the
+            // window line shows what the fixed rate costs (it printed "misses 0" and no tick work while every tick of the
+            // device's heaviest Rooftop Rampage view ran 33 ms, over its 20 ms field)
+            if (!s.taken_eligible) {
+                g_held.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                if (work_ms >= 0) g_work.Note(work_ms);
+                const bool over = fired > parked, replaced = s.replaced != 0;
+                if (over) g_miss_over.fetch_add(1, std::memory_order_relaxed);
+                if (replaced) g_miss_replaced.fetch_add(1, std::memory_order_relaxed);
+                if (over || replaced) g_misses.fetch_add(1, std::memory_order_relaxed);
+            }
+            s.display_misses_seen = g_display_misses.load(std::memory_order_relaxed);   // (a later switch starts from now)
+        }
         s.replaced = 0;
         g_display_edge.store(false, std::memory_order_relaxed);
         return;
@@ -766,18 +784,23 @@ std::string WindowLine(uint64_t from, uint64_t to, double seconds) {
     const int arm = g_arm.load();
     const char* mode = S.mode == Mode::AB ? (arm == 1 ? (timer ? "ab: off (50)" : "ab: off (60)") : "ab: auto") : S.mode == Mode::Auto ? "auto"
                        : RateName(S.fixed);
+    // the full rate fixed is the lock OFF: the line says so after the rate (its readers take "tick lock X, now N Hz" as it is)
+    std::string fixed_note;
+    if (S.mode == Mode::Fixed && S.fixed == 1)
+        fixed_note = std::string(timer ? ", " : " (") + "fixed by " + (S.knob.empty() ? "the FRAME RATE row" : "TE_VITA_TICK_LOCK") +
+                     ": no fallback to " + (timer ? "25" : "30") + (timer ? "" : ")");
     char buf[1400];
     if (timer) {
         // the 50 Hz family: 50 / 25 Hz picture ticks on the pacer's timer; the display shows each picture from the first
         // refresh after it is ready (a 50 Hz picture held 1 refresh 4 times in 5 and 2 once -- 1/2 counts 240/60 in 300)
         std::snprintf(buf, sizeof buf,
-                      "[te.vita.lock] presents %llu-%llu (%.1f s): tick lock %s, now %s Hz (the 50 Hz game rate); picture ticks %.1f a "
+                      "[te.vita.lock] presents %llu-%llu (%.1f s): tick lock %s, now %s Hz (the 50 Hz game rate%s); picture ticks %.1f a "
                       "second (50/25 Hz: %llu/%llu; outside the lock %llu), fields per tick %.2f; other boundaries %llu (%llu fields); "
                       "display flips %.1f a second, held 1/2/3/4+ refreshes:%s longest flip gap %.1f ms; misses %llu (ticks over their "
                       "lock %llu, pictures replaced %llu, held long on the display %llu, drains %llu); switches 50->25 %llu, 25->50 %llu "
                       "(calm asked %ux); tick work ms p50/p90/max %s; drawing thread per picture ms %s (+ present %s); pacer on the "
                       "timer (50 Hz)",
-                      (unsigned long long)from, (unsigned long long)to, seconds, mode, RateName(g_n.load()), double(ticks) / s,
+                      (unsigned long long)from, (unsigned long long)to, seconds, mode, RateName(g_n.load()), fixed_note.c_str(), double(ticks) / s,
                       (unsigned long long)(t.ticks[1] - l.ticks[1]), (unsigned long long)(t.ticks[2] - l.ticks[2]),
                       (unsigned long long)(t.held - l.held), ticks ? double(tick_fields) / double(ticks) : 0.0,
                       (unsigned long long)(t.other - l.other), (unsigned long long)(t.other_fields - l.other_fields),
@@ -790,12 +813,12 @@ std::string WindowLine(uint64_t from, uint64_t to, double seconds) {
         return std::string(buf) + GameTimeClause(S.hz) + "\n";
     }
     std::snprintf(buf, sizeof buf,
-                  "[te.vita.lock] presents %llu-%llu (%.1f s): tick lock %s, now %s Hz; picture ticks %.1f a second (60/30/20 Hz: "
+                  "[te.vita.lock] presents %llu-%llu (%.1f s): tick lock %s, now %s Hz%s; picture ticks %.1f a second (60/30/20 Hz: "
                   "%llu/%llu/%llu; outside the lock %llu), fields per tick %.2f; other boundaries %llu (%llu fields); display flips %.1f a second, held "
                   "1/2/3/4+ refreshes:%s longest flip gap %.1f ms; misses %llu (ticks over their lock %llu, pictures replaced %llu, "
                   "held long on the display %llu, drains %llu); switches 60->30 %llu, 30->20 %llu, 20->30 %llu, 30->60 %llu (calm asked %ux); "
                   "tick work ms p50/p90/max %s; drawing thread per picture ms %s (+ present %s); pacer on the %s",
-                  (unsigned long long)from, (unsigned long long)to, seconds, mode, RateName(g_n.load()), double(ticks) / s,
+                  (unsigned long long)from, (unsigned long long)to, seconds, mode, RateName(g_n.load()), fixed_note.c_str(), double(ticks) / s,
                   (unsigned long long)(t.ticks[1] - l.ticks[1]), (unsigned long long)(t.ticks[2] - l.ticks[2]),
                   (unsigned long long)(t.ticks[3] - l.ticks[3]), (unsigned long long)(t.held - l.held),
                   ticks ? double(tick_fields) / double(ticks) : 0.0,

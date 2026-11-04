@@ -1,0 +1,27 @@
+# cutscene reach fixture (tools/cutscenes/reach.py): site 6093 COM_SLIPSLIDE_SHED_CUTSCENE_DIRECTOR_ACTIVATED
+# card: tools/warp_save.py --card <hub card> --chunk 'levels\ice\slipslide\l05chasa' --place 0xFFFF --character crash --story 9 --second cortex --pairing 2
+# chunk=levels\ice\slipslide\l05chasa
+# story=9
+# character=crash
+# second=cortex
+# pairing=2
+# test=teleport 178.0000 58.0000 -2.0000@2742  (TE_TEST_ACTIONS: what the recording's plan asked of the game; the legs set it)
+# reach: TEST MEANS at story 9, Crash riding Cortex as the Humiliskate's board (the save's pairing 2, Cortex its second): the rider teleported 12 units east of the shed, on the slope the chase comes down from l05roids (the test warp starts the board again at the new place, as the vehicle starts when it is made); the board slides west into the shed's first-entry volume (166.3, 46.5, -2.1), which tells the director 87 -- the autopilot cannot steer the board along the chase
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# text-language=english
+# speech-language=english
+1 0000 128 128 128 128  # NONE
+1271 0008 128 128 128 128  # START
+1276 0000 128 128 128 128  # NONE
+1354 0040 128 128 128 128  # DOWN
+1357 0000 128 128 128 128  # NONE
+1404 4000 128 128 128 128  # CROSS
+1409 0000 128 128 128 128  # NONE
+1804 0040 128 128 128 128  # DOWN
+1807 0000 128 128 128 128  # NONE
+1904 4000 128 128 128 128  # CROSS
+1907 0000 128 128 128 128  # NONE
+2702 4000 128 128 128 128  # CROSS
+2705 0000 128 128 128 128  # NONE
+2798 0000 128 128 128 128  # NONE
+# end at boundary 3700

@@ -11,7 +11,7 @@ struct w2c_game;
 
 namespace te::game {
 
-enum class Reason : int { Running = 0, Checkpoint, Exit, Trap, Returned, LoadState };   // LoadState: restore a state file in place at the checkpoint
+enum class Reason : int { Running = 0, Checkpoint, Exit, Trap, Returned, LoadState, Held };   // LoadState: restore a state file in place at the checkpoint; Held: waiting for a state in te_run_entry (HoldForLoad)
 
 struct Fiber {
     te_fiber_ctx host{};
@@ -38,6 +38,10 @@ Fiber& Get();
 bool Prepare(w2c_game* instance, bool test_trap, std::string* err);
 // Host side: run the game until it yields; returns the reason.
 Reason Resume();
+// Host side, before a state replaces a fiber that has not run yet (--load-state): runs it into te_run_entry until the trap
+// handler is armed and holds it there (Reason::Held), so a trap after the load unwinds through this process's handler
+// (te_run.h). True when the fiber is held; false when it had run already (an in-place load: its handler is armed).
+bool HoldForLoad();
 // Game side: yield with a reason (never returns for Exit).
 void Yield(Reason reason, int code = 0, uint64_t boundary = 0);
 // Game side: Platform::System::Exit's path (te::RequestExit). Returns only when not on the game fiber.

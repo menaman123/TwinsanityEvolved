@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """mods_page_judge.py -- the game's Options > MODS page with a mods folder: does it list ONLY the mods that apply while the
-game runs (the built-ins: level select, speedrun mode), with nothing for the folder's mods -- no row, no switch, no note --
-while those mods still apply, and does a built-in's switch still apply at once? (a mod of the mods
+game runs (the built-ins: level select, speedrun mode, infinite lives), with nothing for the folder's mods -- no row, no
+switch, no note -- while those mods still apply, and does a built-in's switch still apply at once? (a mod of the mods
 folder is switched in the launcher only.)
 
 The mods are made at run time in a temporary folder (never committed; deleted afterwards): the disc overlay judge's order
@@ -14,8 +14,9 @@ order place for the pack (fixtures/judges/mods_page_pal.json "settings"). Every 
 TE_GFX_DIAG_TEXT=1 (every text the game draws is logged with its string):
 
   (i)  PAGE     the route to OPTIONS > MODS (fixtures/padlogs/mods_page_toggle.padlog) with the settings file and the mods
-                folder: the page draws its rows ('level select', 'speedrun mode : off') and no other '<name> : off|on' row; no
-                folder mod's name, no note ('code changes not supported', 'made for the ...', 'at the next start', ...) and
+                folder: the page draws its rows ('level select', 'speedrun mode : off', 'infinite lives : off') and no
+                other '<name> : off|on' row; no folder mod's name, no note ('code changes not supported', 'made for the ...',
+                'at the next start', ...) and
                 nothing of the pack is drawn in the whole run ("never_drawn"); the second row is speedrun mode and the route's
                 CROSS switches it on at once (the log, 'speedrun mode : on', mods.speedrun.enabled = on in the settings file);
                 the folder mods' lines of the settings file are as the launcher wrote them and none is added; the start-up log

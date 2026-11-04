@@ -10,6 +10,7 @@
 #include "game/clock.h"
 #include "game/controllers.h"
 #include "game/cutscenereader.h"
+#include "game/cutsceneskip.h"
 #include "game/gamecontroller.h"
 #include "game/hull.h"
 #include "game/layout.h"
@@ -580,9 +581,10 @@ f32 IntProperty0Bit0ClearCondition::Check(GameNode* node, BehaviourLevel*, const
     return YesNo((Node(node)->properties->GetInt(0) & 1) == 0);
 }
 
-f32 CutsceneMusicReadyCondition::Check(GameNode*, BehaviourLevel*, const u32*)
+// TwinsanityEvolved: ready at once for a skipped cutscene, whose speech track is not played (game/cutsceneskip.h)
+f32 CutsceneMusicReadyCondition::Check(GameNode* node, BehaviourLevel*, const u32*)
 {
-    return YesNo(VideoReady(G_VideoController) != 0);
+    return YesNo(VideoReady(G_VideoController) != 0 || CutsceneSkips(node) != 0);
 }
 
 // The rigid body has a physics body
@@ -767,10 +769,13 @@ f32 NoOp571Condition::Check(GameNode*, BehaviourLevel*, const u32*)
     return 0.0f;
 }
 
-// Always no in the retail game; here the cross button pressed in the cutscene playing (CutsceneSkipped): the scripts' skip
+// Always no, as in the retail game. TwinsanityEvolved: the cutscenes' own skip branches stay unused -- the developers' unfinished
+// skip: 19 of the 34 cutscenes that ask it can never enter the state that asks, and one that can (Doc Amok's bear in docamok3)
+// leaves the player otherwise than the watched cutscene does. A skipped cutscene runs its own whole path instead, its waits ended at
+// once (game/cutsceneskip.h)
 f32 NoOpCutsceneSkippedCondition::Check(GameNode*, BehaviourLevel*, const u32*)
 {
-    return YesNo(CutsceneSkipped() != 0);
+    return 0.0f;
 }
 
 // The character agent's vehicle (whether the instance has a character node isn't checked)

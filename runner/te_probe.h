@@ -20,6 +20,7 @@ struct State {
     std::string chunk_path;
     uint32_t clock = 0;            // g_GlobalClock.time (1/9000 s units; +149 a frame at 60 Hz)
     uint32_t frame_time = 0;       // GameTimeController::frameTime (clock units the last frame took: 150 at 60 Hz)
+    unsigned lives = 0;            // GameProgress::counts.lives (a new game's 5; the HUD shows one fewer)
 };
 
 bool Read(State& s);                              // false when there is no played character

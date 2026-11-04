@@ -81,6 +81,24 @@ Reason Resume() {
     return f.reason;
 }
 
+namespace {
+// te_run_entry's hold: back to the host with the trap handler armed. The state the host restores next replaces this
+// context; resumed without one, the game starts as usual
+void HoldInEntry() {
+    te_run_hold = nullptr;
+    Yield(Reason::Held);
+}
+}  // namespace
+
+bool HoldForLoad() {
+    Fiber& f = Get();
+    if (f.started || f.on_game) return false;
+    te_run_hold = HoldInEntry;
+    const Reason reason = Resume();
+    te_run_hold = nullptr;
+    return reason == Reason::Held;
+}
+
 void Yield(Reason reason, int code, uint64_t boundary) {
     Fiber& f = Get();
     f.reason = reason;

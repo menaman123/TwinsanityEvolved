@@ -3,7 +3,8 @@
 #
 #   1. every game TU (game/src/game/*.cpp, game/src/*.cpp, the decomp's libc / libm / malloc), the module's own platform side
 #      (platform/nativeee/wasm/*.cpp), the generated seam forwarders and platform/nativeee/native/*.cpp -> armv7 objects
-#      through tools/te_cxx_arm.py (te_cxx.py's rewrites of the decomp's MIPS-only constructs with their ARM forms; zero
+#      through tools/te_cxx_arm.py (te_cxx.py's rewrites of the decomp's MIPS-only constructs with their ARM forms, and the
+#      casts to integer types through platform/nativeee/native/int_cast.h: the wasm module's answers out of range; zero
 #      edits to game code)
 #   2. the guest block (tools/gen_retail_image.py --arm: the 32 MB retail address space, every retail data symbol at
 #      te_guest_block + its address) and the retail function table (tools/gen_retail_table.py over the native objects)
@@ -49,6 +50,7 @@ foreach(src ${TE_GAME_SOURCES} ${TE_WASM_PLATFORM_SOURCES} ${TE_NATIVE_PLATFORM_
     add_custom_command(OUTPUT "${out}"
         COMMAND ${TE_CXX_ARM} --report "${TE_NATIVE_DIR}/rep/${obj}.json" -o "${out}" "${src}"
         DEPENDS "${src}" "${TE_TOOLS}/te_cxx_arm.py" "${TE_TOOLS}/te_cxx.py" ${TE_GAME_HEADERS} "${TE_GEN}/seam/ps2e_seam.h"
+                "${CMAKE_SOURCE_DIR}/platform/nativeee/native/int_cast.h"
         COMMENT "armv7 (native) ${rel}")
     list(APPEND TE_NATIVE_OBJECTS "${out}")
 endforeach()

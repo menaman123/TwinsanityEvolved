@@ -60,6 +60,11 @@
       "id": "speedrun",
       "name": "Speedrun mode",
       "switchable": true
+    },
+    {
+      "id": "infinite_lives",
+      "name": "Infinite lives",
+      "switchable": true
     }
   ],
   "rows": [

@@ -1,0 +1,25 @@
+# cutscene reach fixture (tools/cutscenes/reach.py): site 6257 COM_SLIPSLIDE_DINGODILE_HUT_CUTSCENE_ACTIVATED
+# card: tools/warp_save.py --card <hub card> --chunk 'levels\ice\highseas\gpa01' --place 0xFFFF --character crash --story 10
+# chunk=levels\ice\highseas\gpa01
+# story=10
+# character=crash
+# start=act_SLIPSLIDE_DINGODILE_HUT_CUTSCENE:87@3100  (TE_CUTSCENE_START: the director given its trigger behaviour; the legs set it)
+# reach: TEST START at story 10 (High Seas' area): the director given its trigger behaviour for 87. The game's triggers are two first-entry volumes 10 and 29 units above the chunk's start (202 at (-10.2, -32.5, 81.8) for the hut's default, 4 at (-69.4, -13.6, 72.0) with the exit-vehicle switch): the player arrives there by vehicle
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# text-language=english
+# speech-language=english
+1 0000 128 128 128 128  # NONE
+1271 0008 128 128 128 128  # START
+1276 0000 128 128 128 128  # NONE
+1354 0040 128 128 128 128  # DOWN
+1357 0000 128 128 128 128  # NONE
+1404 4000 128 128 128 128  # CROSS
+1409 0000 128 128 128 128  # NONE
+1804 0040 128 128 128 128  # DOWN
+1807 0000 128 128 128 128  # NONE
+1904 4000 128 128 128 128  # CROSS
+1907 0000 128 128 128 128  # NONE
+3012 4000 128 128 128 128  # CROSS
+3015 0000 128 128 128 128  # NONE
+3103 0000 128 128 128 128  # NONE
+# end at boundary 7200

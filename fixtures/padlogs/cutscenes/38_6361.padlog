@@ -1,0 +1,57 @@
+# cutscene reach fixture (tools/cutscenes/reach.py): site 6361 COM_CORTEX_FOLLOW_MANAGER_ACTIVATED
+# card: tools/warp_save.py --card <hub card> --chunk 'levels\altearth\hub\slipjoin' --place 0xFFFF --character crash --story 21 --second cortex
+# chunk=levels\altearth\hub\slipjoin
+# story=21
+# character=crash
+# second=cortex
+# reach: Twinsanity Island's junction at story 21 with Cortex along (the save's second character): walk to the first-entry volume at x -25.7, which tells the follow manager 299 (the other ways in: 297 from the end of 13 cutscenes, e.g. the psychotron's, which 11_5385 covers)
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# text-language=english
+# speech-language=english
+1 0000 128 128 128 128  # NONE
+1271 0008 128 128 128 128  # START
+1276 0000 128 128 128 128  # NONE
+1354 0040 128 128 128 128  # DOWN
+1357 0000 128 128 128 128  # NONE
+1404 4000 128 128 128 128  # CROSS
+1409 0000 128 128 128 128  # NONE
+1804 0040 128 128 128 128  # DOWN
+1807 0000 128 128 128 128  # NONE
+1904 4000 128 128 128 128  # CROSS
+1907 0000 128 128 128 128  # NONE
+2932 4000 128 128 128 128  # CROSS
+2935 0000 128 128 128 128  # NONE
+2982 0000 99 255 128 128  # NONE
+2985 0000 98 255 128 128  # NONE
+2987 0000 97 255 128 128  # NONE
+2989 0000 96 255 128 128  # NONE
+2991 0000 95 255 128 128  # NONE
+2992 0000 94 255 128 128  # NONE
+2994 0000 93 255 128 128  # NONE
+2995 0000 92 255 128 128  # NONE
+2996 0000 91 255 128 128  # NONE
+2998 0000 90 255 128 128  # NONE
+2999 0000 89 255 128 128  # NONE
+3000 0000 88 255 128 128  # NONE
+3001 0000 87 255 128 128  # NONE
+3002 0000 86 255 128 128  # NONE
+3003 0000 85 255 128 128  # NONE
+3005 0000 84 255 128 128  # NONE
+3006 0000 83 255 128 128  # NONE
+3007 0000 82 255 128 128  # NONE
+3008 0000 81 255 128 128  # NONE
+3009 0000 80 255 128 128  # NONE
+3010 0000 79 255 128 128  # NONE
+3011 0000 78 255 128 128  # NONE
+3012 0000 77 255 128 128  # NONE
+3013 0000 76 255 128 128  # NONE
+3014 0000 74 255 128 128  # NONE
+3015 0000 73 255 128 128  # NONE
+3016 0000 72 255 128 128  # NONE
+3017 0000 71 255 128 128  # NONE
+3018 0000 70 255 128 128  # NONE
+3019 0000 69 255 128 128  # NONE
+3020 0000 68 255 128 128  # NONE
+3021 0000 128 128 128 128  # NONE
+3022 0000 128 128 128 128  # NONE
+# end at boundary 7200

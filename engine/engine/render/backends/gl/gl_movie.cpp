@@ -14,6 +14,7 @@
 // device's state put back as the screen copy (VitaCopyRect) puts it back. Nothing is allocated or copied per picture on
 // the drawing thread.
 #include "engine/render/backends/gl/gl_device.h"
+#include "engine/render/backends/gl/gl_gpu_lifetime.h"
 
 #include "engine/platform/host/platform.h"
 #include PS2R_GL_HEADER
@@ -35,6 +36,9 @@ void* GlDevice::SurfaceMemory(SurfaceId id, size_t* stride) {
     if (!s || !s->tex || !s->desc.cpu_writable || s->desc.renderable || s->levels || s->synth_levels) return nullptr;
     const size_t bpp = s->desc.format == SurfaceFormat::R8 ? 1 : s->desc.format == SurfaceFormat::Rgba8 ? 4 : 0;
     if (!bpp) return nullptr;
+    // (the caller writes the storage in place: the movie player's slots wait for the scene fence first)
+    if (gpu_lifetime::On())
+        gpu_lifetime::Texture(s->tex, s->desc.width, s->desc.height, gpu_lifetime::Event::CpuWrite, "a movie picture written in place");
     state_.ActiveTexture(GL_TEXTURE0);
     state_.BindTex2D(s->tex);
     void* data = vglGetTexDataPointer(GL_TEXTURE_2D);

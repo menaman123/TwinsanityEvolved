@@ -37,6 +37,10 @@ constexpr u32 DeferRelease = 1;
 constexpr u32 NoTexture = 0;
 constexpr u32 ShaderAnimationSize = sizeof(ShaderAnimation);
 
+// The host told before the platform's own structures (materials, shaders, textures, models) change: the seam epoch moves
+// (platform/nativeee/host/te_seam_epoch.h), so no answer the host verified against their old bytes is taken again unchecked
+inline void ResourcesChanging() { ps2e_gfx2_resources_changed(); }
+
 // The UI's flat material (MakeFlatMaterial), static like the PS2's g_FlatMaterial
 te_gfx_material g_FlatMaterial;
 te_gfx_shader g_FlatShader;
@@ -74,6 +78,7 @@ u8 ReadSettingField(Stream* stream)
 
 void ConstructShader(te_gfx_shader* shader, u32 type)
 {
+    ResourcesChanging();
     *shader = te_gfx_shader{};
     shader->magic = TE_GFX_SHADER_MAGIC;
     shader->type = type;
@@ -201,6 +206,7 @@ void ReadShaderOfType(te_gfx_shader* shader, u32 type, Stream* stream)
 
 void DestroyShader(te_gfx_shader* shader)
 {
+    ResourcesChanging();
     if (shader->texture != 0)
     {
         ReleaseTexture(reinterpret_cast<GameTexture*>(shader->texture));
@@ -225,6 +231,7 @@ void DestroyShader(te_gfx_shader* shader)
 
 void ConstructMaterialAt(te_gfx_material* material, u32 kind, u32 bucket)
 {
+    ResourcesChanging();
     *material = te_gfx_material{};
     material->magic = TE_GFX_MATERIAL_MAGIC;
     material->kind = kind;
@@ -258,6 +265,7 @@ namespace Platform::Graphics
 // ---- textures -------------------------------------------------------------------------------------------------------
 GameTexture* NewTexture(u32 id)
 {
+    ResourcesChanging();
     auto* texture = static_cast<te_gfx_texture*>(MemoryAllocate(sizeof(te_gfx_texture)));
     ConstructResourceHeader(texture, id);
     texture->size = 0;
@@ -270,6 +278,7 @@ GameTexture* NewTexture(u32 id)
 
 void DeleteTexture(GameTexture* texture)
 {
+    ResourcesChanging();
     te_gfx_texture* t = T(texture);
     ps2e_gfx2_texture_released(reinterpret_cast<ps2e_u32>(texture));
     t->texture.hostHandle = 0;
@@ -286,6 +295,7 @@ void DeleteTexture(GameTexture* texture)
 // tools' memory, then the image packet into a block of the disk manager's; the host decodes the packet from there
 void ReadTexture(GameTexture* texture, Stream* stream)
 {
+    ResourcesChanging();
     te_gfx_texture* t = T(texture);
     stream->ReadU32(&t->size);
     stream->Read(&t->texture, sizeof(te_gfx_texture_header), 1);
@@ -308,6 +318,7 @@ void ReadTexture(GameTexture* texture, Stream* stream)
 // ---- materials ------------------------------------------------------------------------------------------------------
 MaterialResource* NewMaterial(u32 id)
 {
+    ResourcesChanging();
     auto* resource = static_cast<MaterialResource*>(MemoryAllocate(sizeof(MaterialResource)));
     ConstructResourceHeader(resource, id);
     resource->material = nullptr;
@@ -317,6 +328,7 @@ MaterialResource* NewMaterial(u32 id)
 
 void DestroyMaterial(Material* material)
 {
+    ResourcesChanging();
     te_gfx_material* m = M(material);
     if (m->magic != TE_GFX_MATERIAL_MAGIC)
     {
@@ -344,6 +356,7 @@ void DestroyMaterial(Material* material)
 
 void DeleteMaterial(MaterialResource* resource)
 {
+    ResourcesChanging();
     if (resource->material != nullptr)
     {
         DestroyMaterial(resource->material);
@@ -357,6 +370,7 @@ void DeleteMaterial(MaterialResource* resource)
 // ReadMaterialShader of the PS2 arm: the activated shaders' key, the bucket, a name (read and dropped), the shaders
 void ReadMaterial(MaterialResource* resource, Stream* stream)
 {
+    ResourcesChanging();
     auto* material = static_cast<te_gfx_material*>(MemoryAllocate(Platform::Graphics::MaterialStorage));
     ConstructMaterialAt(material, TE_GFX_MATERIAL_RESOURCE, TE_GFX_BUCKET_OPAQUE);
     stream->ReadS64(reinterpret_cast<s64*>(&material->activatedShaders));
@@ -398,11 +412,13 @@ void ReadMaterial(MaterialResource* resource, Stream* stream)
 
 void ConstructMaterial(Material* material)
 {
+    ResourcesChanging();
     ConstructMaterialAt(M(material), TE_GFX_MATERIAL_RESOURCE, TE_GFX_BUCKET_OPAQUE);
 }
 
 Material* MakeFlatMaterial()
 {
+    ResourcesChanging();
     ConstructMaterialAt(&g_FlatMaterial, TE_GFX_MATERIAL_FLAT, TE_GFX_BUCKET_UI);
     ConstructShader(&g_FlatShader, 0x0E);
     g_FlatShader.settings = FlatSettings();
@@ -424,6 +440,7 @@ Material* FlatMaterial()
 // without a page loaded (never on the PS2, which dereferenced it) the shader stays untextured
 void* MakeParticleMaterial(Material* material)
 {
+    ResourcesChanging();
     te_gfx_material* m = M(material);
     ConstructMaterialAt(m, TE_GFX_MATERIAL_PARTICLE, TE_GFX_BUCKET_UI);
     te_gfx_shader* shader = NewShader(0x0E);
@@ -450,6 +467,7 @@ void* MakeParticleMaterial(Material* material)
 
 void MakeDistortionMaterial(Material* material)
 {
+    ResourcesChanging();
     // the distorting hexagons' screen-copy shader (type 0x18). A plain blended material for now so nothing traps.
     te_gfx_material* m = M(material);
     ConstructMaterialAt(m, TE_GFX_MATERIAL_DISTORTION, 23);
@@ -461,6 +479,7 @@ void MakeDistortionMaterial(Material* material)
 
 Material* MakeSkidMaterial(bool subtracting)
 {
+    ResourcesChanging();
     // the skid marks' material (vertex colours added to or taken from the frame, depth not written, opaque bucket)
     auto* m = static_cast<te_gfx_material*>(MemoryAllocate(Platform::Graphics::MaterialStorage));
     ConstructMaterialAt(m, TE_GFX_MATERIAL_SKID, TE_GFX_BUCKET_OPAQUE);
@@ -476,6 +495,7 @@ Material* MakeSkidMaterial(bool subtracting)
 
 void SetFontPage(Material* material, u32 page)
 {
+    ResourcesChanging();
     te_gfx_material* m = M(material);
     if (m->magic == TE_GFX_MATERIAL_MAGIC && m->shaderCount != 0)
     {
@@ -635,6 +655,7 @@ void UpdateShader(te_gfx_shader* shader, f32 seconds)
 
 void Platform::Graphics::StepAnimations(const TimeClock* clock)
 {
+    ResourcesChanging();
     const f32 seconds = static_cast<f32>(static_cast<s32>(clock->advance)) * g_SecondsPerClockUnit;
     for (u32 index = 0; index < g_MaterialTable.count; index++)
     {

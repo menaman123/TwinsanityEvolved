@@ -108,9 +108,9 @@ int main() {
     s.iso_path = "";
     s.mc_dir = (root / "memcards").string();
     Reset(s);
-    te::mods::InstallBuiltins();   // level_select, speedrun
+    te::mods::InstallBuiltins();   // level_select, speedrun, infinite_lives
     const uint32_t builtins = te::mods::Count();
-    CHECK(builtins == 2);
+    CHECK(builtins == 3);
 
     // --- the scan
     CHECK_EQ(te::mods::ScanFolder(mods.string()), 2u);   // hubtest, zeta (arabic is a language pack: kept apart)
@@ -118,7 +118,8 @@ int main() {
     CHECK_EQ(te::mods::Count(), builtins + 2);
     std::vector<te::mods::Info> rows = te::mods::List();
     CHECK_EQ(rows.size(), size_t(builtins + 2));
-    CHECK(rows.size() == 4 && rows[0].id == "level_select" && rows[1].id == "speedrun" && rows[2].id == "hubtest" && rows[3].id == "zeta");
+    CHECK(rows.size() == 5 && rows[0].id == "level_select" && rows[1].id == "speedrun" && rows[2].id == "infinite_lives" &&
+          rows[3].id == "hubtest" && rows[4].id == "zeta");
     CHECK(Row(rows, "arabic") == nullptr);   // a language pack is not a mod: no registry row (the Mods page never shows it)
     for (const char* refused : {"Bad-Name", "broken", "wrongid", "other", "oldbuiltin", "futuristic", "nokind", "nomanifest", ".hidden"})
         CHECK(Row(rows, refused) == nullptr);

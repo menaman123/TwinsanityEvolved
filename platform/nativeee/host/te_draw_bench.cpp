@@ -22,6 +22,15 @@
 #include "engine/platform/host/platform.h"
 #include PS2R_GL_HEADER
 #include <psp2/kernel/processmgr.h>
+// vitaGL's GXM context, its progressive index buffer and its uniform ring (the raw GXM cases), and what the GXM census
+// wrappers last handed the context (vita_gpu_census.cpp): the texture of unit 0 and the vertex default uniform buffer
+extern "C" {
+extern SceGxmContext* gxm_context;
+extern uint16_t* default_idx_ptr;
+void* vglReserveUniformCircularPoolBuffer(uint32_t size);
+extern const void* te_gxm_last_texture0 __attribute__((weak));
+extern const void* te_gxm_last_vertex_uniforms __attribute__((weak));
+}
 #endif
 
 namespace te::prof {
@@ -54,9 +63,11 @@ void Case(ps2e_draw* d, const char* name, int n, int ops_per_call, F&& fn) {
         }
     }
     const double per = double(n * ops_per_call);
-    std::fprintf(stderr, "[te.prof] draw bench: %-62s %8.2f us/op  (per op: glDrawArrays %.2f, state calls %.2f, uniform calls %.2f)\n",
+    std::fprintf(stderr, "[te.prof] draw bench: %-62s %8.2f us/op  (per op: glDrawArrays %.2f, state calls %.2f, uniform calls %.2f, "
+                 "packet replays %.2f, instanced draws %.2f)\n",
                  name, best, double(after.gl_draws - before.gl_draws) / per, double(after.state_calls - before.state_calls) / per,
-                 double(after.uniform_calls - before.uniform_calls) / per);
+                 double(after.uniform_calls - before.uniform_calls) / per, double(after.mesh_packet - before.mesh_packet) / per,
+                 double(after.instanced_draws - before.instanced_draws) / per);
     std::fflush(stderr);
 }
 
@@ -159,6 +170,88 @@ void DrawBench(::ps2e_draw* d) {
         const ps2e_draw_mesh_params m = moved(i);
         ps2e_draw_submit_mesh(d, &st, (i & 1) ? big : small, &m);
     });
+    // THE PACKET DRAWS BY PART (a frame's mesh draws replay their state's packet: the rooftop's ~3200 a picture). The
+    // engine's path from the packet memo (the same state again), from the packet cache (two textures alternating: what the
+    // distant roofs' draws do), a run of 8 drawn instanced (per instance; only with the instanced twins built:
+    // TE_GFX_VITA_SORT / TE_GFX_VITA_INSTANCE), then GXM alone over the GXM state a replay leaves: sceGxmDraw, + a
+    // texture set, + a vertex default uniform buffer (reserved, a mesh draw's 112 bytes written, set), + both (the GXM
+    // calls of a replay whose texture and matrix change). The engine's cases less the GXM ones are its own code.
+    {
+        ps2e_draw_state sa = st, sb = st;
+        sb.texture = t2;
+        Case(d, "packet: the same state, a new matrix (the packet memo)", n, 1, [&](int i) {
+            const ps2e_draw_mesh_params m = moved(i);
+            ps2e_draw_submit_mesh(d, &sa, small, &m);
+        });
+        Case(d, "packet: 2 textures alternating, a new matrix (the cache)", n, 1, [&](int i) {
+            const ps2e_draw_mesh_params m = moved(i);
+            ps2e_draw_submit_mesh(d, (i & 1) ? &sb : &sa, small, &m);
+        });
+        if (ps2e_draw_mesh_instancing(d)) {
+            ps2e_draw_mesh_params ms[8];
+            const ps2e_draw_mesh_params* mps[8];
+            for (int k = 0; k < 8; ++k) {
+                ms[k] = moved(k);
+                mps[k] = &ms[k];
+            }
+            Case(d, "packet: runs of 8 instanced, 2 textures alternating, per instance", n / 8, 8, [&](int i) {
+                ps2e_draw_submit_mesh_instances(d, (i & 1) ? &sb : &sa, small, mps, 8);
+            });
+        }
+        // the two textures' GXM records as the replays hand them over (the census wrappers' record of unit 0)
+        const void* tex[2] = {nullptr, nullptr};
+        ps2e_draw_begin_frame(d, nullptr);
+        for (int k = 0; k < 4; ++k) {
+            const ps2e_draw_mesh_params m = moved(k);
+            ps2e_draw_submit_mesh(d, (k & 1) ? &sb : &sa, small, &m);
+            if (&te_gxm_last_texture0 && k >= 2) tex[k & 1] = te_gxm_last_texture0;
+        }
+        ps2e_draw_present(d);
+        if (tex[0] && tex[1] && tex[0] != tex[1]) {
+            // (the set-up: a replay of state a -- its programs, texture, stream and uniforms bound; the vertex uniform buffer
+            // the context then holds is the one each uniform case copies into a new buffer: the same draw again)
+            const void* vu = nullptr;
+            auto replay = [&](int i) {
+                if (i < 0) {
+                    const ps2e_draw_mesh_params m = moved(0);
+                    ps2e_draw_submit_mesh(d, &sa, small, &m);
+                    vu = &te_gxm_last_vertex_uniforms ? te_gxm_last_vertex_uniforms : nullptr;
+                }
+            };
+            constexpr uint32_t kVertexImage = 112;   // (an unlit mesh twin's buffer: the screen size, the UV scale, u_mesh[5])
+            Case(d, "gxm: sceGxmDraw alone (3 indices, nothing set)", n, 1, [&](int i) {
+                if (i < 0) { replay(i); return; }
+                sceGxmDraw(gxm_context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, default_idx_ptr, 3);
+            });
+            Case(d, "gxm: texture set (2 alternating) + sceGxmDraw", n, 1, [&](int i) {
+                if (i < 0) { replay(i); return; }
+                sceGxmSetFragmentTexture(gxm_context, 0, static_cast<const SceGxmTexture*>(tex[i & 1]));
+                sceGxmDraw(gxm_context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, default_idx_ptr, 3);
+            });
+            Case(d, "gxm: vertex uniforms (reserve, 112 B, set) + sceGxmDraw", n, 1, [&](int i) {
+                if (i < 0) { replay(i); return; }
+                if (!vu) return;
+                void* vb = vglReserveUniformCircularPoolBuffer(kVertexImage);
+                std::memcpy(vb, vu, kVertexImage);
+                sceGxmSetVertexDefaultUniformBuffer(gxm_context, vb);
+                sceGxmDraw(gxm_context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, default_idx_ptr, 3);
+            });
+            Case(d, "gxm: texture set + vertex uniforms + sceGxmDraw", n, 1, [&](int i) {
+                if (i < 0) { replay(i); return; }
+                sceGxmSetFragmentTexture(gxm_context, 0, static_cast<const SceGxmTexture*>(tex[i & 1]));
+                if (vu) {
+                    void* vb = vglReserveUniformCircularPoolBuffer(kVertexImage);
+                    std::memcpy(vb, vu, kVertexImage);
+                    sceGxmSetVertexDefaultUniformBuffer(gxm_context, vb);
+                }
+                sceGxmDraw(gxm_context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, default_idx_ptr, 3);
+            });
+            // (vitaGL's next draw sets its own programs, textures, streams and uniforms: the GL backend's caches stand)
+        } else {
+            std::fprintf(stderr, "[te.prof] draw bench: the packet replays' textures not seen (%p %p): the GXM cases skipped\n",
+                         tex[0], tex[1]);
+        }
+    }
     // CPU vertices (the raw path)
     auto quads = [&](int count) {
         std::vector<ps2e_draw_vertex> v(static_cast<size_t>(count));

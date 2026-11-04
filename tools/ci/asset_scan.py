@@ -27,6 +27,11 @@ EXT_RE = re.compile(
     r"tga|dds|png|jpg|jpeg|gif|bmp|wav|mp3|ogg|flac|mp4|avi|mov|mkv|m2v|zip|7z|rar|tar|gz|tgz|xz|zst|bz2)$"
 )
 SCREENSHOT_RE = re.compile(r"^docs/launcher/screenshots/launcher-[a-z0-9-]+\.png$")
+# The PS Vita LiveArea's pictures: the bubble's icon, the start picture, the page's background and gate -- the game's cover
+# and promotional art, not disc content -- in the tree (tools/vita/livearea/) and as the package carries them (sce_sys/...,
+# where release.yml scans the .vpk's entries). Under 256 KB each; any other picture there is still a finding.
+LIVEAREA_RE = re.compile(r"^(tools/vita/livearea/(icon0|pic0|bg|startup)\.png|sce_sys/(icon0|pic0)\.png|"
+                         r"sce_sys/livearea/contents/(bg|startup)\.png)$")
 
 
 def excluded(rel, include_engine):
@@ -144,11 +149,13 @@ def main():
             path = os.path.join(dirpath, name)
             scanned += 1
             lower = rel.lower()
-            # The ONE picture exemption: screenshots of the launcher's own window for README
+            # The picture exemptions: screenshots of the launcher's own window for README
             # (docs/launcher/screenshots/launcher-*.png, under 2 MB). The launcher shows no disc content --
             # its card artwork is generated from the title id -- so these carry no game data; anything else
             # under that folder, or larger, is still a finding.
             if SCREENSHOT_RE.match(lower) and size_of(path) <= 2097152:
+                continue
+            if LIVEAREA_RE.match(lower) and size_of(path) <= 262144:
                 continue
             if EXT_RE.search(lower):
                 report(rel, "forbidden extension")

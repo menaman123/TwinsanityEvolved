@@ -142,8 +142,9 @@ struct BehaviourRunner
     u8 interruptLevel;
     u8 unused2A[2];
     BehaviourLevel* levels[Levels];
-    // Cleared when the runner's made and started, never read
-    u32 unused4C;
+    // Cleared when the runner's made and started, never read by retail. TwinsanityEvolved: the watched frames a skipped cutscene's
+    // agent's untimed move has been stepped through (game/cutsceneskip.h), cleared when a packet's motion starts too
+    u32 skippedFrames;
     // The packet's sync unit, when it ends (with its delay) and when it started (clock units)
     u32 syncUnit;
     s32 packetEnd;

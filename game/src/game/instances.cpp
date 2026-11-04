@@ -4,6 +4,7 @@
 #include "game/clock.h"
 #include "game/chunkloading.h"
 #include "game/controllers.h"
+#include "game/cutsceneskip.h"
 #include "game/events.h"
 #include "game/list.h"
 #include "game/memory.h"
@@ -372,6 +373,8 @@ InstanceContext* InstanceContext::Construct(InstanceContext* instance)
 
 void InstanceContext::Destroy(u32 destroyFlags)
 {
+    // TwinsanityEvolved: a cutscene's agent destroyed is let go by the skip's bookkeeping (game/cutsceneskip.h)
+    ForgetCutsceneAgent(this);
     vtable = g_InstanceContextVTable;
     InstancePlaces* block = places;
     if (block != nullptr)
