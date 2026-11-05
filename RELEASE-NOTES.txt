@@ -1,7 +1,25 @@
-# TwinsanityEvolved 0.9.2 -- what's new
+# TwinsanityEvolved 0.9.3 -- what's new
 
 Crash Twinsanity as a native game for Windows, macOS, Linux and the PS Vita: the twinsanity-reversed decompilation running
 on the NativeEE engine. **No game data is included: you play with your own disc image.**
+
+## New in 0.9.3
+
+- **Crash's shadow on crates.** His shadow now falls on the tops of crates as well as the ground, so jumps onto them
+  are easier to judge (the PS2 drew none there; `video.shadows_on_crates = off` in `ps2r.ini` goes back to that).
+- **32:9 screens.** A new 32:9 aspect ratio, and with the game's own Widescreen option on, the wide shapes show more
+  of the world at the sides while the HUD, the pause page and the fps counter stay in the middle 16:9.
+- **Gameplay fixes:** at 60 Hz a knee slide no longer swings far past the stick's direction at the end of its steering
+  (`game.slide_steering = retail` keeps the original swing); in Bandicoot Pursuit, Evil Crash no longer gets stuck where
+  his route data misses a step; a level select warp from inside a level no longer brings a second character along.
+- **New option:** `game.invincible_to_explosions = on` in `ps2r.ini` lets the third Aku Aku mask protect Crash from nitro
+  and TNT explosions too, as in the classic games (off by default: the original game lets explosions through).
+- **Smoother pictures:** textures are prepared before they are first needed on every system (no hitch when a new one
+  appears), and particles and skies cost less to draw at the high resolutions.
+- **PS Vita:** a new LiveArea background and logo.
+
+Save states made with 0.9.2 do not load in 0.9.3 (a save state belongs to the build that made it); memory card saves
+are not affected.
 
 ## New in 0.9.2
 
