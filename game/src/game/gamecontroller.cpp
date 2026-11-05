@@ -789,15 +789,15 @@ u32 GameController::WarpToChunk(const char* chunk, u32 character)
         saveController.Take(&progress, chunkManager, nullptr);
     }
 
-    // Where play starts: the chunk's own start (no checkpoint) with the character asked for, alone (the warp tool's summary)
+    // Where play starts: the chunk's own start (no checkpoint) with the character asked for (none: the chunk's start script sets
+    // it), alone -- the summary a warp from the menus has. The pairing and the second character of the level play is in are not
+    // carried: StartingPlay would put a carried pairing's vehicle or tie on the new level's characters (the Rollerbrawl after
+    // Cavern Catastrophe: Crash and Cortex in the brawl ball in every level warped to)
     StringAssign(&saveController.chunk, chunk);
     saveController.place = NoInstanceId;
-    if (character != GameProgress::NoCharacter)
-    {
-        saveController.summary.pairing = PairingAlone;
-        saveController.summary.character = character;
-        saveController.summary.second = GameProgress::NoCharacter;
-    }
+    saveController.summary.pairing = PairingAlone;
+    saveController.summary.character = character;
+    saveController.summary.second = GameProgress::NoCharacter;
 
     StringAssign(&progress.startChunk, chunk);
     states.entry = EntrySaved;

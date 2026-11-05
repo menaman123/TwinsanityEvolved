@@ -73,7 +73,7 @@ bool EnumParse(const EnumTable& t, const std::string& v, int* out) {
 
 const char* const kBackendNames[]   = {"gl", "soft"};
 const char* const kFitNames[]       = {"stretch", "fit", "fill", "integer", "custom"};
-const char* const kAspectNames[]    = {"auto", "4:3", "16:9", "16:10", "21:9"};
+const char* const kAspectNames[]    = {"auto", "4:3", "16:9", "16:10", "21:9", "32:9"};
 const char* const kTextureFilterNames[] = {"title", "point", "bilinear", "trilinear"};
 const char* const kLatencyNames[]   = {"instant", "modelled"};
 const char* const kVisibilityNames[] = {"boundary", "poll"};
@@ -93,7 +93,7 @@ const char* const kTickLockNames[] = {"auto", "60", "30"};
 
 const EnumTable kBackend{kBackendNames, 2};
 const EnumTable kFit{kFitNames, 5};
-const EnumTable kAspect{kAspectNames, 5};
+const EnumTable kAspect{kAspectNames, 6};
 const EnumTable kTextureFilter{kTextureFilterNames, 4};
 const EnumTable kLatency{kLatencyNames, 2};
 const EnumTable kVisibility{kVisibilityNames, 2};

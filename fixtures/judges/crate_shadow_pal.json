@@ -1,0 +1,38 @@
+{
+  "disc": "PAL SLES-52568 (deterministic, headless: --deterministic --no-sdl-input --no-audio --skip-movies --trace-state --config none, an empty --mc-dir)",
+  "plans": [
+    {
+      "name": "drop",
+      "plan": "fixtures/padlogs/crate_drop.plan",
+      "stop_at": 3100,
+      "dump_from": 2600,
+      "dump_to": 2825,
+      "min_darkened": 4000,
+      "min_shadowed_pictures": 12,
+      "side_box": [215, 462, 300, 512],
+      "side_pictures": [2805, 2825]
+    },
+    {
+      "name": "edge",
+      "plan": "fixtures/padlogs/crate_drop_edge.plan",
+      "stop_at": 3100,
+      "dump_from": 2600,
+      "dump_to": 2825,
+      "min_darkened": 2000,
+      "min_shadowed_pictures": 10,
+      "side_box": [215, 452, 300, 512],
+      "side_pictures": [2805, 2825]
+    }
+  ],
+  "hub": {
+    "padlog": "fixtures/padlogs/hub_entry.padlog",
+    "stop_at": 4200
+  },
+  "trace_player": 1,
+  "run_seconds": 600,
+  "frame": [512, 512],
+  "why": "Crash's shadow on the crates' tops (video.shadows_on_crates, on by default): every crate's material sets FBA, so on the PS2 no shadow ever falls on a crate -- the column cast straight down from the character passes through the whole crate, and drawn without FBA it darkened the top AND a band down the side (and a line along the bottom rail's ledge, an up-facing face under the top's rim). The port draws an FBA pass's FLOOR triangles (normal within 45 degrees of +y and nothing of the model above the centre) without FBA, in the build's own order (graphics_scene.cpp FloorSplitOf / DrawInstance). The legs: each plan with the setting off and on, and once more with the floors painted (TE_GFX_DIAG_FLOORS=paint) -- the pixels the floors win; the hub pad log off and on.",
+  "criteria": "off vs on: the state trace and the audio hashes identical (a render-only change); the pictures that differ all inside the dumped window (frames.fhash); every pixel that differs a floor pixel (the painted leg changes it) darkened by one amount on its three channels (the shadow composite: Cd - k, clamped at 0); no pixel of the side_box changed over the side_pictures; at least min_darkened such pixels over the window in at least min_shadowed_pictures pictures (the top does take the shadow); the hub pad log's frames, audio and state identical off and on. With --base-bin (the build before the change): the off legs' and the hub leg's frames.fhash identical to the base's.",
+  "frozen": "2026-11-04, on the change's build with --base-bin = fixes 0cfcd06: drop 19 pictures / 7960 px differ off-on (2612: 2 px of a near crate's top at the picture's edge; 2806-2823 the landing), every one a darkened floor pixel (Cd - 33), 0 elsewhere, 0 in the side box; edge 16 / 4286, the same; the hub leg identical off and on; the off legs and the hub leg identical to the base build's frames. RED on the same build with every triangle of an FBA pass taken as a floor (the crates without FBA whole: the first attempt): 2089 / 1026 pixels of the side boxes changed (the band down the side and the ledge line).",
+  "side_box": "each plan's side_box (x0 y0 x1 y1, exclusive) over its side_pictures (the landing on the crate): the crate's side face below its top and the bottom rail's ledge -- no pixel there may change (the first attempt, the crates drawn without FBA whole, changed 10..389 of them a picture: the band and the ledge line)"
+}

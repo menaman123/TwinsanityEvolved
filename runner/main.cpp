@@ -59,6 +59,7 @@
 #include "te_cutscenes.h"
 #include "te_test_requests.h"
 #include "te_profile.h"
+#include "te_route_steps.h"
 #include "te_prof.h"
 #include "te_savestate.h"
 #include "te_savestate_keys.h"
@@ -99,7 +100,7 @@ std::string g_load_now;   // the path the host restores when the fiber yields wi
 
 void Usage() {
     std::fprintf(stderr, "usage: twinsanityevolved (--iso <image> [--elf-in-iso NAME] [--region-map FILE] | --elf <file>) [--dry-run] [--verify-disc] [--verbose] [--run-seconds N] [--test-trap] [--trace-state]\n"
-                         "       [--deterministic] [--hz 60|50] [--language <name>|0..7] [--text-language <name>] [--speech-language <name>] [--language-bank N] [--config ps2r.ini|none] [--aspect auto|4:3|16:9|16:10|21:9] [--frame-rate 30|60|120|144|240|uncapped] [--fps-counter on|off] [--mod ID ...] [--mc-dir DIR] [--mods-dir DIR] [--no-sdl-input] [--no-kbm] [--press 0xBUTTONS] [--no-audio] [--skip-movies] [--disc-speed device|console] [--stream-instant]\n"
+                         "       [--deterministic] [--hz 60|50] [--language <name>|0..7] [--text-language <name>] [--speech-language <name>] [--language-bank N] [--config ps2r.ini|none] [--aspect auto|4:3|16:9|16:10|21:9|32:9] [--frame-rate 30|60|120|144|240|uncapped] [--fps-counter on|off] [--shadows-on-crates on|off] [--mod ID ...] [--mc-dir DIR] [--mods-dir DIR] [--no-sdl-input] [--no-kbm] [--press 0xBUTTONS] [--no-audio] [--skip-movies] [--disc-speed device|console] [--stream-instant]\n"
                          "       [--save-state PATH@BOUNDARY ...] [--load-state PATH] [--stop-at BOUNDARY] [--present-ct16]\n"
                          "       [--record-pad FILE] [--play-pad FILE] [--pad-script FILE] [--inject-key KEY@FROM-TO ...] [--close-at BOUNDARY]\n"
                          "       [--harness-out DIR]\n"
@@ -161,8 +162,10 @@ int main(int argc, char** argv) {
     uint32_t press = 0;
     std::string load_state, record_pad, play_pad, pad_script, harness_out, autopilot, dump_collision, config_path, aspect_override, frame_rate_override;
     int fps_counter_override = -1;   // --fps-counter on|off for this run (the judge's arms); -1 = the file's / off
+    int crate_shadows_override = -1; // --shadows-on-crates on|off for this run (the judge's arms); -1 = the file's / on
     int disc_speed_override = -1;    // --disc-speed console|device for this run (te_loading.h): 0 / 1; -1 = the file's / the profile's
     int disc_speed_from_file = -1;   // ps2r.ini's disc.speed as the file sets it (-1: not there)
+    bool route_steps_reached = true;  // ps2r.ini's game.route_steps (te_route_steps.h): reached, the default, or retail
     bool hz_given = false;           // --hz on the command line wins over ps2r.ini's game.hz
     bool hz_from_settings = false;   // a settings file is in play: the GAME RATE row reads its (or the default) value back
     char hz_source[112] = "the default 60: no settings file";   // where the game rate came from (the Vita's start-up line)
@@ -212,6 +215,11 @@ int main(int argc, char** argv) {
         else if (a == "--language-bank") { std::string v; next(v); settings.language_bank = std::atoi(v.c_str()); }   // a slot of the game's language table (diagnostic)
         else if (a == "--config") next(config_path);
         else if (a == "--fps-counter") { std::string v; next(v); fps_counter_override = (v == "on" || v == "1") ? 1 : 0; }   // render fps + game Hz through the game's text system
+        else if (a == "--shadows-on-crates") {   // the shadows on the crates' tops (on) or, as on the PS2, on no crate (off), for this run
+            std::string v; next(v);
+            if (v != "on" && v != "off") { std::fprintf(stderr, "[twinsanityevolved] --shadows-on-crates: on|off\n"); return 2; }
+            crate_shadows_override = v == "on" ? 1 : 0;
+        }
         else if (a == "--mod") { std::string v; next(v); mods_on.push_back(v); }   // a built-in mod (level_select, speedrun, infinite_lives) on for this run
         else if (a == "--aspect") { std::string v; next(v); aspect_override = v; }
         else if (a == "--frame-rate") { std::string v; next(v); frame_rate_override = v; }   // the presenter's cadence for this run (30|60|120|144|240|uncapped)   // the display shape for this run (auto|4:3|16:9|16:10|21:9; the judge's arm)   // the settings file read (and written by the Options menu); default <home>/.twinsanityevolved/ps2r.ini, `none` = no file
@@ -383,10 +391,30 @@ int main(int argc, char** argv) {
                 {   // display.fps_counter / video.frame_rate -- read by name so the port still builds against an engine without the keys
                     std::string v;
                     if (cfg.Get("display.fps_counter", &v)) display.fps_counter = v == "on";
+                    // video.shadows_on_crates: the shadows on the crates' tops (graphics_scene.cpp FloorSplitOf), on unless off
+                    if (ps2r::SettingsFile::GetFromText(text, "video.shadows_on_crates", &v)) {
+                        if (v == "on" || v == "off") display.shadows_on_crates = v == "on";
+                        else std::fprintf(stderr, "[twinsanityevolved] settings: video.shadows_on_crates = %s is not on or off: on\n", v.c_str());
+                    }
                     // disc.speed only as the file sets it (the default is the profile's: below)
                     if (ps2r::SettingsFile::GetFromText(text, "disc.speed", &v)) {
                         if (v == "device" || v == "console") disc_speed_from_file = v == "device" ? 1 : 0;
                         else std::fprintf(stderr, "[twinsanityevolved] settings: disc.speed = %s is not device or console: the default\n", v.c_str());
+                    }
+                    // game.route_steps: a route's step a script misses straight ahead is reached (the default) or kept missed
+                    // as retail has it
+                    if (ps2r::SettingsFile::GetFromText(text, "game.route_steps", &v)) {
+                        if (v == "reached" || v == "retail") route_steps_reached = v == "reached";
+                        else std::fprintf(stderr, "[twinsanityevolved] settings: game.route_steps = %s is not reached or retail: the default\n", v.c_str());
+                    }
+                    // the game's rules (game_rules.cpp): the knee slide's steering and explosions while invincible
+                    if (ps2r::SettingsFile::GetFromText(text, "game.slide_steering", &v)) {
+                        if (v == "fixed" || v == "retail") settings.slide_steering_fixed = v == "fixed";
+                        else std::fprintf(stderr, "[twinsanityevolved] settings: game.slide_steering = %s is not fixed or retail: fixed\n", v.c_str());
+                    }
+                    if (ps2r::SettingsFile::GetFromText(text, "game.invincible_to_explosions", &v)) {
+                        if (v == "on" || v == "off") settings.invincible_to_explosions = v == "on";
+                        else std::fprintf(stderr, "[twinsanityevolved] settings: game.invincible_to_explosions = %s is not on or off: off\n", v.c_str());
                     }
                     ps2r::ps2e::PresentPacer::Rate rate;
 #if defined(__vita__)
@@ -461,12 +489,13 @@ int main(int argc, char** argv) {
         // The engine's vsync default is ON (a Windows release blocker); the port's pacer times its presents, so the port's
         // default without a file is OFF (the engine's VideoConfig default is read only when the file exists and names it).
         if (!aspect_override.empty()) {
-            static const char* const names[] = {"auto", "4:3", "16:9", "16:10", "21:9"};
+            static const char* const names[] = {"auto", "4:3", "16:9", "16:10", "21:9", "32:9"};
             bool found = false;
-            for (int i = 0; i < 5; ++i) if (aspect_override == names[i]) { display.aspect = i; found = true; }
-            if (!found) { std::fprintf(stderr, "[twinsanityevolved] --aspect: auto|4:3|16:9|16:10|21:9\n"); return 2; }
+            for (int i = 0; i < 6; ++i) if (aspect_override == names[i]) { display.aspect = i; found = true; }
+            if (!found) { std::fprintf(stderr, "[twinsanityevolved] --aspect: auto|4:3|16:9|16:10|21:9|32:9\n"); return 2; }
         }
         if (fps_counter_override >= 0) display.fps_counter = fps_counter_override == 1;
+        if (crate_shadows_override >= 0) display.shadows_on_crates = crate_shadows_override == 1;
         display.running_hz = settings.field_hz == 50 ? 50 : 60;
         // the GAME RATE row: the saved value (above) when a settings file is in play; without one nothing is saved -- the row
         // shows this run's rate
@@ -510,6 +539,7 @@ int main(int argc, char** argv) {
 #endif
         }
         te::display::Configure(display);
+        te::route_steps::Configure(route_steps_reached);
         te::texts::InstallFpsCounter();
     }
     // the speedrun mod's practice states load in the SAME process (no re-exec), but a state saved in one play session must
@@ -563,6 +593,8 @@ int main(int argc, char** argv) {
                                                                                                           : !settings.deterministic)
                               ? te::Settings::DiscSpeed::Device : te::Settings::DiscSpeed::Console;
     te::SetSettings(settings);
+    std::fprintf(stderr, "[twinsanityevolved] rules: slide steering %s, explosions %s an invincible character (the speedrun mod: retail's)\n",
+                 settings.slide_steering_fixed ? "fixed" : "retail", settings.invincible_to_explosions ? "spare" : "hurt");
     // the built-in mods (all off unless ps2r.ini or --mod says so; the switches persist through the Options > Mods page),
     // then the mods folder's beside them
     te::mods::InstallBuiltins();
@@ -880,6 +912,7 @@ int main(int argc, char** argv) {
     te::link_ahead::Install();
     if (trace_player) te::probe::Install(trace_player, dump_collision);
     if (trace_bodies) te::probe::InstallBodies(trace_bodies);
+    if (const char* moves = std::getenv("TE_TRACE_MOVES"); moves && *moves == '1') te::probe::InstallMoves();
     // The cutscenes' diagnostics (runner/te_cutscenes.h): the scripts' census, the state lines a watched and a skipped run compare
     if (std::getenv("TE_CUTSCENE_CENSUS")) te::cutscenes::InstallCensus();
     if (const char* every = std::getenv("TE_CUTSCENE_STATE")) te::cutscenes::InstallState(every);
@@ -984,6 +1017,8 @@ int main(int argc, char** argv) {
         }
         break;
     }
+    // a harness leg with the drawing thread on: the pictures it was handed drawn and recorded before the records close
+    if (te::harness::Armed()) te_graphics_finish_pictures(5000);
     te::padlog::Finish();
     {
         const te::Clock::Census c = te::Services::Get().clock().GetCensus();

@@ -198,7 +198,9 @@ std::string IniLineKey(const std::string& line, std::string& section) {
 }  // namespace
 
 std::string TakePortKeys(const std::string& text, std::string* memcards, std::string* mods) {
-    static const char* const kPortKeys[] = {"paths.memcards", "paths.mods", "mods.order", "display.tick_lock", "disc.speed"};
+    static const char* const kPortKeys[] = {"paths.memcards", "paths.mods", "mods.order", "display.tick_lock", "disc.speed",
+                                            "game.route_steps", "game.slide_steering", "game.invincible_to_explosions",
+                                            "video.shadows_on_crates"};
     std::string out, section;
     size_t pos = 0;
     while (pos < text.size()) {

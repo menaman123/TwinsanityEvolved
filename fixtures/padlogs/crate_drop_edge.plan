@@ -1,0 +1,33 @@
+# crate_drop_edge plan (tools/judges/crate_shadow_judge.py): crate_drop.plan with the second drop at the crate's north edge (z 6.0:
+# half of Crash's column over the crate's top, half over the sand beside its side)
+until-gstate 7 3000
+idle 11
+hold START 5
+until-gstate 8 300
+idle 128
+hold CROSS 5
+idle 295
+hold UP 3
+idle 97
+hold CROSS 3
+idle 247
+hold DOWN 3
+idle 67
+hold CROSS 3
+until-gstate 12 2000
+idle 151
+hold CROSS 3
+wait 30
+wait 30
+# Crash on the sand 3 units north of the basic crate at (-34.0 0.0 5.6), the camera turned to look south over it
+teleport -34.0 0.5 8.6
+wait 60
+look 0 -1 6 30 400
+wait 30
+# the control: dropped from 3.0 onto the sand where he stands
+teleport -34.0 3.0 8.6
+wait 90
+# dropped from 3.0 onto the crate (its top at 1.0)
+teleport -34.0 3.0 6.0
+wait 90
+stop

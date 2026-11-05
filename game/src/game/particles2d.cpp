@@ -99,7 +99,7 @@ f32 ScreenAspect()
 // A particle's matrix: its size (by the curve of its age), its turn, its place, then the widget's. The plain emitter widens its x by
 // the TV's shape and goes without the curves it hasn't got, the radial one widens its y and needs them
 void ParticleMatrix(const Emitter2D* emitter, bool radial, const Vector4* particle, const Matrix4x4* placed, f32 aspect,
-                    Matrix4x4* matrix, f32* t)
+                    f32 across, Matrix4x4* matrix, f32* t)
 {
     InitIdentityMatrix(matrix);
     Vector4 place;
@@ -134,7 +134,23 @@ void ParticleMatrix(const Emitter2D* emitter, bool radial, const Vector4* partic
     place.z = 0.0f;
     place.w = 1.0f;
     *reinterpret_cast<Vector4*>(matrix->m[3]) = place;
+    if (across != 1.0f)
+    {
+        // TwinsanityEvolved: on another wide shape, the particle as wide and as far across from its emitter as on a 16:9 TV
+        matrix->m[0][0] = matrix->m[0][0] * across;
+        matrix->m[1][0] = matrix->m[1][0] * across;
+        matrix->m[3][0] = matrix->m[3][0] * across;
+    }
+
     VuMultiplyMatrices(matrix, placed, matrix);
+}
+
+// TwinsanityEvolved: what a particle's widths take on a picture drawn for another wide shape -- the share of its width a 16:9
+// TV's picture has (the menus' layout is a 16:9 TV's, in the middle) -- and 1 on the game's own two shapes
+f32 ParticleAcross()
+{
+    f32 tv = TvAspect();
+    return g_WidescreenTv != 0 && tv != WideAspect ? WideAspect / tv : 1.0f;
 }
 
 // Half the distance between the places, times the spread
@@ -464,12 +480,13 @@ void Emitter2D::Draw(const Matrix4x4* placed)
     }
 
     f32 aspect = ScreenAspect();
+    f32 across = ParticleAcross();
     SlotIterator iterator = Walk(&particles);
     while (!IsDone(iterator))
     {
         Matrix4x4 matrix;
         f32 t;
-        ParticleMatrix(this, false, &particles.items[iterator.slot], placed, aspect, &matrix, &t);
+        ParticleMatrix(this, false, &particles.items[iterator.slot], placed, aspect, across, &matrix, &t);
         if (colours != nullptr)
         {
             Vector4 tint;
@@ -551,12 +568,13 @@ void RadialEmitter2D::Draw(const Matrix4x4* placed)
     }
 
     f32 aspect = ScreenAspect();
+    f32 across = ParticleAcross();
     SlotIterator iterator = Walk(&particles);
     while (!IsDone(iterator))
     {
         Matrix4x4 matrix;
         f32 t;
-        ParticleMatrix(this, true, &particles.items[iterator.slot], placed, aspect, &matrix, &t);
+        ParticleMatrix(this, true, &particles.items[iterator.slot], placed, aspect, across, &matrix, &t);
         u32 drawColour;
         ColourSet(&drawColour, colour.x, colour.y, colour.z, colour.w);
         CallVirtual<void>(sprite, sprite->vtable, Shape2D::DrawPlacedColouredSlot, &matrix, drawColour);

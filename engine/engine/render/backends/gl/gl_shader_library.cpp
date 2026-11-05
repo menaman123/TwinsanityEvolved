@@ -7,14 +7,14 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <regex>
 #include <string>
+#include <utility>
+#include <vector>
 #if PS2R_HOST_VITA
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
-#include <regex>
-#include <utility>
-#include <vector>
 #include <arm_neon.h>   // (the instanced draws' rows copied as quadwords)
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
@@ -178,17 +178,22 @@ std::string VitaLeanPs2Fragment(const char* source) {
     return defines + s;
 }
 
-// The FAST PS2 fragment program (TE_GFX_VITA_PS2_FAST, default on): the program as above with every uniform of
-// kVitaFastConstants replaced by the value the Vita's draws give it -- its declaration removed, `#define u_x value` in
-// front -- so Sony's compiler drops the arms they gate: the depth-attachment and indexed CLUT serves (u_depth_fmt,
+}  // namespace
+#endif
+
+namespace {
+// The FAST PS2 fragment program (TE_GFX_VITA_PS2_FAST on the Vita, TE_GFX_PS2_FAST elsewhere): the program with every
+// uniform of kFastConstants replaced by the value the port's draws give it -- its declaration removed, `#define u_x
+// value` in front -- so the compiler drops the arms they gate: the depth-attachment and indexed CLUT serves (u_depth_fmt,
 // u_idx_fmt, u_uv_native), the shader-side blend (u_sw_blend), DATE (u_date), the colour-authored Z source (u_zsrc_en),
 // the 16-bit frame conventions (u_fb16, u_ct16q, u_fbmsk16_en), SCANMSK (u_scanmsk), the V flip (u_flip_v) and the
 // colour wrap (u_colclamp 1). The compiled full program (the run4 device / Vita3K GXP: 2475 USSE instructions, 185
 // branches, 24 temporaries) carries all of them, and the GPU pays its temporaries for every fragment (fewer threads in
-// flight). A draw takes the fast program only while each of these uniforms holds exactly that value
-// (GlDrawExecutor::SelectPs2Variant): the same source over the same values -- the same arithmetic.
-struct VitaFastConstant { const char* name; int value; int GlUniformLocations::*field; };
-const VitaFastConstant kVitaFastConstants[] = {
+// flight); on an Apple M4 a 2048x2048 blended textured pass takes 0.69 ms with the full program and 0.29 with this one.
+// A draw takes the fast program only while each of these uniforms holds exactly that value
+// (GlDrawExecutor::BindPs2Program): the same source over the same values -- the same arithmetic.
+struct FastConstantSpec { const char* name; int value; int GlUniformLocations::*field; };
+const FastConstantSpec kFastConstants[] = {
     {"u_sw_blend", 0, &GlUniformLocations::sw_blend},     {"u_depth_fmt", 0, &GlUniformLocations::depth_fmt},
     {"u_idx_fmt", 0, &GlUniformLocations::idx_fmt},       {"u_uv_native", 0, &GlUniformLocations::uv_native},
     {"u_flip_v", 0, &GlUniformLocations::flip_v},         {"u_scanmsk", 0, &GlUniformLocations::scanmsk},
@@ -197,34 +202,41 @@ const VitaFastConstant kVitaFastConstants[] = {
     {"u_ct16q", 0, &GlUniformLocations::ct16q},           {"u_colclamp", 1, &GlUniformLocations::colclamp},
 };
 
-// "" when the source does not have the expected declarations (the fast program is then not built)
-std::string VitaFastPs2Fragment(const std::string& source) {
+// "" when the source does not have the expected declarations (the fast program is then not built). The defines go in
+// front of the source on the Vita (its GLSL is rewritten before compiling: VitaGlsl) and right after the #version line
+// elsewhere (desktop GLSL wants the #version first)
+std::string FastPs2Fragment(const std::string& source) {
     std::string s = source;
     std::string defines;
-    for (const VitaFastConstant& c : kVitaFastConstants) {
+    for (const FastConstantSpec& c : kFastConstants) {
         const std::regex decl(std::string(R"(uniform\s+int\s+)") + c.name + R"(\s*;)");
         if (!std::regex_search(s, decl)) return std::string();
         s = std::regex_replace(s, decl, "");
         defines += std::string("#define ") + c.name + " " + std::to_string(c.value) + "\n";
     }
+#if PS2R_HOST_VITA
     return defines + s;
+#else
+    const size_t version = s.find("#version");
+    const size_t line = version == std::string::npos ? std::string::npos : s.find('\n', version);
+    if (line == std::string::npos) return std::string();
+    s.insert(line + 1, defines);
+    return s;
+#endif
 }
 }  // namespace
 
 const GlShaderLibrary::FastConstant* GlShaderLibrary::FastConstants(int* count) {
-    static FastConstant table[sizeof kVitaFastConstants / sizeof kVitaFastConstants[0]];
+    static FastConstant table[sizeof kFastConstants / sizeof kFastConstants[0]];
     static bool made = false;
     if (!made) {
-        for (size_t i = 0; i < sizeof kVitaFastConstants / sizeof kVitaFastConstants[0]; ++i)
-            table[i] = FastConstant{kVitaFastConstants[i].field, kVitaFastConstants[i].value};
+        for (size_t i = 0; i < sizeof kFastConstants / sizeof kFastConstants[0]; ++i)
+            table[i] = FastConstant{kFastConstants[i].field, kFastConstants[i].value};
         made = true;
     }
-    *count = int(sizeof kVitaFastConstants / sizeof kVitaFastConstants[0]);
+    *count = int(sizeof kFastConstants / sizeof kFastConstants[0]);
     return table;
 }
-namespace {
-}  // namespace
-#endif
 
 uint32_t GlShaderLibrary::CompileShader(uint32_t type, const char* source) {
     GLuint shader = glCreateShader(type);
@@ -3524,7 +3536,7 @@ bool GlShaderLibrary::Build(GlUniformCache& uniforms) {
     {
         const char* fast_env = std::getenv("TE_GFX_VITA_PS2_FAST");
         const bool want_fast = ps2_program_ && !(fast_env && fast_env[0] == '0');
-        const std::string fast = want_fast ? VitaFastPs2Fragment(fragment) : std::string();
+        const std::string fast = want_fast ? FastPs2Fragment(fragment) : std::string();
         if (want_fast && fast.empty())
             std::fprintf(stderr, "[gl] the PS2 fast program: the fragment source lacks a uniform it specializes: not built\n");
         ps2_fast_program_ = fast.empty() ? 0 : BuildProgram(vertex.c_str(), fast.c_str(), "ps2 fast");
@@ -3538,6 +3550,16 @@ bool GlShaderLibrary::Build(GlUniformCache& uniforms) {
     }
 #else
     ps2_program_ = BuildProgram(vertex.c_str(), FragmentSource(), "ps2");
+    // the fast program (TE_GFX_PS2_FAST: unset / 1 on, 0 = not built, abN = built and switched off / on every N presents:
+    // GlDevice::Present)
+    {
+        const char* fast_env = std::getenv("TE_GFX_PS2_FAST");
+        const bool want_fast = ps2_program_ && !(fast_env && fast_env[0] == '0');
+        const std::string fast = want_fast ? FastPs2Fragment(FragmentSource()) : std::string();
+        if (want_fast && fast.empty())
+            std::fprintf(stderr, "[gl] the PS2 fast program: the fragment source lacks a uniform it specializes: not built\n");
+        ps2_fast_program_ = fast.empty() ? 0 : BuildProgram(vertex.c_str(), fast.c_str(), "ps2 fast");
+    }
 #endif
     if (!ps2_program_) return false;
 #if PS2R_HOST_VITA
@@ -3598,17 +3620,20 @@ bool GlShaderLibrary::Build(GlUniformCache& uniforms) {
 #endif
 
     LookupLocations();
-#if PS2R_HOST_VITA
     // the fast program's uniforms mirror the full program's: every value the uniform cache sends goes to both (vitaGL's
-    // glUniform* writes the program the location belongs to, bound or not), so either program holds the draw's values
+    // glUniform* writes the program the location belongs to, bound or not; elsewhere the cache names the program:
+    // glProgramUniform*), so either program holds the draw's values
     uniforms.SetMirror({});
+    uniforms.SetPrograms(0, 0);
     LookupLocationsOf(ps2_fast_program_, loc_fast_);
     if (ps2_fast_program_) {
+        bool sizes = false;
+#if PS2R_HOST_VITA
         // the fast program must not read the texture sizes the state cache sends per bound program (only the full one is
         // bound when they are sent): none of its live code does -- checked, else it is not used
-        bool sizes = false;
         for (const char* name : kVitaSamplerSizes)
             sizes = sizes || glGetUniformLocation(ps2_fast_program_, (std::string("te_size_") + name).c_str()) >= 0;
+#endif
         int n = 0;
         const FastConstant* fc = FastConstants(&n);
         bool constants_live = true;
@@ -3629,11 +3654,16 @@ bool GlShaderLibrary::Build(GlUniformCache& uniforms) {
             for (size_t i = 0; i < kInts; ++i)
                 if (full[i] >= 0 && fast[i] >= 0) pairs.emplace_back(full[i], fast[i]);
             uniforms.SetMirror(pairs);
+            uniforms.SetPrograms(ps2_program_, ps2_fast_program_);
+#if PS2R_HOST_VITA
             std::fprintf(stderr, "[gl] the PS2 fast program: %u uniforms mirrored; used by a draw while %d uniforms hold "
                          "their constants (TE_GFX_VITA_PS2_FAST=0: off)\n", unsigned(pairs.size()), n);
+#else
+            std::fprintf(stderr, "[gl] the PS2 fast program: %u uniforms mirrored; used by a draw while %d uniforms hold "
+                         "their constants (TE_GFX_PS2_FAST=0: off)\n", unsigned(pairs.size()), n);
+#endif
         }
     }
-#endif
     PrimeUniforms(uniforms);
 #if PS2R_HOST_VITA
     std::fprintf(stderr, "[gl] shader cache (%s): %u programs loaded (%u of them from the shipped cache %s), %u compiled (%u stored), "

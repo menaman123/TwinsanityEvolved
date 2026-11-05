@@ -111,10 +111,10 @@
         "rows": [
           {
             "key": "video.aspect", "label": "Aspect ratio", "kind": "choice", "default": "auto", "write_default": true,
-            "help": "Auto is the TV's 4:3; the wide shapes widen the picture the way the game's own widescreen option does.",
+            "help": "Auto is the TV's 4:3. With the game's own Widescreen option on, 16:10, 21:9 and 32:9 show more of the world at the sides, and at 21:9 and 32:9 the menus and the counters stay in the middle.",
             "choices": [
               { "value": "auto", "label": "Auto" }, { "value": "4:3", "label": "4:3" }, { "value": "16:9", "label": "16:9" },
-              { "value": "16:10", "label": "16:10" }, { "value": "21:9", "label": "21:9" }
+              { "value": "16:10", "label": "16:10" }, { "value": "21:9", "label": "21:9" }, { "value": "32:9", "label": "32:9" }
             ]
           },
           {

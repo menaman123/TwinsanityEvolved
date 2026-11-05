@@ -158,6 +158,57 @@ void Compare(const Geometry::Mesh& mesh, const Geometry::View& view, const Draw&
     draws_compared += built.size();
 }
 
+// View::classes / classed: the same vertices in the same order as the build without them, the sink's calls cut where the
+// class changes, `classed` called before the first run and at each change only, and every body triangle under the class
+// of the vertex that ends it (each vertex's colour its index: the triangle's third vertex is the strip vertex `at`)
+size_t classed_cases = 0, classed_runs = 0;
+void CompareClasses(const Geometry::Mesh& mesh, const Geometry::View& view, const Draw& state) {
+    Geometry::Prepared prepared;
+    REQUIRE(Geometry::Prepare(mesh, prepared) == Geometry::Result::Ok);
+    std::vector<std::array<uint8_t, 4>> colours(prepared.vertex_count);
+    for (size_t at = 0; at < colours.size(); ++at) colours[at] = {uint8_t(at), uint8_t(at >> 8), uint8_t(at >> 16), 0x80};
+    std::vector<uint8_t> classes(prepared.vertex_count);
+    const int mode = Pick(3);   // random classes, all 1, runs of a few vertices
+    for (size_t at = 0; at < classes.size(); ++at) classes[at] = uint8_t(mode == 0 ? Pick(2) : mode == 1 ? 1 : (at / 5) & 1);
+    std::vector<Published> plain;
+    if (Geometry::BuildPrepared(prepared, view, state, colours.data(), &Collect, &plain) != Geometry::Result::Ok) return;
+    ++classed_cases;
+    struct Out {
+        const std::vector<uint8_t>* classes;
+        std::vector<Published> published;
+        std::vector<int> calls;   // the class `classed` reported before each sink call
+        int current = -1, changes = 0;
+    } out{&classes, {}, {}, -1, 0};
+    Geometry::View cv = view;
+    cv.classes = classes.data();
+    cv.classed = [](void* user, uint8_t c) {
+        auto* o = static_cast<Out*>(user);
+        REQUIRE(int(c) != o->current);   // only at a change
+        o->current = c;
+        o->changes++;
+    };
+    const auto sink = [](void* user, const Rec* verts, size_t count, bool fan) {
+        auto* o = static_cast<Out*>(user);
+        REQUIRE(o->current >= 0);   // a class reported before the first triangles
+        o->published.push_back({std::vector<Rec>(verts, verts + count), fan});
+        o->calls.push_back(o->current);
+        if (!fan)
+            for (size_t t = 0; t + 3 <= count; t += 3) {
+                const Rec& c = verts[t + 2];
+                const size_t at = size_t(c.r) | size_t(c.g) << 8 | size_t(c.b) << 16;
+                REQUIRE(at < o->classes->size() && (*o->classes)[at] == o->current);
+            }
+    };
+    REQUIRE(Geometry::BuildPrepared(prepared, cv, state, colours.data(), sink, &out) == Geometry::Result::Ok);
+    std::vector<Rec> a, b;
+    for (const auto& p : plain) a.insert(a.end(), p.verts.begin(), p.verts.end());
+    for (const auto& p : out.published) b.insert(b.end(), p.verts.begin(), p.verts.end());
+    REQUIRE(a.size() == b.size());
+    for (size_t i = 0; i < a.size(); ++i) RequireSameVertex(a[i], b[i]);
+    if (mode == 1) REQUIRE(out.published.size() == plain.size() && out.changes == (plain.empty() ? 0 : 1));
+    classed_runs += size_t(out.changes);
+}
+
 void Rejections() {
     const Draw state = State();
     Geometry::View view = RandomView();
@@ -237,6 +288,7 @@ int main(int argc, char** argv) {
         const Draw state = State();
         // several views of one prepared mesh (the port's placed instances) and a colour override now and then
         for (int v = 0; v < 3; ++v) Compare(mesh, RandomView(), state, Pick(4) == 0);
+        CompareClasses(mesh, RandomView(), state);
     }
     // The strip's own vertex count bounds (3 and 38) and a one-strip mesh of all restarts
     {
@@ -258,7 +310,9 @@ int main(int argc, char** argv) {
     Rejections();
     REQUIRE(fans_seen > 0);
     REQUIRE(clipped_views > 0);
-    std::printf("test_mesh_geometry_prepared: %zu cases, %zu draws (%zu fans), %zu vertices bit-identical; %zu clipped views; rejections agree\n",
-                cases, draws_compared, fans_seen, vertices_compared, clipped_views);
+    REQUIRE(classed_cases > 0 && classed_runs > classed_cases);
+    std::printf("test_mesh_geometry_prepared: %zu cases, %zu draws (%zu fans), %zu vertices bit-identical; %zu clipped views; rejections agree; "
+                "%zu builds by classes (%zu runs) as the whole build\n",
+                cases, draws_compared, fans_seen, vertices_compared, clipped_views, classed_cases, classed_runs);
     return 0;
 }

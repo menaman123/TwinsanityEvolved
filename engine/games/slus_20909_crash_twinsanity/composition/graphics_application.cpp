@@ -21,7 +21,8 @@ gs::AspectSelection::Shape ShapeOf(AspectSel selection) {
                   static_cast<int>(gs::AspectSelection::Shape::Narrow) == static_cast<int>(AspectSel::R4_3) &&
                   static_cast<int>(gs::AspectSelection::Shape::Wide16_9) == static_cast<int>(AspectSel::R16_9) &&
                   static_cast<int>(gs::AspectSelection::Shape::Wide16_10) == static_cast<int>(AspectSel::R16_10) &&
-                  static_cast<int>(gs::AspectSelection::Shape::Wide21_9) == static_cast<int>(AspectSel::R21_9),
+                  static_cast<int>(gs::AspectSelection::Shape::Wide21_9) == static_cast<int>(AspectSel::R21_9) &&
+                  static_cast<int>(gs::AspectSelection::Shape::Wide32_9) == static_cast<int>(AspectSel::R32_9),
                   "video.aspect and AspectSelection::Shape share one order");
     return static_cast<gs::AspectSelection::Shape>(selection);
 }

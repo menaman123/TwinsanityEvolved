@@ -30,4 +30,9 @@ int te_graphics_present_ct16(void);
 // camera cut; latency = present instant - the shown content's time on the pacer's clock, averaged; late = slots served
 // more than one slot period after their time.
 void te_graphics_present_census(char* out, size_t size);
+// The pictures handed to the drawing thread drawn and presented before the run's records close (the runner, before
+// te::harness::Finalize): a harness leg with the drawing thread on records its last pictures, and none is drawn after the
+// harness closed (its host is freed at the process' teardown while the drawing thread could still be drawing one).
+// No drawing thread: nothing to do. At most `timeout_ms` (a drawing thread that does not come back is left as it is).
+void te_graphics_finish_pictures(int timeout_ms);
 }

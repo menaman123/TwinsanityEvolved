@@ -11,5 +11,30 @@
   "bar_max_luminance": 1.0,
   "picture_min_luminance": 20.0,
   "why": "the 512x512 PAL frame letterboxed to 16:9 in the 512x512 headless capture is a 512x288 picture at rows 112..400: the rows 0..102 and 410..512 are the bars (black); with the default shape (auto = the frame's pixels when headless) the same rows show the title's sky (top) and sea (bottom)",
-  "frozen": "2026-10-17: RED on bin/twinsanityevolved.32e1174 (no --aspect: the runner exits 2), GREEN on the display-settings build (bars 0.0 / 0.0, A's rows 40-70, picture 60+)"
+  "frozen": "2026-10-17: RED on bin/twinsanityevolved.32e1174 (no --aspect: the runner exits 2), GREEN on the display-settings build (bars 0.0 / 0.0, A's rows 40-70, picture 60+)",
+  "super_wide": {
+    "aspect": "32:9",
+    "bars": [[0.0, 0.34], [0.66, 1.0]],
+    "picture": [0.4, 0.6],
+    "why": "32:9 letterboxed in the 512x512 capture is a 512x144 picture at rows 184..328 (0.359..0.641 of the height): the rows outside 0.34..0.66 are the bars"
+  },
+  "wide_legs": {
+    "hub_padlog": "fixtures/padlogs/hub_entry.padlog",
+    "hub_stop_at": 2700,
+    "chunk": "levels\\earth\\hub\\beach",
+    "padlog": "fixtures/padlogs/hub_widescreen.padlog",
+    "stop_at": 3750,
+    "reference": "16:9",
+    "shapes": ["21:9", "32:9"],
+    "presents": {"play": 2900, "pause": 3500},
+    "text_presents": [2900, 3500],
+    "particle_present": 2900,
+    "max_mad": 8.0,
+    "control_ratio": 3.0,
+    "text_tolerance": 1.5,
+    "particle_min_px": 4.0,
+    "particle_tolerance": 0.1,
+    "why": "LOAD GAME on the hub card with the save's widescreen option on (tools/warp_save.py --widescreen on), Crash standing in the hub at present 2900, the pause page at 3500; the frame TARGET (the game's 512-wide frame before the picture is shaped) at 16:9, 21:9 and 32:9. A shape drawn for its own width shows the 16:9 view in the middle (16/21 and 1/2 of the frame) and more of the world at the sides: the middle against the 16:9 frame squeezed by that share differs by a mean of 1.4-2.0 per channel (the hub), where a frame only stretched (the shape's frame = the 16:9 frame) differs by 21.6-58.7. The strings at 21:9 and 32:9 -- the HUD's counters in play, the pause page -- are the 16:9 ones moved towards the frame's middle by the same share (the menus and the HUD in the middle 16:9), the fps counter's right edge too; the hub's particle quads in play (the blocks of present 2900, 4 px and more) the same share as wide as at 16:9 and as high",
+    "frozen": "2026-11-03: RED on fixes 7276bc0 (--aspect 32:9 refused: exit 2; at 21:9 the frame target is the 16:9 one, the middle 21.6 / 35.7 from the squeezed 16:9 frame, the strings not moved), GREEN on qol-aspect"
+  }
 }

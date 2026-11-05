@@ -1,7 +1,8 @@
 // te_test_requests.h -- what a TEST asks of the game while it plays (Platform::System::NextTestRequest; game/testrequests.h
 // carries each out through the game's own code at the start of the next frame of play). Off unless a test asks: the release game
 // never queues one. Two ways in, both test tools:
-//   the autopilot's plan steps (runner/te_autopilot.cpp): teleport, message, counter -- each queued at the boundary it runs at;
+//   the autopilot's plan steps (runner/te_autopilot.cpp): teleport, message, counter, hitpoints -- each queued at the boundary it
+//     runs at;
 //   TE_TEST_ACTIONS=SPEC@BOUNDARY[;SPEC@BOUNDARY...] -- each queued at the first boundary of play from BOUNDARY on (a fixture's
 //     replay of what its recording's plan asked: tools/cutscenes/reach.py writes the recording's "[te.test]" lines as this).
 // SPEC (the plan steps' words):
@@ -10,6 +11,8 @@
 //   message NAME ID [FROM]  the user message ID sent to NAME's instance from FROM's (none: no sender), as SendUserMessage sends one
 //   counter N V [NAME]      the game counter N (0..999) set to V, as SetCounter sets one; with NAME that instance's own counter N
 //                           (0..3), as SetCounter sets an agent's (a boss's count of what is left of a phase)
+//   hitpoints N [NAME]      the played character's (NAME's) hit points set to N (0..255), as SetHitPoints sets a character's
+//                           (the masks: 2 one, 3 the shining one; the next mask picked up then makes it invincible)
 // Every request is logged when the game takes it: "[te.test] b BOUNDARY: SPEC" (the boundary it was asked at: the replay's) and
 // what it found ("[te.test]   ...").
 #pragma once
@@ -19,7 +22,7 @@
 namespace te::test_requests {
 
 struct Request {
-    unsigned kind = 0;        // Platform::System::TestRequestKind: 1 teleport, 2 message, 3 counter, 4 an instance's counter
+    unsigned kind = 0;        // Platform::System::TestRequestKind: 1 teleport, 2 message, 3 counter, 4 an instance's counter, 5 hit points
     std::string instance;     // the instance's name ("" = the player)
     std::string other;        // the message's sender ("" = none)
     unsigned counter = 0;

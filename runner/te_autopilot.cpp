@@ -45,6 +45,7 @@
 //   teleport X Y Z [NAME]              the player (or NAME's instance) warped to (X, Y, Z) in its chunk's frame, as PositionWarp warps
 //   message NAME ID [FROM]             the user message ID sent to NAME's instance from FROM's, as SendUserMessage sends one
 //   counter N V [NAME]                 the game counter N set to V, as SetCounter sets one (NAME: that instance's own counter N)
+//   hitpoints N [NAME]                 the player's (NAME's) hit points set to N, as SetHitPoints sets a character's
 //   stop                               end the plan (the runner's --stop-at ends the run)
 #include "te_autopilot.h"
 
@@ -402,7 +403,7 @@ bool Load(const std::string& path, std::string* error) {
             if (!(in >> st.name >> st.graph)) return fail("until-graph NAME GRAPH [STATE] [MAX_FRAMES]");
             in >> st.graph_state >> st.max_frames;
         }
-        else if (op == "teleport" || op == "message" || op == "counter") {
+        else if (op == "teleport" || op == "message" || op == "counter" || op == "hitpoints") {
             st.kind = Kind::Test;
             std::string why;
             if (!test_requests::Parse(line, &st.request, &why)) { if (error) *error = path + ":" + std::to_string(n) + ": " + why; return false; }

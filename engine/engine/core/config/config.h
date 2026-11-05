@@ -20,9 +20,9 @@ enum class FitMode : uint8_t { Stretch = 0, Fit, Fill, Integer, Custom };
 // video.aspect: the display shape the title renders FOR (the projection, culling
 // frustum, HUD fit and movie picture take the ratio -- TR renderer.cpp's
 // g_WidescreenTv term -- and the presenter fits the anamorphic frame at it).
-// `auto` snaps the window's shape to the nearest of the four; 4:3 is the console's
+// `auto` snaps the window's shape to the nearest of the five; 4:3 is the console's
 // TV and the deterministic lanes' identity (no model body installed).
-enum class AspectSel : uint8_t { Auto = 0, R4_3, R16_9, R16_10, R21_9 };
+enum class AspectSel : uint8_t { Auto = 0, R4_3, R16_9, R16_10, R21_9, R32_9 };
 // video.fullscreen: the session window's mode -- a resizable window, the
 // display's own mode (exclusive fullscreen) or a borderless window covering the
 // desktop. Applied live from the title's Display page; persisted.

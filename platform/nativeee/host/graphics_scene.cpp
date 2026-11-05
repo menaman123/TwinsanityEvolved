@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "games/slus_20909_crash_twinsanity/hle/graphics/effects/shadow_geometry.h"
@@ -36,6 +37,7 @@
 #include "ps2e_seam.h"
 #include "te_gfx_layout.h"
 #include "te_host.h"
+#include "te_display.h"
 #include "te_load_census.h"
 #include "te_mesh_builder.h"
 #include "te_prof.h"
@@ -541,6 +543,8 @@ struct Part {
     // its native mesh prepared at its load, on a worker (PartPrep, TE_GFX_MESH_AT_LOAD): taken when the part asks for its
     // mesh, settled (cancelled / waited for) before the part goes (RetireMesh)
     std::shared_ptr<struct PartPrep> prep;
+    // FBA's floor (FloorSplitOf): its triangles' classes and runs, found at the first draw that needs them; null until then
+    mutable std::shared_ptr<struct FloorSplit> floor;
 };
 // Each submodel's packet BYTES, kept host-side: the game releases the packet's disk-manager memory after ReadModel
 // (resources.cpp DeferRelease), so a save state cannot re-read it from RAM0; the state carries these and the restore
@@ -553,6 +557,29 @@ struct Model {
     std::vector<Part> parts;
     std::vector<PartSource> sources;
 };
+// A part's split: per prepared vertex (the build's index `at`), the class of the triangle it ends -- 1 a floor, 0 one of
+// the others (MeshGeometry::View::classes; kept as long as the part: a posted build reads it as it reads the part's strips)
+// -- and the runs of one class in the build's order: the ranges of the part's native mesh (its triangle list) they are
+struct FloorSplit {
+    std::vector<uint8_t> classes;
+    uint32_t floors = 0, rests = 0;   // the triangles of each class
+    struct Run {
+        uint32_t first, count;   // the native mesh's triangle-list vertices (whole triangles)
+        bool floor;
+    };
+    std::vector<Run> runs;
+};
+// Each triangle a part's build emits, in the build's order (MeshGeometry's StripPass: a restart vertex draws none and
+// restarts the strip), as `f(at)` with `at` the vertex that ends it (the triangle at - 2, at - 1, at)
+template <typename F>
+void ForEachTriangle(const Part& part, F&& f) {
+    const auto& prepared = part.prepared;
+    for (const auto& range : prepared.strips)
+        for (uint32_t i = 2; i < range.count; ++i) {
+            const size_t at = range.first + i;
+            if (!prepared.restart[at]) f(at);
+        }
+}
 // A part's native mesh PREPARED AT ITS LOAD (TE_GFX_MESH_AT_LOAD; the Vita's default): on a worker (the builder pool's
 // background queue), what FlushNativeMeshes and the drawing thread's batch made from the part when it first asked for its
 // mesh -- the triangle list (MeshVertices), its chunks (MakeChunks), its count and box, and the device's prepared form
@@ -605,6 +632,11 @@ void ForgetModel(uint32_t address) {
         if (set[way].key == address) set[way] = ModelSlot{};
 }
 void ForgetModels() { g_modelSlots.fill(ModelSlot{}); }
+
+// FBA's floor (below, after LitColours): a pass that takes it, and the setting
+bool FloorEligible(const ps2e_draw_state& st);
+bool FloorsOn();
+bool FloorPaint();
 
 // A part's material as ReadMaterial reads it and its first shader's draw state as StateOf makes it, cached by the material's
 // address (every draw of every instance read and decoded both: ~370 instructions, three guest pointers and a guard barrier).
@@ -763,7 +795,7 @@ const ps2e_draw_state* CachedMaterial(const Mem& mem, uint32_t address, Material
     slot.view = view;
     slot.verified = te_seam_epoch;   // (the words just read from the bytes)
     slot.shortPart = m->shaderCount <= 1 && !(view.shader && (view.shader->type == 0x10 || view.shader->type == 0x11)) &&
-                     view.bucket <= 255;
+                     view.bucket <= 255 && !(FloorsOn() && FloorEligible(state));   // (FBA's floor: DrawInstance's pass loop)
     slot.shortShader = view.shader;
     slot.shortBucket = uint8_t(view.bucket);
     slot.shortBlend = state.blend != 0;
@@ -879,6 +911,7 @@ std::vector<ps2e_draw_mesh_vertex> MeshVertices(const Part& part, std::vector<ui
     }
     return out;
 }
+
 
 
 
@@ -1074,6 +1107,143 @@ void LitColours(const Part& part, const Lights& lights, std::vector<std::array<u
             o[3] = col[3];
         }
     }
+}
+
+// ---- FBA's floor (video.shadows_on_crates) ------------------------------------------------------------------------------------
+// A material that sets FBA marks every pixel it writes as a non-receiver of the shadows (the frame alpha's top bit the
+// volumes' DATE skips: ps2e_draw.h PS2E_DRAW_HAS_FBA_DATE). Every crate's material sets it, because a shadow volume is a
+// column straight down from the character (shadows.cpp ChunkShadows::Draw: the column's up is the world's, its bottom a
+// fixed reach below the caster), and through a whole crate it darkens the top and a band down every side it passes.
+// Light cast straight down falls on the surfaces it meets first from above: the up-facing ones that nothing covers. So
+// with the setting on, an FBA pass of an upright object draws its FLOOR triangles without FBA (the material's own alpha:
+// receivers, as the scenery's pixels are) and the others with FBA as authored -- in one build, in the triangles' own
+// order, each run of one class a draw of its state (the same pixels as one draw: the order decides the ties of equal
+// depth along the creases). A floor is a triangle whose normal lies within 45 degrees of +y -- the game's own floor
+// (charactersolver.cpp ProbeWall: a contact with |normal.y| under 0.707 is a wall) -- and above whose centre no triangle
+// of its model lies: the ledge of a crate's bottom rail faces up too, but under the crate's top rim, and stays as
+// authored. A skin never takes it: its FBA keeps the character's own volume off it (the column cast from the hips covers
+// his legs and shoes). Exact where it does not apply: the setting off, a pass, part or instance it does not take, draws as
+// before.
+constexpr float kFloorCosine = 0.707f;   // the game's floor bound (charactersolver.cpp Wall = Rounded(0.707))
+// a pass whose FBA the device writes (unblended), drawing colour, no stencil pass, no screen copy
+bool FloorEligible(const ps2e_draw_state& st) {
+    return st.fba && !st.blend && !st.no_colour_write && st.stencil == PS2E_DRAW_STENCIL_OFF &&
+           st.texture != PS2E_DRAW_TEXTURE_FRAME_COPY;
+}
+bool FloorsOn() { return te::display::Current().shadows_on_crates; }
+// TE_GFX_DIAG_FLOORS=paint (diagnosis; the CPU builds): the floors drawn flat magenta, untextured -- which pixels they win
+bool FloorPaint() {
+    static const bool paint = [] {
+        const char* v = std::getenv("TE_GFX_DIAG_FLOORS");
+        return v && std::strcmp(v, "paint") == 0;
+    }();
+    return paint;
+}
+// The instance stands upright: its matrix a rotation times one scale (rows orthogonal and of one length, within the float
+// arithmetic that builds them) whose y axis is the world's -- then its model's +y is the world's up and a model-space
+// normal's angle to it is the world's. A turned, sheared or unevenly scaled instance keeps its FBA whole.
+bool Upright(const Matrix& w) {
+    double r[3][3];
+    for (int k = 0; k < 3; ++k)
+        for (int c = 0; c < 3; ++c) r[k][c] = double(w[size_t(k)][size_t(c)]);
+    auto dot = [&](int a, int b) { return r[a][0] * r[b][0] + r[a][1] * r[b][1] + r[a][2] * r[b][2]; };
+    const double s0 = dot(0, 0), s1 = dot(1, 1), s2 = dot(2, 2), s = (s0 + s1 + s2) / 3.0;
+    if (!(s > 1e-12) || !std::isfinite(s)) return false;
+    const double tol = 1e-3 * s;
+    if (std::fabs(s0 - s) > tol || std::fabs(s1 - s) > tol || std::fabs(s2 - s) > tol || std::fabs(dot(0, 1)) > tol ||
+        std::fabs(dot(0, 2)) > tol || std::fabs(dot(1, 2)) > tol)
+        return false;
+    // the model's y axis (row 1) along the world's +y: its x and z within the same tolerance of 0
+    return r[1][1] > 0.0 && r[1][0] * r[1][0] + r[1][2] * r[1][2] <= tol * tol / s;
+}
+// the up ray from `o` meets triangle (p0, p1, p2) above it (Moller-Trumbore with the direction +y; a triangle the ray runs
+// along does not cover)
+bool CoversFromAbove(const float o[3], const Vector& p0, const Vector& p1, const Vector& p2, float above) {
+    const float e1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]}, e2[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
+    const float h[3] = {e2[2], 0.f, -e2[0]};   // (0, 1, 0) x e2
+    const float a = e1[0] * h[0] + e1[2] * h[2];
+    if (std::fabs(a) < 1e-12f) return false;
+    const float f = 1.f / a, so[3] = {o[0] - p0[0], o[1] - p0[1], o[2] - p0[2]};
+    const float u = f * (so[0] * h[0] + so[2] * h[2]);
+    if (u < 0.f || u > 1.f) return false;
+    const float q[3] = {so[1] * e1[2] - so[2] * e1[1], so[2] * e1[0] - so[0] * e1[2], so[0] * e1[1] - so[1] * e1[0]};
+    const float v = f * q[1];
+    if (v < 0.f || u + v > 1.f) return false;
+    return f * (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) > above;
+}
+// The split of `part` of `model` (made once): a triangle is a floor when its face normal -- turned to the side its
+// vertices' normals face -- is within 45 degrees of +y and the ray up from its centre meets no other triangle of the model
+// (its parts share its space); null when the part has no floor (it draws as authored). TE_GFX_DIAG_FLOORS=1: a line per
+// split made (the model at `address`, its part `index`: the floors, the up-facing triangles its model covers, the others,
+// the runs, the time).
+FloorSplit* FloorSplitOf(const Model& model, const Part& part, uint32_t address, uint32_t index) {
+    if (part.floor) return part.floor->floors ? part.floor.get() : nullptr;
+    const auto started = std::chrono::steady_clock::now();
+    auto split = std::make_shared<FloorSplit>();
+    const auto& prepared = part.prepared;
+    split->classes.assign(prepared.vertex_count, 0);
+    // the normals in the build's vertex order (per strip as decoded; a strip without them has none)
+    std::vector<const std::array<float, 3>*> normal(prepared.vertex_count, nullptr);
+    for (size_t si = 0; si < prepared.strips.size() && si < part.normals.size(); ++si) {
+        const auto& range = prepared.strips[si];
+        if (part.normals[si].size() != range.count) continue;
+        for (uint32_t i = 0; i < range.count; ++i) normal[range.first + i] = &part.normals[si][i];
+    }
+    // the model's extent: the ray's start above a triangle's own plane (a millionth of it)
+    float lo = 1e30f, hi = -1e30f;
+    for (const Part& p : model.parts)
+        for (const auto& v : p.prepared.positions) {
+            lo = std::min({lo, v[0], v[1], v[2]});
+            hi = std::max({hi, v[0], v[1], v[2]});
+        }
+    const float above = hi > lo ? (hi - lo) * 1e-6f : 1e-6f;
+    uint32_t covered = 0, vertex = 0;
+    ForEachTriangle(part, [&](size_t at) {
+        const Vector& p0 = prepared.positions[at - 2];
+        const Vector& p1 = prepared.positions[at - 1];
+        const Vector& p2 = prepared.positions[at];
+        const float e1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]}, e2[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
+        float n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+        const float len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        float side = 0.f;
+        for (size_t k = at - 2; k <= at; ++k)
+            if (normal[k]) side += n[0] * (*normal[k])[0] + n[1] * (*normal[k])[1] + n[2] * (*normal[k])[2];
+        if (side < 0.f) for (float& c : n) c = -c;
+        bool floor = len > 0.f && side != 0.f && n[1] >= kFloorCosine * len;
+        if (floor) {
+            const float o[3] = {(p0[0] + p1[0] + p2[0]) / 3.f, (p0[1] + p1[1] + p2[1]) / 3.f, (p0[2] + p1[2] + p2[2]) / 3.f};
+            for (const Part& other : model.parts) {
+                if (!floor) break;
+                const auto& op = other.prepared;
+                ForEachTriangle(other, [&](size_t t) {
+                    if (!floor || (&other == &part && t == at)) return;
+                    const Vector& q0 = op.positions[t - 2];
+                    const Vector& q1 = op.positions[t - 1];
+                    const Vector& q2 = op.positions[t];
+                    // (a triangle wholly beside or below the ray first)
+                    if (std::max({q0[1], q1[1], q2[1]}) <= o[1] || std::min({q0[0], q1[0], q2[0]}) > o[0] ||
+                        std::max({q0[0], q1[0], q2[0]}) < o[0] || std::min({q0[2], q1[2], q2[2]}) > o[2] ||
+                        std::max({q0[2], q1[2], q2[2]}) < o[2])
+                        return;
+                    if (CoversFromAbove(o, q0, q1, q2, above)) floor = false;
+                });
+            }
+            if (!floor) covered++;
+        }
+        split->classes[at] = floor ? 1 : 0;
+        (floor ? split->floors : split->rests)++;
+        // the runs over the native mesh's triangle list (MeshVertices: these triangles, three vertices each, in this order)
+        if (split->runs.empty() || split->runs.back().floor != floor) split->runs.push_back(FloorSplit::Run{vertex, 0, floor});
+        split->runs.back().count += 3;
+        vertex += 3;
+    });
+    static const bool diag = std::getenv("TE_GFX_DIAG_FLOORS") != nullptr;
+    if (diag)
+        std::fprintf(stderr, "[te.gfx.floors] model %#x part %u: %u floors, %u up-facing under its own model, %u others, %zu runs "
+                             "(%.3f ms)\n", address, index, split->floors, covered, split->rests - covered, split->runs.size(),
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    part.floor = std::move(split);
+    return part.floor->floors ? part.floor.get() : nullptr;
 }
 
 #if defined(__vita__)
@@ -1598,6 +1768,7 @@ struct Emitter {
         textured = state.texture != 0;
         screenCopy = false;
         copyPending = false;
+        paintFloors = false;
     }
     void BeginScreenCopy(uint32_t b, const ps2e_draw_state& st, std::array<float, 2> scroll) {
         Begin(b, st);
@@ -1628,6 +1799,7 @@ struct Emitter {
                              unsigned(bucket), unsigned(state.texture), unsigned(i), o.x, o.y, o.z, o.u, o.v, o.q, unsigned(o.r), unsigned(o.g),
                              unsigned(o.b), unsigned(o.a), int(state.depth_test), int(state.depth_write), int(state.blend));
             if (g_diag.Marked(bucket)) { o.r = 0xFF; o.g = 0x00; o.b = 0xFF; o.a = 0x80; }
+            if (paintFloors) { o.r = 0xFF; o.g = 0x00; o.b = 0xFF; }
             if (g_diag.flat && flatTint >= 0) {
                 o.r = flatTint == 0 ? 0xC0 : 0x20;
                 o.g = flatTint == 1 ? 0xC0 : 0x20;
@@ -1641,6 +1813,17 @@ struct Emitter {
     static void Sink(void* user, const ps2r::gs::VertexRec* verts, size_t count, bool fan) {
         (void)fan;
         static_cast<Emitter*>(user)->Append(verts, count);
+    }
+    // FBA's floor (MeshGeometry::View::classed): the triangles that follow drawn under classState[c] (1 the floors, 0 the
+    // others: set by the caller with the pass's state); a change of state opens a new draw (OpenDraw). TE_GFX_DIAG_FLOORS=
+    // paint (diagnosis): the floors flat magenta, untextured -- the pixels they win
+    ps2e_draw_state classState[2]{};
+    bool paintFloors = false;
+    static void Classed(void* user, uint8_t c) {
+        auto* e = static_cast<Emitter*>(user);
+        e->state = e->classState[c & 1];
+        e->textured = e->state.texture != 0;
+        e->paintFloors = (c & 1) && FloorPaint();
     }
     // One build of a prepared submodel under this emitter's state; the triangles recorded are returned
     size_t Build(const Part& part, const Geometry::View& view, const std::array<uint8_t, 4>* colours, Geometry::Result* result) {
@@ -1658,19 +1841,30 @@ struct Collector {
     te::gfx::DeferredBuild* out = nullptr;
     bool textured = false;
     size_t triangles = 0;
+    // FBA's floor (MeshGeometry::View::classed): each segment's class in the build's `alternate` (1: the floors, drawn
+    // under its alt_state)
+    bool classed = false;
+    uint8_t current = 0;
     void Append(const ps2r::gs::VertexRec* verts, size_t count) {
         count = count / 3 * 3;
         if (!count) return;
         const size_t base = out->verts.size();
         out->verts.resize(base + count);
         for (size_t i = 0; i < count; ++i) out->verts[base + i] = DrawVertex(verts[i], textured);
+        if (classed && current && FloorPaint())   // TE_GFX_DIAG_FLOORS=paint: the floors flat magenta (Emitter::Classed)
+            for (size_t i = 0; i < count; ++i) {
+                ps2e_draw_vertex& o = out->verts[base + i];
+                o.r = 0xFF; o.g = 0x00; o.b = 0xFF;
+            }
         out->segments.push_back(uint32_t(count));
+        if (classed) out->alternate.push_back(current);
         triangles += count / 3;
     }
     static void Sink(void* user, const ps2r::gs::VertexRec* verts, size_t count, bool fan) {
         (void)fan;
         static_cast<Collector*>(user)->Append(verts, count);
     }
+    static void Classed(void* user, uint8_t c) { static_cast<Collector*>(user)->current = c & 1; }
     // a native mesh range in this place (the Vita's chunked builds: ExpandBucket draws it as a mesh draw)
     void AppendMesh(uint32_t mesh, const ps2e_draw_mesh_params& mp) {
         out->segments.push_back(0u);
@@ -1929,6 +2123,8 @@ struct InstanceState {
     uint32_t overrideBucket = 0;
     const Lights* lights = nullptr;
     std::optional<Vector> eye;                        // the camera in the model's space (the env-map passes' half vector)
+    const Matrix* world = nullptr;                    // the instance's matrix to the world when the caller has it (FBA's
+                                                      // floor: is it upright; else made from the screen matrix)
 };
 // the screen-copy pass's mesh -- the part's strips with the STQ replaced by the clip-space normal's x / y (the
 // normal through the clip matrix's three rows, as the crystal program's StMtx) times the shader's cornerValue, q = 1;
@@ -2041,6 +2237,7 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
     // (the parts the loop draws: the model's part list does not change within the loop -- its size was a division by the
     // part's size, a multiply-by-reciprocal sequence, on every iteration)
     const uint32_t partCount = std::min<uint32_t>(count, uint32_t(entry.parts.size()));
+    int upright = -1;   // FBA's floor: whether the instance stands upright (asked at its first pass that may take it)
 #if defined(__vita__)
     // the instance's parts may take the short path below: compact records (the fast arm, no override state), an unclipped
     // instance (the native mesh drawn whole), no diagnosis that the pass loop tests per pass (these do not change within
@@ -2095,7 +2292,8 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
         const te_gfx_shader* shader = material.shader;
         if (fastParts && passes == 1 && firstPool && material.material && part.native &&
             !(inst.lights && shader && (shader->type == 0x02 || shader->type == 0x10 || shader->type == 0x16)) &&
-            !(shader && ScreenCopyType(shader->type)) && te::gfx::NativeMeshes()) {
+            !(shader && ScreenCopyType(shader->type)) && !(firstState->fba && FloorsOn() && FloorEligible(*firstState)) &&
+            te::gfx::NativeMeshes()) {
             std::array<float, 2> scroll{0.f, 0.f};
             if (shader && FiniteBits(shader->scroll, 2)) scroll = {shader->scroll[0], shader->scroll[1]};
             const ps2e_draw_state& state = *firstState;
@@ -2187,6 +2385,33 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
             const ps2e_draw_state& state = *sp;
             // diagnosis: TE_GFX_DIAG_SKIP_BUCKET=6,8 leaves those buckets' model draws out (which layer of a composite is which)
             if (!opts.skipBuckets.empty() && opts.skipBuckets.find("," + std::to_string(bucket) + ",") != std::string::npos) continue;
+            // FBA's floor (FloorSplitOf): an unblended FBA pass of an upright instance whose part has floors draws them with
+            // `floorState` (FBA off), each run of one class in the triangles' order a draw of its state
+            const FloorSplit* split = nullptr;
+            ps2e_draw_state floorState;
+            if (state.fba && !inst.overrideState && FloorsOn() && FloorEligible(state)) {
+                if (upright < 0) {
+                    if (inst.world) upright = Upright(*inst.world) ? 1 : 0;
+                    else if (const auto w = WorldOfScreen(view.screen)) upright = Upright(*w) ? 1 : 0;
+                    else upright = 0;
+                    static const bool diag = std::getenv("TE_GFX_DIAG_FLOORS") != nullptr;
+                    if (diag && !upright) {
+                        static std::unordered_set<uint32_t> said;
+                        const Matrix* w = inst.world;
+                        std::optional<Matrix> made;
+                        if (!w && (made = WorldOfScreen(view.screen))) w = &*made;
+                        if (said.insert(rigid->model).second && w)
+                            std::fprintf(stderr, "[te.gfx.floors] model %#x: an instance not upright (its FBA whole): rows (%.4f %.4f %.4f) "
+                                         "(%.4f %.4f %.4f) (%.4f %.4f %.4f)\n", rigid->model, (*w)[0][0], (*w)[0][1], (*w)[0][2],
+                                         (*w)[1][0], (*w)[1][1], (*w)[1][2], (*w)[2][0], (*w)[2][1], (*w)[2][2]);
+                    }
+                }
+                if (upright) split = FloorSplitOf(entry, part, rigid->model, i);
+                if (split) {
+                    floorState = state;
+                    floorState.fba = 0;
+                }
+            }
             // an unclipped instance's plain pass (or a clipped one wholly in front: NativeInFront): the part's native mesh
             // through the screen matrix, nothing built here (the first picture that draws a part asks for its mesh and
             // builds on the CPU meanwhile). The blended passes with a UV scroll -- the sea, the hub's additive light shafts,
@@ -2213,53 +2438,59 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
                     // origin, the scroll, the lights when lit -- an unlit draw's light rows are never read --, the box, the
                     // whole mesh), no zeroed stack struct copied into it. The Vita: a COMPACT record when the state is the
                     // first shader's pooled one (te::gfx::RecordMeshCompact): the header and these parameters only; the
-                    // drawing thread copies the state, the box and the whole-mesh range in when it expands the bucket
-                    const uint32_t pool = sp == firstState ? firstPool : 0;
-                    if (compact && !pool) te::gfx::NoteWholeMeshRecord();
-                    ps2e_draw_mesh_params& mp = pool ? te::gfx::RecordMeshCompact(bucket, pool, state, part.native)
-                                                     : te::gfx::RecordMeshInPlace(bucket, state, part.native);
+                    // drawing thread copies the state, the box and the whole-mesh range in when it expands the bucket.
+                    // FBA's floor: a record per run, its range of the mesh under its class's state (never compact)
+                    const size_t records = split ? split->runs.size() : 1;
+                    for (size_t k = 0; k < records; ++k) {
+                        const FloorSplit::Run* run = split ? &split->runs[k] : nullptr;
+                        const ps2e_draw_state& rs = run && run->floor ? floorState : state;
+                        const uint32_t pool = sp == firstState && !split ? firstPool : 0;
+                        if (compact && !pool) te::gfx::NoteWholeMeshRecord();
+                        ps2e_draw_mesh_params& mp = pool ? te::gfx::RecordMeshCompact(bucket, pool, rs, part.native)
+                                                         : te::gfx::RecordMeshInPlace(bucket, rs, part.native);
 #if defined(__vita__)
-                    // (the 16 floats' bits as four NEON quadword loads and stores: the copy was a ~44-instruction loop a part)
-                    if (lean) {
-                        const uint32_t* from = reinterpret_cast<const uint32_t*>(view.screen.data());
-                        uint32_t* to = reinterpret_cast<uint32_t*>(mp.screen);
-                        vst1q_u32(to, vld1q_u32(from));
-                        vst1q_u32(to + 4, vld1q_u32(from + 4));
-                        vst1q_u32(to + 8, vld1q_u32(from + 8));
-                        vst1q_u32(to + 12, vld1q_u32(from + 12));
-                    } else {
-                        std::memcpy(mp.screen, view.screen.data(), sizeof mp.screen);
-                    }
+                        // (the 16 floats' bits as four NEON quadword loads and stores: the copy was a ~44-instruction loop a part)
+                        if (lean) {
+                            const uint32_t* from = reinterpret_cast<const uint32_t*>(view.screen.data());
+                            uint32_t* to = reinterpret_cast<uint32_t*>(mp.screen);
+                            vst1q_u32(to, vld1q_u32(from));
+                            vst1q_u32(to + 4, vld1q_u32(from + 4));
+                            vst1q_u32(to + 8, vld1q_u32(from + 8));
+                            vst1q_u32(to + 12, vld1q_u32(from + 12));
+                        } else {
+                            std::memcpy(mp.screen, view.screen.data(), sizeof mp.screen);
+                        }
 #else
-                    std::memcpy(mp.screen, view.screen.data(), sizeof mp.screen);   // (std::array rows: 16 floats, row-major)
+                        std::memcpy(mp.screen, view.screen.data(), sizeof mp.screen);   // (std::array rows: 16 floats, row-major)
 #endif
-                    mp.offset[0] = originX;
-                    mp.offset[1] = originY;
-                    mp.scroll[0] = subScroll[0];
-                    mp.scroll[1] = subScroll[1];
-                    if (!pool || compactCheck) {
-                        // the screen box: the whole frame. Its one reader is the device's destination copy (the rectangle a
-                        // blend reading the destination copies), which no ps2e_draw state takes (its textures are decoded
-                        // ones, FBA only unblended, colour clamp on, a 32-bit frame) -- the eight corners through the
-                        // matrix per part were game-thread time spent on nothing
-                        mp.box[0] = mp.box[1] = -1e9f;
-                        mp.box[2] = mp.box[3] = 1e9f;
-                        mp.first = 0;
-                        mp.count = 0;
+                        mp.offset[0] = originX;
+                        mp.offset[1] = originY;
+                        mp.scroll[0] = subScroll[0];
+                        mp.scroll[1] = subScroll[1];
+                        if (!pool || compactCheck) {
+                            // the screen box: the whole frame. Its one reader is the device's destination copy (the rectangle a
+                            // blend reading the destination copies), which no ps2e_draw state takes (its textures are decoded
+                            // ones, FBA only unblended, colour clamp on, a 32-bit frame) -- the eight corners through the
+                            // matrix per part were game-thread time spent on nothing
+                            mp.box[0] = mp.box[1] = -1e9f;
+                            mp.box[2] = mp.box[3] = 1e9f;
+                            mp.first = run ? int(run->first) : 0;
+                            mp.count = run ? int(run->count) : 0;
+                        }
+                        if (lit) {
+                            mp.lit = 1;
+                            const Lights& L = *inst.lights;
+                            for (int l = 0; l < 3; ++l)
+                                for (int k = 0; k < 3; ++k) {
+                                    mp.light_dir[l][k] = L.directions[size_t(l)][size_t(k)];
+                                    mp.light_colour[l][k] = L.colours[size_t(l)][size_t(k)];
+                                }
+                            for (int k = 0; k < 3; ++k) mp.ambient[k] = L.ambient[size_t(k)];
+                        } else {
+                            mp.lit = 0;
+                        }
+                        g_seams.nativeDraws++;
                     }
-                    if (lit) {
-                        mp.lit = 1;
-                        const Lights& L = *inst.lights;
-                        for (int l = 0; l < 3; ++l)
-                            for (int k = 0; k < 3; ++k) {
-                                mp.light_dir[l][k] = L.directions[size_t(l)][size_t(k)];
-                                mp.light_colour[l][k] = L.colours[size_t(l)][size_t(k)];
-                            }
-                        for (int k = 0; k < 3; ++k) mp.ambient[k] = L.ambient[size_t(k)];
-                    } else {
-                        mp.lit = 0;
-                    }
-                    g_seams.nativeDraws++;
                     if (pass) scene.material_passes++;
                     continue;
                 }
@@ -2268,12 +2499,16 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
             sub.scroll = subScroll;
             // a plain build runs on a worker (the placeholder takes its place in the bucket), its lighting with it
             const bool deferred = !screenCopy && Deferrable(logging);
+            if (split) {   // FBA's floor: the build hands its runs over, each to its class's state (Emitter / Collector)
+                sub.classes = split->classes.data();
+                sub.classed = deferred ? &Collector::Classed : &Emitter::Classed;
+            }
             // the Vita: a clipped part not wholly in front -- its native mesh's chunks sorted by the build (ChunkedBuild);
             // the mesh is asked for at the part's first such draw (the CPU builds the whole part meanwhile)
             uint32_t chunkNative = 0;
             bool chunkChunked = false;
 #if defined(__vita__)
-            if (deferred && view.clipped && !envMap && !logging && !g_diag.flat && !scrolledBlendCpu && te::gfx::NativeMeshes() &&
+            if (deferred && view.clipped && !split && !envMap && !logging && !g_diag.flat && !scrolledBlendCpu && te::gfx::NativeMeshes() &&
                 g_chunkedNative.load(std::memory_order_relaxed)) {
                 if (part.meshState == 0) {
                     part.meshState = 1;
@@ -2297,10 +2532,20 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
                 emitter.Begin(bucket, state);
             }
             emitter.flatTint = inst.overrideState ? 2 : view.clipped ? 1 : 0;
+            if (split) {   // FBA's floor: the floors' state is the pass's (as Begin made it) without FBA
+                emitter.classState[0] = emitter.classState[1] = emitter.state;
+                emitter.classState[1].fba = 0;
+                if (FloorPaint()) emitter.classState[1].texture = 0;
+            }
             DiagBox box;
             emitter.box = logging ? &box : nullptr;
             if (deferred) {
                 te::gfx::DeferredBuild& build = te::gfx::ReserveDeferred(bucket, emitter.state);
+                if (split) {   // FBA's floor: the floors' segments under the alternate state
+                    build.alt_state = emitter.state;
+                    build.alt_state.fba = 0;
+                    if (FloorPaint()) build.alt_state.texture = 0;
+                }
                 std::optional<Lights> lights;
                 if (lit) lights = *inst.lights;
                 // an env-map pass: its reflection STQ prepared on the worker too, into the worker's own scratch
@@ -2333,6 +2578,7 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
                         LitColours(*mesh, *lights, litScratch);
                     }
                     Collector collector{&build, textured};
+                    collector.classed = sub.classes != nullptr;
                     static const unsigned short profClipped = te::prof::Register("rigid MeshBuild (clipped)"), profPlain = te::prof::Register("rigid MeshBuild");
                     te::prof::Scope profScope(sub.clipped ? profClipped : profPlain);
                     const Geometry::Result r = te::gfx::MeshBuild(envEye ? envScratch.prepared : mesh->prepared, sub, state,
@@ -2370,7 +2616,7 @@ void DrawInstance(const te_gfx_rigid_model* rigid, const Geometry::View& view, c
                              state.blend_a, state.blend_b, state.blend_c, state.blend_d, state.blend_fix, state.alpha_test, state.alpha_method, state.alpha_reference,
                              state.alpha_fail, state.depth_test, state.depth_write, triangles, box.x0, box.y0, box.x1, box.y1,
                              box.n ? box.r / box.n : 0.0, box.n ? box.g / box.n : 0.0, box.n ? box.b / box.n : 0.0, box.n ? box.a / box.n : 0.0, box.n,
-                             scroll[0], scroll[1], screenCopy ? " SCREEN-COPY" : envMap ? " ENV-MAP" : "");
+                             scroll[0], scroll[1], screenCopy ? " SCREEN-COPY" : envMap ? " ENV-MAP" : split ? " FLOORS" : "");
                 if (pass == 0) {
                     // the submodel's streams and the material's shaders (the first is the draw's state)
                     const bool normals = !part.normals.empty() && !part.normals[0].empty(), colours8 = !part.colours.empty() && !part.colours[0].empty();
@@ -3375,6 +3621,7 @@ void ps2e_graphics_draw_rigid_model(ps2e_u32 model, ps2e_u32 matrix, ps2e_u32 li
     }
     InstanceState inst;
     inst.lights = haveLights ? &l : nullptr;
+    inst.world = &*world;
     if (rigid->needsEye) inst.eye = EyeIn(*world, view->toCamera);   // the env-map passes
     // the interpolator's identity: this model at this instance's matrix (a stable address while the instance lives)
     if (te::gfx::Interpolating())

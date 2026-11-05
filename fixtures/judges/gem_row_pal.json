@@ -1,0 +1,37 @@
+{
+  "padlog": "fixtures/padlogs/gem_row.padlog",
+  "disc": "PAL SLES-52568; deterministic headless: --config none --deterministic --no-sdl-input --no-audio --skip-movies --trace-state, an empty --mc-dir; TE_TEST_ACTIONS = the pad log's test line; TE_GFX_DUMP_EVERY=320 within 2560..2880 and TE_GFX_DUMP_AT=6060",
+  "stop_at": 6240,
+  "run_seconds": 600,
+  "test": "teleport -28.0349 8.1700 -7.8000@2847;teleport 0.2349 0.0460 -40.2560@2937;teleport -24.6000 1.6000 -4.8000@3187;teleport -24.1000 1.6000 -14.3000@3624;teleport -17.2999 1.6000 -5.0999@4061;teleport -20.5000 1.6000 -3.2999@4498;teleport -20.2000 1.6000 -13.6999@4935",
+  "dump_every": 320,
+  "dump_from": 2560,
+  "dump_to": 2880,
+  "dump_at": 6060,
+  "pictures": {
+    "before": 2560,
+    "after": 2880,
+    "continued": 6060
+  },
+  "require_state": "Paused",
+  "game_over_state": 18,
+  "frame": [
+    512,
+    512
+  ],
+  "slots": [
+    [362, 54, 393, 87],
+    [410, 102, 441, 134],
+    [439, 159, 471, 192],
+    [445, 223, 477, 256],
+    [428, 284, 459, 317],
+    [389, 334, 420, 368]
+  ],
+  "red_slot": 2,
+  "lit_red_min": 0.15,
+  "lit_grey_max": 0.08,
+  "empty_grey_min": 0.12,
+  "empty_red_max": 0.02,
+  "why": "The pause screen's gem row is the current level's gems read from the live progress every frame (OLEG::UpdateHud, game/src/game/oleg.cpp:1850-1853 and 1902-1907, the same GameController::progress AddGemCommand marks): picture 2560 (paused before any gem) shows six empty slots, picture 2880 (paused after the beach's red gem, no save point passed) the red gem lit in the second slot of the arc and the others empty. The game keeps a gem for good only from the next save point on: CONTINUE on the GAME OVER page restarts from the save's snapshot (RestartItem EntrySaved, olegpages.cpp:567-572 -> SaveController::Restore(1)), so picture 6060 (paused after five deaths, the GAME OVER and CONTINUE) shows six empty slots again -- the retail game's own rule (its executable takes the snapshot only at the save points). A slot is lit when at least lit_red_min of its box is the red gem's colour (red - green > 60, red > 120) and at most lit_grey_max the empty slot's grey; empty when at least empty_grey_min is grey and at most empty_red_max red",
+  "frozen": "2026-11-03 on fixes 7276bc0 (no game change): before -- every slot red 0.00, grey 0.19-0.23; after -- slot 2 red 0.26, grey 0.03, the others as before; continued -- every slot red 0.00, grey 0.19-0.23; GameOver (18) at boundary 5081"
+}

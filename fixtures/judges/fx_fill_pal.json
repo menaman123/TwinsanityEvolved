@@ -1,0 +1,61 @@
+{
+  "name": "fx_fill_pal",
+  "disc": "PAL SLES-52568 (deterministic, headless: a ps2r.ini with video.scale = 4 only, --deterministic --no-sdl-input --no-audio --skip-movies --trace-state; TE_GFX_GPU_TIMERS=breaks, TE_GFX_SUMMARY_EVERY=60; the hub card from hub_entry.padlog to 2700, warped by tools/warp_save.py --place 0xFFFF where a leg names a chunk)",
+  "scale": 4,
+  "summary_every": 60,
+  "run_seconds": 900,
+  "legs": {
+    "tenth_dimension": {
+      "what": "the 10th dimension's sky of 51 layers (its red haze among them) waits for the opaque scene",
+      "padlog": "fixtures/padlogs/entries/altearth_lab_labext.padlog",
+      "chunk": "levels\\altearth\\lab\\labext",
+      "stop_at": 4200,
+      "min_windows": 20,
+      "sky_moved_min_share": 0.95,
+      "sky_layers_min": 48,
+      "sky_passed_max": 9.0,
+      "fast_program": true
+    },
+    "academy_mist": {
+      "what": "the Academy courtyard's mist sheets (bucket 9) from the start of the hub",
+      "padlog": "fixtures/padlogs/entries/school_sch_hub_sch_hub.padlog",
+      "chunk": "levels\\school\\sch_hub\\sch_hub",
+      "stop_at": 4200,
+      "min_windows": 15,
+      "blended_passed_min": 3.7,
+      "blended_passed_max": 4.5,
+      "fast_program": true
+    },
+    "beach_waterfall": {
+      "what": "N. Sanity Beach's waterfall: two additive scrolling layers (bucket 11), no screen copy",
+      "padlog": "fixtures/padlogs/beach_waterfall.padlog",
+      "stop_at": 3800,
+      "min_windows": 8,
+      "blended_passed_min": 2.7,
+      "blended_passed_max": 3.3,
+      "copies_taken_max": 0.0,
+      "fast_program": true
+    },
+    "jungle_sea": {
+      "what": "Jungle Bungle's sea at the cliff: 14 additive sheets in pairs (bucket 11), the largest blended fill found",
+      "padlog": "fixtures/padlogs/jungle_bungle_walk.padlog",
+      "card": "empty",
+      "stop_at": 15800,
+      "min_windows": 150,
+      "blended_passed_min": 14.3,
+      "blended_passed_max": 17.5,
+      "fast_program": true
+    },
+    "iceberg_cave": {
+      "what": "Ice Climb's iceberg cave orbit: the ice pieces' refraction copies (the most copies of any leg)",
+      "padlog": "fixtures/padlogs/iceclimb_bergint_orbit.padlog",
+      "chunk": "levels\\ice\\iceclimb\\bergint",
+      "stop_at": 3700,
+      "min_windows": 10,
+      "copies_taken_max": 8.8,
+      "fast_program": true
+    }
+  },
+  "why": "The player's drops at 4x come where see-through layers pile up: the 10th dimension's haze (in its sky of 48-62 layers, drawn first and whole -- 17.5 Mpx a 4x frame -- because a sky could have at most 32 layers and still wait for the scene), the Academy's mist sheets, Jungle Bungle's sea sheets, the beach's waterfall; and every desktop draw ran the full PS2 fragment program, 2.4 times the fast one's cost per pixel. The judge counts what the GPU shades (GL_SAMPLES_PASSED per phase: the same for the same frames on any machine), never a time: the 10th dimension's sky waits for the scene and passes at most 9 Mpx a frame, every draw takes the fast program, the fog sheets' and the waterfall's blended fill stays within 10 % of its frozen value (the effects drawn, nothing drawn twice), the waterfall takes no screen copy and the iceberg cave's copies stay coalesced.",
+  "frozen": "2026-11-04: RED on f001055 (the base: the 10th dimension's sky 0 of its frames moved, 17.5 Mpx passed; no draw on the fast program), GREEN on fx-fog-water (the sky 1680 of 1680 frames moved with 51 layers, 6.51 Mpx; every draw fast; Academy 4.08, beach waterfall 3.01, jungle sea 15.88 Mpx blended in the worst window; 0 copies at the waterfall, 7.96 in the iceberg cave's worst window). Measured on this Mac (Apple M4); the counts are the GPU's, not its time."
+}

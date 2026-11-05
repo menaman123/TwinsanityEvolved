@@ -442,6 +442,21 @@ int ps2e_draw_copy_frame_region(ps2e_draw* device, const float box[4]);
 #define PS2E_DRAW_HAS_EXPECT_COPIES 1
 void ps2e_draw_expect_frame_copies(ps2e_draw* device, int copies);
 
+/* (TwinsanityEvolved) THE PARTICLES AT THE TITLE'S RESOLUTION (the desktop; TE_GFX_PARTICLE_SCALE=title). Between _begin
+ * and _end the vertex draws go into an off-screen target of the frame's logical size (the PS2's pixels) instead of the
+ * frame target: _begin takes the frame's depth down into it (one sample per pixel, a nearest blit) and clears its colour
+ * to 0; _end adds its colour to the frame target over the whole frame through a bilinear sampler, the frame's alpha
+ * kept. For a run of draws that only ADD to the frame's colour, (Cs - 0) * As|FIX + Cd: such draws sum to the same value
+ * in any order and the sum adds to the frame once. Their depth test is against the frame's depth at one sample per
+ * title pixel -- the picture's departure, besides the title's resolution: where an edge of the scene crosses a title
+ * pixel the whole pixel passes or fails. _begin returns 0 when not taken (scale 1, the Vita, no target): the draws then
+ * go to the frame as before. A stencil draw, a mesh, a copy, the casters' marks, a frame's start and the present close
+ * an open pass first. _census: the passes and the draws drawn in them since the last call. */
+#define PS2E_DRAW_HAS_PARTICLE_PASS 1
+int ps2e_draw_particle_pass_begin(ps2e_draw* device);
+void ps2e_draw_particle_pass_end(ps2e_draw* device);
+void ps2e_draw_particle_pass_census(ps2e_draw* device, uint64_t* passes, uint64_t* draws);
+
 /* Scans the frame target out to the window (letterboxed to the window's size) and swaps. */
 void ps2e_draw_present(ps2e_draw* device);
 uint64_t ps2e_draw_frames_presented(const ps2e_draw* device);
@@ -477,7 +492,8 @@ typedef enum ps2e_draw_aspect {
     PS2E_DRAW_ASPECT_16_9 = 2,
     PS2E_DRAW_ASPECT_16_10 = 3,
     PS2E_DRAW_ASPECT_21_9 = 4,
-    PS2E_DRAW_ASPECT_WINDOW = 5  /* the window's shape (stretch) */
+    PS2E_DRAW_ASPECT_WINDOW = 5, /* the window's shape (stretch) */
+    PS2E_DRAW_ASPECT_32_9 = 6
 } ps2e_draw_aspect;
 typedef enum ps2e_draw_fit { PS2E_DRAW_FIT_LETTERBOX = 0, PS2E_DRAW_FIT_FILL = 1, PS2E_DRAW_FIT_INTEGER = 2 } ps2e_draw_fit;
 typedef enum ps2e_draw_window_mode { PS2E_DRAW_WINDOWED = 0, PS2E_DRAW_FULLSCREEN = 1, PS2E_DRAW_BORDERLESS = 2 } ps2e_draw_window_mode;
@@ -514,9 +530,10 @@ int ps2e_draw_write_ppm(ps2e_draw* device, const char* path);
  * end it, a tile store + load of the whole frame), 2 = every phase, 3 = the render-pass ends only. The producer names the
  * phase of its next draws (ps2e_draw_gpu_phase); the device marks its own: the frame's clear, the shadow volumes'
  * counting and the composite with its caster marks, the screen copies, the present. ps2e_draw_gpu_timer_lines writes the
- * census window's lines -- "[te.gfx] gpu phases per frame ...", "[te.gfx] gpu fill per frame ...", "[te.gfx] gl cpu per
- * frame ..." (the drawing thread's time per phase) -- and starts the next window (0 written when off or nothing was
- * read). A device without timer queries (the Vita) stays off. The drawing thread's calls. */
+ * census window's lines -- "[te.gfx] gpu phases per frame ...", "[te.gfx] gpu worst frame of the window ..." (the one
+ * frame with the most GPU time: its segments and the fragments its phases passed), "[te.gfx] gpu fill per frame ...",
+ * "[te.gfx] gl cpu per frame ..." (the drawing thread's time per phase) -- and starts the next window (0 written when off
+ * or nothing was read). A device without timer queries (the Vita) stays off. The drawing thread's calls. */
 #define PS2E_DRAW_HAS_GPU_TIMERS 1
 enum ps2e_draw_phase { PS2E_DRAW_PHASE_CLEAR = 0, PS2E_DRAW_PHASE_SKY = 1, PS2E_DRAW_PHASE_SCENE = 2, PS2E_DRAW_PHASE_BLENDED = 3,
                        PS2E_DRAW_PHASE_VOLUMES = 4, PS2E_DRAW_PHASE_COMPOSITE = 5, PS2E_DRAW_PHASE_COPIES = 6,

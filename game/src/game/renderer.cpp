@@ -21,12 +21,32 @@ namespace
 {
 // A width over 4:3's
 constexpr f32 InverseNarrowAspect = 0.75f;
+// The frame's middle across, in fractions of its width
+constexpr f32 ScreenMiddle = 0.5f;
 
-// What the TV's shape squeezes horizontal places and sizes by
-f32 ScreenSqueeze()
+// TwinsanityEvolved: the platform's widescreen shape where it is not a 16:9 TV's (0 otherwise), asked with the option on
+f32 OtherWideAspect()
 {
+    return g_WidescreenTv != 0 ? Platform::Graphics::WidescreenAspect() : 0.0f;
+}
+
+// What the TV's shape squeezes horizontal places and sizes by. The game's own two shapes take the products the compiler makes
+// when the game is built, as the retail code always has (made as the game runs, under the EE's rounding toward zero, 16:9's
+// would come out one bit smaller); another wide shape, `other`, is multiplied as the game runs
+f32 SqueezeFor(f32 other)
+{
+    if (other > 0.0f)
+    {
+        return other * InverseNarrowAspect;
+    }
+
     f32 aspect = g_WidescreenTv != 0 ? WideAspect : NarrowAspect;
     return aspect * InverseNarrowAspect;
+}
+
+f32 ScreenSqueeze()
+{
+    return SqueezeFor(OtherWideAspect());
 }
 
 void ToPixels(Vector2* value)
@@ -65,6 +85,17 @@ void ForEachRenderer(GameRendererController* controller, Visit visit)
         visit(*walk.Current());
     }
 }
+}
+
+f32 TvAspect()
+{
+    f32 other = OtherWideAspect();
+    if (other > 0.0f)
+    {
+        return other;
+    }
+
+    return g_WidescreenTv != 0 ? WideAspect : NarrowAspect;
 }
 
 extern "C"
@@ -429,7 +460,7 @@ void RenderTargetDescription::Destroy(u32 flags)
 
 extern "C" void SetRendererView(Renderer* renderer, RenderView* view)
 {
-    view->Update(g_WidescreenTv != 0 ? WideAspect : NarrowAspect);
+    view->Update(TvAspect());
     renderer->view = view;
 }
 
@@ -488,8 +519,17 @@ extern "C" void SetUpFrame(RenderTargetDescription* target, u32 clearColor, u32 
 
 extern "C" void FitPlaceToScreen(u32 inPixels, const Vector2* anchor, Vector2* place)
 {
+    f32 other = OtherWideAspect();
     f32 centre = anchor->x;
-    place->x = (place->x - centre) / ScreenSqueeze() + centre;
+    f32 at = centre;
+    if (other > WideAspect)
+    {
+        // TwinsanityEvolved: on a picture wider than 16:9 the anchor goes where a 16:9 TV's picture has it, in the middle of
+        // the frame (16:9's share of the width), so the menus and the HUD keep the 16:9 layout and none sits at the far edges
+        at = ScreenMiddle + (centre - ScreenMiddle) * (WideAspect / other);
+    }
+
+    place->x = (place->x - centre) / SqueezeFor(other) + at;
     if (inPixels != 0)
     {
         ToPixels(place);
@@ -537,7 +577,7 @@ extern "C" void DrawRendererScene(Renderer* renderer)
             InitIdentityMatrix(&identity);
             ClearLightingUnused();
             s32 fov = lens->fov;
-            f32 aspect = g_WidescreenTv != 0 ? WideAspect : NarrowAspect;
+            f32 aspect = TvAspect();
             Platform::Graphics::SetViewFrustum(lens->nearPlane, lens->farPlane, aspect, &fov);
             renderer->view->MakeMatrices(renderer->target);
             chunk->drawMatrix = identity;

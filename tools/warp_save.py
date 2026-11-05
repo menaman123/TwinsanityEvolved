@@ -22,9 +22,15 @@ import sys
 CHARACTERS = {"crash": 0, "cortex": 1, "tallcrash": 2, "nina": 3, "none": 6}
 
 
-def warp(bank, chunk, place, character=None, areas=None, second=None, pairing=None):
+def warp(bank, chunk, place, character=None, areas=None, second=None, pairing=None, widescreen=None):
     data = bytearray(bank)
     size = len(data)
+    if widescreen is not None:
+        # The options' widescreen TV (bit 16): SaveController::Restore gives it the game (g_WidescreenTv) when the save is loaded,
+        # as the graphic options' WIDESCREEN row would have set it
+        (options,) = struct.unpack_from("<I", data, 12)
+        options = (options | (1 << 16)) if widescreen else (options & ~(1 << 16))
+        struct.pack_into("<I", data, 12, options)
     if areas:
         # The save's options (SaveControllerOptions, the word after the summary): the area play is in (bits 0-4), the area the
         # story has got to (5-9) and the last area open (10-14), which SaveController::Restore gives the progress's play state.
@@ -84,6 +90,7 @@ def main():
     ap.add_argument("--area", type=int, default=None, help="the area play is in (0-24; default: keep the save's; the chunk's start script sets its own)")
     ap.add_argument("--second", default=None, help="the second character the save's summary names (crash, cortex, nina, tallcrash, none; default: keep the save's, or none with --character)")
     ap.add_argument("--pairing", type=int, default=None, help="how the second is paired (1 alone .. 7: progress.h Pairing; default: keep the save's, or 1 with --character)")
+    ap.add_argument("--widescreen", choices=("on", "off"), default=None, help="the options' widescreen TV (default: keep the save's -- the hub autosave's is off)")
     ap.add_argument("--bank", default="mc0/BESLES-52568/Bank0.bin")
     a = ap.parse_args()
     for name in ("story", "open", "area"):
@@ -110,13 +117,16 @@ def main():
     if a.pairing is not None and not 1 <= a.pairing <= 7:
         raise SystemExit("warp_save: --pairing %d is not a pairing (1-7)" % a.pairing)
     areas = {"story": a.story, "open": a.open, "area": a.area}
-    out = warp(bank, a.chunk, a.place, character, areas if any(v is not None for v in areas.values()) else None, second, a.pairing)
+    widescreen = None if a.widescreen is None else a.widescreen == "on"
+    out = warp(bank, a.chunk, a.place, character, areas if any(v is not None for v in areas.values()) else None, second, a.pairing,
+               widescreen)
     open(os.path.join(a.out, a.bank), "wb").write(out)
     print("warp_save: %s -> %s: slot 1 starts at '%s'%s%s%s" % (src, a.out, a.chunk, "" if a.place is None else " place 0x%X" % a.place,
                                                                 "" if character is None else " character %s" % a.character.lower(),
                                                                 "".join(" %s %d" % (k, v) for k, v in areas.items() if v is not None) +
                                                                 ("" if second is None else " second %s" % a.second.lower()) +
-                                                                ("" if a.pairing is None else " pairing %d" % a.pairing)))
+                                                                ("" if a.pairing is None else " pairing %d" % a.pairing) +
+                                                                ("" if a.widescreen is None else " widescreen %s" % a.widescreen)))
 
 
 if __name__ == "__main__":

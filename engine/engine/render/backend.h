@@ -389,6 +389,13 @@ public:
     virtual bool ReadbackStencil(SurfaceId, const Rect&, uint8_t*) { return false; }
     virtual void CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst,
                           const Rect& dst_rect, uint32_t transform) = 0;
+    // The off-screen pass of a smaller size (ps2e_draw_particle_pass_*: the particles at the title's resolution). DepthDown:
+    // `src_depth` (the depth of the target `src_color`) taken down into `dst_depth` (the depth of the target `dst_color`, a
+    // whole multiple smaller), one source sample per destination pixel -- the one at its centre's place (a nearest blit).
+    // AddTarget: `src`'s colour added to `dst_color` over the whole of it, bilinear (src is the smaller), the destination's
+    // alpha kept; blending, depth and stencil otherwise off. A backend that cannot returns false and does nothing.
+    virtual bool DepthDown(SurfaceId, SurfaceId, SurfaceId, SurfaceId) { return false; }
+    virtual bool AddTarget(SurfaceId, SurfaceId, SurfaceId) { return false; }
     // The frame about to begin on the render target `color` takes screen copies (CopyRect of `color` mid-frame): `keep`
     // asks the backend to keep the target's depth / stencil across the copies. A tile-based backend (vitaGL / GXM on the
     // Vita) ends the GPU scene at a copy -- the frame's colour reaches memory only at a scene's end -- and starts the next

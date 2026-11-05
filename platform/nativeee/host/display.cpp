@@ -5,7 +5,9 @@
 // to ps2r.ini through the engine's SettingsFile (the keys are the engine's VideoConfig: video.aspect, video.scale,
 // video.texture_filter, video.vsync, video.fullscreen, video.custom_offset_x/y). The rows' labels come from the engine's
 // MenuStrings (the title's menu extension's strings, per language bank: English, French, German, Spanish, Italian;
-// another language -- the patched disc's Portuguese -- reads the English labels).
+// another language -- the patched disc's Portuguese -- reads the English labels). The aspect row is also the shape the
+// game's own widescreen option draws for (WidescreenAspect): 16:10, 21:9 and 32:9 their own -- more of the world at the
+// sides, the menus and the HUD in the middle 16:9 -- and the 16:9 TV's at auto, 4:3 and 16:9, as on the console.
 #include "te_display.h"
 
 #include <algorithm>
@@ -43,7 +45,8 @@ constexpr int kMaxScale = 2;
 constexpr int kMaxScale = 4;
 #endif
 
-const char* const kAspectKeys[] = {"auto", "4:3", "16:9", "16:10", "21:9"};
+const char* const kAspectKeys[] = {"auto", "4:3", "16:9", "16:10", "21:9", "32:9"};
+constexpr int kAspects = int(sizeof kAspectKeys / sizeof kAspectKeys[0]);
 const char* const kFullscreenKeys[] = {"windowed", "fullscreen", "borderless"};
 const char* const kFilterKeys[] = {"title", "point", "bilinear", "trilinear"};
 
@@ -80,7 +83,7 @@ void Persist(const char* key, const std::string& value) {
 
 void Configure(const Settings& settings) {
     g_settings = settings;
-    g_settings.aspect = std::clamp(g_settings.aspect, 0, 4);
+    g_settings.aspect = std::clamp(g_settings.aspect, 0, kAspects - 1);
     g_settings.fit = std::clamp(g_settings.fit, 0, 4);
     g_settings.scale = std::clamp(g_settings.scale, 1, 4);
 #if defined(__vita__)
@@ -131,6 +134,7 @@ void Apply() {
     case 2: p.aspect = PS2E_DRAW_ASPECT_16_9; break;
     case 3: p.aspect = PS2E_DRAW_ASPECT_16_10; break;
     case 4: p.aspect = PS2E_DRAW_ASPECT_21_9; break;
+    case 5: p.aspect = PS2E_DRAW_ASPECT_32_9; break;
     default: p.aspect = headless ? PS2E_DRAW_ASPECT_PIXEL : PS2E_DRAW_ASPECT_4_3; break;
     }
     p.fit = g_settings.fit == 2 ? PS2E_DRAW_FIT_FILL : g_settings.fit == 3 ? PS2E_DRAW_FIT_INTEGER : PS2E_DRAW_FIT_LETTERBOX;
@@ -148,6 +152,17 @@ void Apply() {
     gfx::SetFrameRate(g_settings.frame_rate);
 }
 
+float WidescreenAspect() {
+    // (made when the port is built: the game thread asks with the EE's rounding, toward zero, in force)
+    constexpr float kWide16_10 = 16.0f / 10.0f, kWide21_9 = 21.0f / 9.0f, kWide32_9 = 32.0f / 9.0f;
+    switch (g_settings.aspect) {
+    case 3: return kWide16_10;
+    case 4: return kWide21_9;
+    case 5: return kWide32_9;
+    default: return 0.0f;   // a 16:9 TV's: the game's own
+    }
+}
+
 void MoveDisplay(float x, float y) {
     const float cx = std::clamp(x, -1.f, 1.f), cy = std::clamp(y, -1.f, 1.f);
     const int ox = int(std::lround(cx * 64.f)), oy = int(std::lround(cy * 32.f));   // the PS2's 256 VCK = 64 frame pixels, 32 lines
@@ -160,18 +175,19 @@ void MoveDisplay(float x, float y) {
 }
 
 std::string Describe() {
-    char buf[256];
-    std::snprintf(buf, sizeof buf, "display: aspect %s, fit %d, scale %dx, texture filter %s, vsync %s%s, frame rate %s, %s, offset (%d, %d), fps counter %s%s",
+    char buf[320];
+    std::snprintf(buf, sizeof buf, "display: aspect %s, fit %d, scale %dx, texture filter %s, vsync %s%s, frame rate %s, %s, offset (%d, %d), fps counter %s, shadows on crates %s%s",
                   kAspectKeys[g_settings.aspect], g_settings.fit, g_settings.scale, kFilterKeys[g_settings.texture_filter],
                   EffectiveVSync() ? "on" : "off", Uncapped() && g_settings.vsync ? " (forced off: uncapped)" : "", FrameRateName(),
                   kFullscreenKeys[g_settings.fullscreen], g_settings.offset_x, g_settings.offset_y,
-                  g_settings.fps_counter ? "on" : "off", gfx::Headless() ? " (headless: auto = the frame's pixels, windowed)" : "");
+                  g_settings.fps_counter ? "on" : "off", g_settings.shadows_on_crates ? "on" : "off",
+                  gfx::Headless() ? " (headless: auto = the frame's pixels, windowed)" : "");
     return buf;
 }
 
 uint32_t Choices(uint32_t row) {
     switch (row) {
-    case RowAspect: return 5;
+    case RowAspect: return uint32_t(kAspects);
     case RowScale: return uint32_t(kMaxScale);   // 1x .. 4x (the Vita: 1x, 2x)
     case RowTextureFilter: return 3;
     case RowVSync: return 2;
@@ -233,8 +249,9 @@ std::string ChoiceLabel(uint32_t row, uint32_t choice) {
     using Id = title::MenuStrings::Id;
     switch (row) {
     case RowAspect: {
-        static const Id ids[] = {Id::AspectAuto, Id::AspectNormal, Id::AspectWide, Id::AspectWideTen, Id::AspectUltraWide};
-        return choice < 5 ? MS(ids[choice]) : "";
+        static const Id ids[] = {Id::AspectAuto, Id::AspectNormal, Id::AspectWide, Id::AspectWideTen, Id::AspectUltraWide,
+                                 Id::AspectSuperWide};
+        return choice < uint32_t(kAspects) ? MS(ids[choice]) : "";
     }
     case RowScale: {
         static const Id ids[] = {Id::Scale1x, Id::Scale2x, Id::Scale3x, Id::Scale4x};
@@ -369,5 +386,8 @@ ps2e_s32 ps2e_graphics_display_setting_value(ps2e_s32 setting) {
 void ps2e_graphics_set_display_setting(ps2e_s32 setting, ps2e_s32 choice) {
     if (setting >= 0 && choice >= 0) te::display::Set(static_cast<uint32_t>(setting), static_cast<uint32_t>(choice));
 }
+
+// Platform::Graphics::WidescreenAspect: the shape the game's widescreen option draws for (te_display.h)
+ps2e_f32 ps2e_graphics_widescreen_aspect(void) { return te::display::WidescreenAspect(); }
 
 }  // extern "C"

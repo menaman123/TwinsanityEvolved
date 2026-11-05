@@ -71,6 +71,7 @@ struct InterpItem {
     bool copy_frame = false;
     InterpTag tag;
     const InterpTransform* transform = nullptr;   // Rigid only (null: newest)
+    bool particles = false;   // the producer's mark (a particle draw), carried to the output as it is
 };
 
 struct InterpScene {
@@ -89,6 +90,7 @@ struct InterpOutput {
     const ps2e_draw_vertex* verts = nullptr;
     uint32_t count = 0;
     bool copy_frame = false;
+    bool particles = false;   // the item's mark (InterpItem::particles)
 };
 
 struct InterpStats {

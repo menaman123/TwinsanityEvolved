@@ -1,0 +1,27 @@
+# beach_waterfall plan (the autopilot; records fixtures/padlogs/beach_waterfall.padlog, --stop-at 3800; the teleport below becomes
+# its "# test=" line, TE_TEST_ACTIONS for the replay): LOAD GAME on the hub card hub_entry.padlog writes by 2700 (load_game.plan's
+# presses, anchored on the GameController states), then Crash on the sand beside N. Sanity Beach's waterfall (its sound spots
+# x 85-93, z 28-51) and the camera turned toward the fall: (0.9, 0.4) held 300 boundaries, then east (1, 0) held 300 -- the fall
+# and its pool at the frame's right, two additive scrolling layers over them (bucket 11)
+until-gstate 7 9000
+idle 11
+hold START 5
+until-gstate 8 600
+idle 78
+hold DOWN 3
+idle 47
+hold CROSS 5
+idle 395
+hold DOWN 3
+idle 97
+hold CROSS 3
+until-gstate 9 3000
+until-gstate 12 9000
+idle 60
+hold CROSS 3
+wait 30
+teleport 76 16 18
+wait 90
+look 0.9 0.4 5 300 400
+look 1 0 5 300 400
+stop

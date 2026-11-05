@@ -224,7 +224,7 @@ std::string ConfigLoader::RenderDisplayIni(const Config& c) {
     std::string out;
     out += "; NativeEE display settings\n";
     out += "; mode = stretch | fit | fill | integer | custom\n";
-    out += "; aspect = auto | 4:3 | 16:9 | 16:10 | 21:9   (the shape the title renders for)\n";
+    out += "; aspect = auto | 4:3 | 16:9 | 16:10 | 21:9 | 32:9   (the shape the title renders for)\n";
     out += "mode = " + mode + "\n";
     out += "aspect = " + aspect + "\n";
     out += "custom_scale = " + std::to_string(c.video.custom_scale_pct) + "\n";

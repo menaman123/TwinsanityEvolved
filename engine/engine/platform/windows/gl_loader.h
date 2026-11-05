@@ -21,7 +21,7 @@
 #endif
 #include <GL/glcorearb.h>
 
-// X(type, gl name) for every entry point the engine requires (104).
+// X(type, gl name) for every entry point the engine requires (111).
 #define PS2R_GLWIN_FUNCS(X) \
     X(PFNGLACTIVETEXTUREPROC, glActiveTexture) \
     X(PFNGLATTACHSHADERPROC, glAttachShader) \
@@ -101,6 +101,13 @@
     X(PFNGLLINKPROGRAMPROC, glLinkProgram) \
     X(PFNGLMAPBUFFERRANGEPROC, glMapBufferRange) \
     X(PFNGLPIXELSTOREIPROC, glPixelStorei) \
+    X(PFNGLPROGRAMUNIFORM1FPROC, glProgramUniform1f) \
+    X(PFNGLPROGRAMUNIFORM1IPROC, glProgramUniform1i) \
+    X(PFNGLPROGRAMUNIFORM2FPROC, glProgramUniform2f) \
+    X(PFNGLPROGRAMUNIFORM2IPROC, glProgramUniform2i) \
+    X(PFNGLPROGRAMUNIFORM3FPROC, glProgramUniform3f) \
+    X(PFNGLPROGRAMUNIFORM4FPROC, glProgramUniform4f) \
+    X(PFNGLPROGRAMUNIFORM4FVPROC, glProgramUniform4fv) \
     X(PFNGLREADBUFFERPROC, glReadBuffer) \
     X(PFNGLREADPIXELSPROC, glReadPixels) \
     X(PFNGLRENDERBUFFERSTORAGEPROC, glRenderbufferStorage) \
@@ -214,6 +221,13 @@ extern PFNGLISENABLEDPROC ps2r_glwin_glIsEnabled;
 extern PFNGLLINKPROGRAMPROC ps2r_glwin_glLinkProgram;
 extern PFNGLMAPBUFFERRANGEPROC ps2r_glwin_glMapBufferRange;
 extern PFNGLPIXELSTOREIPROC ps2r_glwin_glPixelStorei;
+extern PFNGLPROGRAMUNIFORM1FPROC ps2r_glwin_glProgramUniform1f;
+extern PFNGLPROGRAMUNIFORM1IPROC ps2r_glwin_glProgramUniform1i;
+extern PFNGLPROGRAMUNIFORM2FPROC ps2r_glwin_glProgramUniform2f;
+extern PFNGLPROGRAMUNIFORM2IPROC ps2r_glwin_glProgramUniform2i;
+extern PFNGLPROGRAMUNIFORM3FPROC ps2r_glwin_glProgramUniform3f;
+extern PFNGLPROGRAMUNIFORM4FPROC ps2r_glwin_glProgramUniform4f;
+extern PFNGLPROGRAMUNIFORM4FVPROC ps2r_glwin_glProgramUniform4fv;
 extern PFNGLREADBUFFERPROC ps2r_glwin_glReadBuffer;
 extern PFNGLREADPIXELSPROC ps2r_glwin_glReadPixels;
 extern PFNGLRENDERBUFFERSTORAGEPROC ps2r_glwin_glRenderbufferStorage;
@@ -324,6 +338,13 @@ extern PFNGLVIEWPORTPROC ps2r_glwin_glViewport;
 #define glLinkProgram ps2r_glwin_glLinkProgram
 #define glMapBufferRange ps2r_glwin_glMapBufferRange
 #define glPixelStorei ps2r_glwin_glPixelStorei
+#define glProgramUniform1f ps2r_glwin_glProgramUniform1f
+#define glProgramUniform1i ps2r_glwin_glProgramUniform1i
+#define glProgramUniform2f ps2r_glwin_glProgramUniform2f
+#define glProgramUniform2i ps2r_glwin_glProgramUniform2i
+#define glProgramUniform3f ps2r_glwin_glProgramUniform3f
+#define glProgramUniform4f ps2r_glwin_glProgramUniform4f
+#define glProgramUniform4fv ps2r_glwin_glProgramUniform4fv
 #define glReadBuffer ps2r_glwin_glReadBuffer
 #define glReadPixels ps2r_glwin_glReadPixels
 #define glRenderbufferStorage ps2r_glwin_glRenderbufferStorage

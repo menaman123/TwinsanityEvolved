@@ -11,6 +11,7 @@
 #include "game/layout.h"
 #include "game/math.h"
 #include "game/memory.h"
+#include "game/navigation.h"
 #include "game/objectnode.h"
 #include "game/objects.h"
 #include "game/place.h"
@@ -18,6 +19,7 @@
 #include "game/properties.h"
 #include "game/reference.h"
 #include "game/resources.h"
+#include "platform/system.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -43,6 +45,20 @@ namespace
 ObjectNode* NodeOf(BehaviourRunner* runner)
 {
     return static_cast<ObjectNode*>(runner->agentNode);
+}
+
+// TwinsanityEvolved: the route's step a designator of the current or the next step names (RouteStepPosition's: the next is
+// the step before the current one, the end's own at the end), none without a route
+const AiPosition* DesignatedRouteStep(const Waypoints* waypoints, bool current)
+{
+    Route* route = waypoints != nullptr ? waypoints->route : nullptr;
+    if (route == nullptr)
+    {
+        return nullptr;
+    }
+
+    u32 index = current || waypoints->routeIndex == 0 ? waypoints->routeIndex : waypoints->routeIndex - 1;
+    return route->PositionAt(index);
 }
 
 ObjectNode* ObjectNodeOf(InstanceContext* instance)
@@ -792,10 +808,25 @@ void SetFocusPositionCommand::Execute(TimeClock*, BehaviourRunner* runner, Behav
         f32 z = position.z - own.z;
         const Vector4& forward = RowOf(place->matrix, 2);
         f32 distance = __builtin_sqrtf(x * x + y * y + z * z);
+        Vector4 aimed = position;
         position.x = own.x + forward.x * distance;
         position.y = own.y + forward.y * distance;
         position.z = own.z + forward.z * distance;
         position.w = 1.0f;
+        // TwinsanityEvolved: a route's step taken straight ahead that lands farther from the step than half its radius is a
+        // target the route's scripts may never see reached (a chase without a tolerance waits for the agent's box to be inside
+        // the step's circle): the position the designator gave, before the straight-ahead one, when the platform says so
+        if (designator == DesignatesCurrentStep || designator == DesignatesNextStep)
+        {
+            const AiPosition* step = DesignatedRouteStep(node->waypoints, designator == DesignatesCurrentStep);
+            f32 dx = step != nullptr ? position.x - step->position.x : 0.0f;
+            f32 dz = step != nullptr ? position.z - step->position.z : 0.0f;
+            f32 half = step != nullptr ? step->position.w * 0.5f : 0.0f;
+            if (half * half < dx * dx + dz * dz && Platform::System::RouteStepsReached() != 0)
+            {
+                position = aimed;
+            }
+        }
     }
 
     switch (target.slot)

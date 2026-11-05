@@ -237,6 +237,10 @@ private:
     }
     // the colour / depth masks put back to open after each draw (likewise)
     bool ResetMasksAfter() const { return BindFullFirst(); }
+    // the full PS2 program bound before a draw's uniforms are set where glUniform* writes the bound program -- not when
+    // the uniform cache names the programs it writes (the desktop's fast program: GlUniformCache::SetPrograms), where
+    // BindPs2Program binds the draw's program
+    void BindForUniforms();
 };
 
 }  // namespace render

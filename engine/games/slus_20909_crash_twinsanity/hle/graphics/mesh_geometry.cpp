@@ -94,6 +94,36 @@ uint32_t Outside(const Vector& point) {
     return result;
 }
 bool SamePoint(const ScreenVertex& a, const ScreenVertex& b) { return a.x == b.x && a.y == b.y; }
+// The build's hand-over to its sink in runs of one class (MeshGeometry::View::classes / classed): a clipped triangle's fan
+// whole, a strip's body cut where its triangles' class changes; `classed` called before a run whose class is not the
+// previous run's. Without classes: the sink's calls as they always were.
+struct ClassedSink {
+    const MeshGeometry::View& view;
+    MeshGeometry::Sink sink;
+    void* user;
+    int last = -1;
+    uint8_t ClassOf(size_t at) const { return view.classes ? view.classes[at] : 0; }
+    void Emit(const ScreenVertex* v, size_t n, bool fan, uint8_t c) {
+        if (view.classes && view.classed && c != last) view.classed(user, c);
+        last = c;
+        sink(user, v, n, fan);
+    }
+    // a strip's body: `count` vertices, the triangle k's class at classes[k]
+    void Body(const ScreenVertex* v, const uint8_t* classes, size_t count) {
+        if (!count) return;
+        if (!view.classes) {
+            sink(user, v, count, false);
+            return;
+        }
+        const size_t triangles = count / 3;
+        size_t first = 0;
+        for (size_t k = 1; k <= triangles; ++k)
+            if (k == triangles || classes[k] != classes[first]) {
+                Emit(v + 3 * first, 3 * (k - first), false, classes[first]);
+                first = k;
+            }
+    }
+};
 void Triangle(Draw& draw, const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c) {
     if (!SamePoint(a, b) && !SamePoint(b, c) && !SamePoint(a, c))
         draw.verts.insert(draw.verts.end(), {a, b, c});
@@ -595,7 +625,9 @@ void VertexPassPlain(const MeshGeometry::Prepared& prepared, bool clipped_view, 
 void StripPass(const MeshGeometry::Prepared& prepared, const MeshGeometry::View& view, const Draw& state,
                const std::array<uint8_t, 4>* colours, const VertexValues& values, MeshGeometry::Sink sink, void* user) {
     std::array<ScreenVertex, 38 * 3> body;
+    std::array<uint8_t, 38> body_class;
     std::vector<ScreenVertex> fan;
+    ClassedSink out{view, sink, user};
     for (const auto& range : prepared.strips) {
         const size_t first = range.first, size = range.count;
         size_t body_count = 0;
@@ -622,7 +654,7 @@ void StripPass(const MeshGeometry::Prepared& prepared, const MeshGeometry::View&
                             }
                             fan.clear();
                             Fan(fan, triangle, view, state);
-                            if (!fan.empty()) sink(user, fan.data(), fan.size(), true);
+                            if (!fan.empty()) out.Emit(fan.data(), fan.size(), true, out.ClassOf(at));
                         }
                         emit = false;
                     }
@@ -636,6 +668,7 @@ void StripPass(const MeshGeometry::Prepared& prepared, const MeshGeometry::View&
                 const ScreenVertex& b = projected[i - 1 - (parity & 1)];
                 const ScreenVertex& c = projected[i];
                 if (!SamePoint(a, b) && !SamePoint(b, c) && !SamePoint(a, c)) {
+                    if (view.classes) body_class[body_count / 3] = view.classes[at];
                     body[body_count++] = a;
                     body[body_count++] = b;
                     body[body_count++] = c;
@@ -643,7 +676,7 @@ void StripPass(const MeshGeometry::Prepared& prepared, const MeshGeometry::View&
                 ++parity;
             }
         }
-        if (body_count) sink(user, body.data(), body_count, false);
+        out.Body(body.data(), body_class.data(), body_count);
     }
 }
 // The two-pass build (BuildPrepared's, the view and state validated, the operands flushed by the caller)
@@ -726,7 +759,9 @@ void BuildOnePass(const MeshGeometry::Prepared& prepared, const MeshGeometry::Vi
                   const Matrix& clip, const Vector& guard, const Vector& scroll, const std::array<uint8_t, 4>* colours,
                   MeshGeometry::Sink sink, void* user) {
     std::array<ScreenVertex, 38 * 3> body;
+    std::array<uint8_t, 38> body_class;
     std::vector<ScreenVertex> fan;
+    ClassedSink out{view, sink, user};
     for (const auto& range : prepared.strips) {
         const size_t first = range.first, size = range.count;
         size_t body_count = 0;
@@ -760,7 +795,7 @@ void BuildOnePass(const MeshGeometry::Prepared& prepared, const MeshGeometry::Vi
                             }
                             fan.clear();
                             Fan(fan, triangle, view, state);
-                            if (!fan.empty()) sink(user, fan.data(), fan.size(), true);
+                            if (!fan.empty()) out.Emit(fan.data(), fan.size(), true, out.ClassOf(at));
                         }
                         emit = false;
                     }
@@ -773,6 +808,7 @@ void BuildOnePass(const MeshGeometry::Prepared& prepared, const MeshGeometry::Vi
                 const ScreenVertex& b = projected[i - 1 - (parity & 1)];
                 const ScreenVertex& c = projected[i];
                 if (!SamePoint(a, b) && !SamePoint(b, c) && !SamePoint(a, c)) {
+                    if (view.classes) body_class[body_count / 3] = view.classes[at];
                     body[body_count++] = a;
                     body[body_count++] = b;
                     body[body_count++] = c;
@@ -780,7 +816,7 @@ void BuildOnePass(const MeshGeometry::Prepared& prepared, const MeshGeometry::Vi
                 ++parity;
             }
         }
-        if (body_count) sink(user, body.data(), body_count, false);
+        out.Body(body.data(), body_class.data(), body_count);
     }
 }
 }  // namespace

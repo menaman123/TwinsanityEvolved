@@ -1,0 +1,8 @@
+{
+  "note": "tools/judges/texture_pipeline_judge.py: cutscenes that read their next area while they play, watched as tools/judges/cutscene_skip_judge.py reaches them (cutscenes_from); min_ahead = the fewest textures a leg must decode (off the game thread by default, on it with TE_GFX_EAGER_TEXTURES=0) for the check not to be vacuous: about half of what the leg reads on the PAL disc",
+  "cutscenes_from": "fixtures/judges/cutscene_skip_pal.json",
+  "cutscenes": [
+    {"name": "51_coreent_to_labint", "min_ahead": 280},
+    {"name": "49_crows_nest", "min_ahead": 460}
+  ]
+}

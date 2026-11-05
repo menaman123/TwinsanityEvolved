@@ -1,0 +1,14 @@
+{
+  "legs": {
+    "60": {"padlog": "fixtures/padlogs/slide_steering.padlog", "stop_at": 3700},
+    "50": {"padlog": "fixtures/padlogs/slide_steering_50.padlog", "stop_at": 3400}
+  },
+  "disc": "PAL SLES-52568; deterministic headless: --config none (or a ps2r.ini with game.slide_steering = retail) --hz 60|50 --deterministic --no-sdl-input --no-audio --skip-movies --trace-state --trace-player 60 --harness-out; TE_TRACE_MOVES=1",
+  "probe_every": 60,
+  "run_seconds": 600,
+  "slides_60": 4,
+  "slides_50": 3,
+  "min_swing_past": 10.0,
+  "why": "the 60 Hz pad log (NEW GAME on an empty card, recorded from fixtures/padlogs/slide_steering.plan with the default rules) makes four knee slides on N. Sanity Beach from the start, entered while running with the stick turned 45 degrees right, 90 right, 135 right and 45 left of the run; each steers 10 frames (elapsed 0..1341 clock units, 149 a frame). Retail's last frame of steering (1341: 9 units left) turns the facing 33.6, 100.8, 149.4 and -32.8 degrees with 16.6, 29.0, 34.9 and -16.2 left (17 to 115 past the slide's direction); fixed it turns 4.0, 12.2, 18.1 and -3.9 with 16.6, 29.0, 34.9 and -16.3 left. The two runs are identical up to the first slide's last frame of steering (boundary 2722). The 50 Hz pad log (the same plan with --hz 50; 179 units a frame) makes three slides (the second cut short by the slope, the fourth press a crouch); their last frame of steering has 97 units left and the fixed and retail runs are identical in every line, frame and state",
+  "frozen": "2026-11-03 product: written with the slide steering rule (game.slide_steering, Platform::System::SlideSteeringFixed; the qol-sm branch from fixes 7276bc0); RED on a runner without it (A swings past like B, and on one without TE_TRACE_MOVES: no slide lines)"
+}

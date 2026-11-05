@@ -21,6 +21,7 @@
 #include "game/properties.h"
 #include "game/reference.h"
 #include "game/vehicles.h"
+#include "platform/system.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -939,6 +940,13 @@ void CharacterAgent::Contact(const ContactMessage* message, InstanceContext* sen
     }
 
     if (hit->Invincible() != 0 && damage < InvincibleDamage)
+    {
+        return;
+    }
+
+    // TwinsanityEvolved: retail's explosions (100) go through the invincibility; the classic games' Aku Aku spares them
+    // (Platform::System::InvincibleToExplosions)
+    if (hit->Invincible() != 0 && (message->hitKinds & HitExplosion) != 0 && Platform::System::InvincibleToExplosions() != 0)
     {
         return;
     }

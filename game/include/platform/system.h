@@ -96,6 +96,17 @@ void ModWarpTarget(char* chunk, u32 size, u32* character);
 // TwinsanityEvolved: whether the player has the platform's infinite lives on (a built-in mod's switch, asked when a script
 // takes a life): 1 = the life is not taken -- the count stays where it is, so a death never brings the game over. The PS2: 0
 u32 InfiniteLives();
+// TwinsanityEvolved: whether the knee slide's last frame of steering takes its time left as no less than half the frame (1) or as
+// retail's does (0). A steering slide turns at the angle left to its direction over the steering's time left, and the frame turns
+// that rate for its whole length; in the steering's last frame the time left is only the part of the frame before the steering
+// ends, so the frame turns its length over that part times its share -- at 60 Hz 149 clock units over 9, the slide swinging far
+// past its direction, a different swing every slide on the 59.94 Hz NTSC console; at the PAL disc's 50 Hz 179 over 97, which
+// half a frame leaves as it is. The platform answers its setting (on unless the player chose retail's, and retail's while the
+// speedrun mod is on); the PS2: 0
+u32 SlideSteeringFixed();
+// TwinsanityEvolved: whether an invincible character is spared an explosion (1) or not (0, retail: a hit of 50 or more goes
+// through the invincibility, and the crates' explosions are 100) -- the classic games' Aku Aku, the player's setting. The PS2: 0
+u32 InvincibleToExplosions();
 
 // TwinsanityEvolved: a load's reads are in. 1 while the game loads a level behind its loading picture, the platform reading the
 // disc at its device's own speed (disc.speed), and no read the game asked for still in flight: the streaming loader then starts
@@ -108,6 +119,14 @@ u32 LoadReadsDone();
 // skippable: the cross button then does nothing in that cutscene and it plays as watched. The platform answers from its table of the disc's cutscenes (those whose skip was checked
 // to leave what watching them leaves); the PS2 answers 0 (its cutscenes play as retail's)
 u32 CutsceneSkippable(u32 graph);
+
+// TwinsanityEvolved: whether a route's step a script aims at "straight ahead" is reached when straight ahead misses it. A
+// SetFocusPosition whose option word asks for the straight-ahead point (the step's distance along the agent's facing) puts
+// the target outside the step's circle whenever the agent does not face the step closely; a chase without a tolerance that
+// waits to be inside the step's circle (Evil Crash's route in Bandicoot Pursuit, whose option word holds what the authoring
+// tool left in memory) then stands at that point for good. Asked only in that case: 1 = the step's own position is the
+// target instead; 0 = retail's straight-ahead point. The platform answers from its setting (game.route_steps); the PS2: 0
+u32 RouteStepsReached();
 
 // TwinsanityEvolved: what a TEST asks of the game while it plays, never the player: the platform's test tools (an autopilot
 // plan's steps, a fixture's knob) reach a cutscene whose trigger needs play a test cannot do -- a boss fight won, a route a long
@@ -123,6 +142,8 @@ enum TestRequestKind : u32
     TestCounter = 3,
     // The instance's own counter `counter` (0 to 3) set to `value`, as a script's SetCounter sets an agent's
     TestAgentCounter = 4,
+    // The character's hit points set to `value`, as a script's SetHitPoints sets a character's
+    TestHitPoints = 5,
 };
 struct TestRequest
 {

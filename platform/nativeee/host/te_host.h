@@ -142,6 +142,13 @@ struct Settings {
     DiscSpeed disc_speed = DiscSpeed::Console;
     bool disc_speed_given = false;
     bool present_ct16 = false;   // the retail present -- the frame shown as the GS's dithered 16-bit copy (CT24 -> CT16)
+    // game_rules.cpp: the game's rules the player chooses (ps2r.ini). game.slide_steering = fixed | retail: the knee slide's last
+    // frame of steering turns at most twice its share of the angle left (fixed, the default; nothing changes at 50 Hz) or as
+    // retail's (the swing past the slide's direction at 60 Hz). game.invincible_to_explosions = on | off: an invincible character
+    // spared explosions, as the classic games' Aku Aku (off, the default: retail's explosions go through). The speedrun mod's runs
+    // keep retail's for both
+    bool slide_steering_fixed = true;
+    bool invincible_to_explosions = false;
     bool verbose = false;
 };
 const Settings& GetSettings();

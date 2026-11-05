@@ -11,7 +11,7 @@ namespace te::display {
 // What the runner read from ps2r.ini (the engine's VideoConfig, the keys the port honours) before the device exists.
 struct Settings {
     int aspect = 0;          // video.aspect: 0 auto (the TV's 4:3 in a window; the frame's own pixels headless -- the frozen
-                             // judges' captures), 1 4:3, 2 16:9, 3 16:10, 4 21:9
+                             // judges' captures), 1 4:3, 2 16:9, 3 16:10, 4 21:9, 5 32:9
     int fit = 1;             // video.fit_mode: 0 stretch, 1 fit (letterbox), 2 fill, 3 integer, 4 custom (= fit here)
     int scale = 1;           // video.scale: the frame target's internal scale 1..4 (0 = 1; the PS Vita 1..2: display.cpp)
     int texture_filter = 0;  // video.texture_filter: 0 title, 1 point, 2 bilinear, 3 trilinear (bilinear here: ps2e_draw has no mip chain)
@@ -30,6 +30,8 @@ struct Settings {
                                 // or the newest picture shown until the next (off, the default: every frame a picture as the
                                 // game drew it -- an interpolated frame re-projects the newest picture's geometry, cut to its
                                 // camera, and a fast camera turn shows its gaps); TE_GFX_INTERP overrides it
+    bool shadows_on_crates = true;   // video.shadows_on_crates: the shadows fall on the tops of the crates (on, the default:
+                                     // FBA's floor, graphics_scene.cpp FloorSplitOf) or, as on the PS2, on no crate (off)
     int game_hz = 60;           // game.hz as chosen: 50 (the PAL console's rate) or 60; takes effect at the next start
     int running_hz = 60;        // the game rate this run started with (te::Settings::field_hz)
 };
@@ -42,6 +44,9 @@ const Settings& Current();
 void MoveDisplay(float x, float y);
 // Push the current settings to the device (graphics.cpp calls it when the device exists; no device = remembered).
 void Apply();
+// The shape the game's widescreen option draws for (Platform::Graphics::WidescreenAspect): the picture's own at 16:10, 21:9
+// and 32:9; 0 at auto, 4:3 and 16:9 (a 16:9 TV's: the game draws as on the console).
+float WidescreenAspect();
 // One line for the log.
 std::string Describe();
 

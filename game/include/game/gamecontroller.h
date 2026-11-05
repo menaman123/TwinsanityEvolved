@@ -252,8 +252,9 @@ struct GameController
     u32 RequestSavedLevel(u32 flagged) RETAIL(FUN_001760e0);
     // TwinsanityEvolved: a chunk started through the saved level's path -- the progress taken into the save controller as a
     // save would (a new game's at the main menu, the game's own while playing: the lives, the levels' crystals, the chunks'
-    // persistent flags), the chunk and the character written over it, the level loaded as a save's would be. Nothing is written to
-    // the card. Not while a level is loading
+    // persistent flags), the chunk, the character asked for and play alone written over it (the pairing and the second
+    // character of the level left are never carried), the level loaded as a save's would be. Nothing is written to the card.
+    // Not while a level is loading
     u32 WarpToChunk(const char* chunk, u32 character);
     // A movie of the game's played after a delay (clock units) and a tenth of a second on a black screen (none without a movie
     // controller), the cross button skipping it when it's skippable: whether it's over, and whether it was skipped

@@ -551,6 +551,71 @@ void SampleBodies(uint64_t boundary) {
 }
 }  // namespace
 
+// ---- the played character's moves (TE_TRACE_MOVES=1): the knee slide's steering and the hit points --------------------------
+namespace {
+// game/include/game/agents.h, agentparts.h, characters.h, instances.h, chunkdata.h (CHECK_OFFSETs)
+constexpr uint32_t kAgentPart = 0x10;              // Agent::part
+constexpr uint32_t kCharacterModeTicks = 0x78;     // CharacterAgent::modeTicks
+constexpr uint32_t kCharacterCrouch = 0x98;        // CharacterAgent::crouch (CrouchController*)
+constexpr uint32_t kAgentContactKinds = 0x30;      // Agent::contact.hitKinds (the last contact kept: layout.h ContactMessage)
+constexpr uint32_t kAgentContactDamage = 0x34;     // Agent::contact.damage (a byte)
+constexpr uint32_t kPartBits = 0x10;               // BasicAgentPart::bits (invulnerable: bit 10)
+constexpr uint32_t kPartFlags = 0x14;              // CreaturePart::flags (hitPoints: bits 6..13)
+constexpr uint32_t kPartWantedTurn = 0x20;         // CharacterPart::wantedTurn (65536ths of a turn a second)
+constexpr uint32_t kCrouchStart = 0x08, kCrouchTicks = 0x0C, kCrouchDirection = 0x20, kCrouchFade = 0x30;
+constexpr uint32_t kInstanceClockWord = 0x150;     // InstanceContext::seenWord (clockIndex: bits 24..31)
+constexpr uint32_t kChunkClocks = 0x154;           // ChunkData::clocks (none: the game clock controller's)
+constexpr uint32_t kControllerClocks = 0x08;       // GameTimeController::clocks[8] (TimeClock: flags, time, advance)
+
+constexpr float kDegrees = 57.29578f;
+bool g_was_sliding = false;
+uint32_t g_last_health = ~0u;
+
+// The yaw of a direction in the xz plane (degrees, 0 = +z, 90 = +x)
+float YawOf(float x, float z) { return std::atan2(x, z) * kDegrees; }
+
+void SampleMoves(uint64_t boundary) {
+    const uint32_t agent = Rd32(R(kPlayerCharacter));
+    if (!InRange(agent, 0x110)) return;
+    const uint32_t instance = Rd32(agent + kAgentInstance);
+    const uint32_t part = Rd32(agent + kAgentPart);
+    if (!InRange(instance, 0x160) || !InRange(part, 0x40)) return;
+    // the hit points, the invincibility and the character's mode, at every change
+    const uint32_t bits = Rd32(part + kPartBits), flags = Rd32(part + kPartFlags), state = Rd32(agent + kCharacterState);
+    const uint32_t hit_points = (flags >> 6) & 0xFF, invulnerable = (bits >> 10) & 1, mode = (state >> 4) & 15;
+    const uint32_t health = (hit_points << 8) | (invulnerable << 4) | mode;
+    if (health != g_last_health) {
+        g_last_health = health;
+        std::fprintf(stderr, "[move] @%llu health hp %u invulnerable %u mode %u previous %u modeTicks %d contact kinds 0x%X damage %u\n",
+                     (unsigned long long)boundary, hit_points, invulnerable, mode, state & 15, int32_t(Rd32(agent + kCharacterModeTicks)),
+                     Rd32(agent + kAgentContactKinds), Rd32(agent + kAgentContactDamage) & 0xFF);
+    }
+    // the knee slide (crouch states 5 sliding, 6 its end), one line a boundary and one after it ends
+    const uint32_t crouch = Rd32(agent + kCharacterCrouch);
+    if (!InRange(crouch, 0x38)) return;
+    const uint32_t crouch_state = Rd32(crouch) & 0xFF;
+    const bool sliding = crouch_state == 5 || crouch_state == 6;
+    if (!sliding && !g_was_sliding) return;
+    g_was_sliding = sliding;
+    const uint32_t chunk = Rd32(instance + kObjectChunk);
+    uint32_t clocks = InRange(chunk, 0x160) ? Rd32(chunk + kChunkClocks) : 0;
+    if (!InRange(clocks, 0x60)) clocks = Rd32(R(kGameClockController)) + kControllerClocks;
+    const uint32_t clock = clocks + 12 * (Rd32(instance + kInstanceClockWord) >> 24);
+    const uint32_t place = Rd32(instance + kObjectPlace);
+    const float yaw = InRange(place, 0x30) ? YawOf(RdF32(place + kPlaceMatrix + 0x20), RdF32(place + kPlaceMatrix + 0x28)) : 0.f;
+    std::fprintf(stderr, "[move] @%llu slide state %u elapsed %d ticks %d mayJump %u yaw %.3f direction %.3f wantedTurn %d fade %.3f "
+                         "advance %u\n", (unsigned long long)boundary, crouch_state, int32_t(Rd32(clock + 4) - Rd32(crouch + kCrouchStart)),
+                 int32_t(Rd32(crouch + kCrouchTicks)), (Rd32(crouch) >> 10) & 1, yaw,
+                 YawOf(RdF32(crouch + kCrouchDirection), RdF32(crouch + kCrouchDirection + 8)), int32_t(Rd32(part + kPartWantedTurn)),
+                 RdF32(crouch + kCrouchFade), Rd32(clock + 8));
+}
+}  // namespace
+
+void InstallMoves() {
+    Services::Get().clock().AddBoundaryHook("trace-moves", [](uint64_t boundary) { SampleMoves(boundary); });
+    std::fprintf(stderr, "[probe] tracing the played character's knee slide and hit points (TE_TRACE_MOVES)\n");
+}
+
 void InstallBodies(unsigned every) {
     g_bodies_every = every ? every : 1;
     const char* all = std::getenv("TE_TRACE_BODIES_ALL");

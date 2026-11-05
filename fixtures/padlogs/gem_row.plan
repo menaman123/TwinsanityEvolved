@@ -1,0 +1,54 @@
+# gem_row authoring plan (records fixtures/padlogs/gem_row.padlog, --config none --stop-at 6300): NEW GAME on an empty card
+# (hub_entry.plan's presses anchored on the GameController states), then the pause screen three times on N. Sanity Beach:
+# before any gem; after the red gem (Crash warped onto it and back to the start, no save point passed); after five drops onto
+# the beach's nitro crates, the GAME OVER and CONTINUE (the restart from the save's snapshot, the new game's). The recording's
+# "[te.test]" lines are the fixture's TE_TEST_ACTIONS (fixtures/judges/gem_row_pal.json, the pad log's `# test=` line).
+until-gstate 7 3000
+idle 11
+hold START 5
+until-gstate 8 300
+idle 128
+hold CROSS 5
+idle 295
+hold UP 3
+idle 97
+hold CROSS 3
+idle 247
+hold DOWN 3
+idle 67
+hold CROSS 3
+until-gstate 12 2000
+idle 151
+hold CROSS 3
+wait 30
+hold START 5
+idle 120
+hold START 5
+idle 30
+wait 30
+teleport -28.035 8.17 -7.80
+wait 90
+teleport 0.235 0.046 -40.256
+wait 60
+hold START 5
+idle 120
+hold START 5
+idle 30
+wait 30
+teleport -24.6 1.6 -4.8
+wait 400
+teleport -24.1 1.6 -14.3
+wait 400
+teleport -17.3 1.6 -5.1
+wait 400
+teleport -20.5 1.6 -3.3
+wait 400
+teleport -20.2 1.6 -13.7
+until-gstate 18 2000
+idle 200
+hold CROSS 3
+until-gstate 12 4000
+wait 90
+hold START 5
+idle 120
+stop

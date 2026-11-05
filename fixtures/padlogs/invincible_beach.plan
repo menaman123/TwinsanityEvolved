@@ -1,0 +1,34 @@
+# invincible_beach authoring plan (records fixtures/padlogs/invincible_beach.padlog, --stop-at 3100; the requests below become
+# its "# test=" line, TE_TEST_ACTIONS for the replay): NEW GAME on an empty card (hub_entry.plan's presses anchored on the
+# GameController states), then on N. Sanity Beach the hit points set to 3 (TEST: the shining mask), the Aku Aku crate on the east
+# cliff broken with a spin (its mask the third: CharacterAgent::StartInvincibility, 8 seconds), and within them a run into the
+# nitro crate west of the start (TEST teleport). Retail's explosion (100) goes through the invincibility (50 or more does)
+until-gstate 7 3000
+idle 11
+hold START 5
+until-gstate 8 300
+idle 128
+hold CROSS 5
+idle 295
+hold UP 3
+idle 97
+hold CROSS 3
+idle 247
+hold DOWN 3
+idle 67
+hold CROSS 3
+until-gstate 12 2000
+idle 151
+hold CROSS 3
+wait 30
+hitpoints 3
+wait 5
+teleport 109.9 10.6 -49.4
+wait 20
+spin
+wait 30
+teleport -10.0 0.0 -20.0
+wait 5
+goto -14.8 -7.9 0.5 160
+wait 120
+stop

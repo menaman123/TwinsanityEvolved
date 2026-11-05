@@ -10,6 +10,7 @@
 #include "game/place.h"
 #include "game/properties.h"
 #include "game/reference.h"
+#include "platform/system.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -326,6 +327,18 @@ void CrouchController::Slide(f32 turn, s32 time, u32, s32* next)
             // Steered: turning to the slide's direction over the seconds left of the steering
             f32 elapsedSeconds = static_cast<f32>(elapsed) * g_SecondsPerClockUnit;
             f32 secondsLeft = static_cast<f32>(steerTicks) * g_SecondsPerClockUnit - elapsedSeconds;
+            // TwinsanityEvolved: in the steering's last frame retail divides by the part of the frame before the steering ends,
+            // and the frame turns for all of it: at 60 Hz 9 of the frame's 149 clock units, the slide swinging past its direction
+            // by up to its length over that part times the angle's share (Platform::System::SlideSteeringFixed). The time left
+            // taken as no less than half the frame, the last frame turns at most twice its share -- as at the PAL disc's 50 Hz,
+            // where 97 of 179 units are left and nothing changes
+            if (Platform::System::SlideSteeringFixed() != 0)
+            {
+                TimeClock* clock = GetContextClock(agent->instance);
+                f32 halfFrame = static_cast<f32>(static_cast<s32>(clock->advance)) * g_SecondsPerClockUnit * 0.5f;
+                secondsLeft = __builtin_fmaxf(secondsLeft, halfFrame);
+            }
+
             ObjectPlace* place = agent->instance->place;
             RotateAndTranslate(place);
             s32 angle;

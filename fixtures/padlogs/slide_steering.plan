@@ -1,0 +1,46 @@
+# slide_steering authoring plan (records fixtures/padlogs/slide_steering.padlog at 60 Hz, --stop-at 3700, and
+# slide_steering_50.padlog with --hz 50, --stop-at 3400): NEW GAME on an empty card (hub_entry.plan's presses anchored on the
+# GameController states), then four knee slides on N. Sanity Beach from the start, each entered while running ahead with the
+# stick turned 45 degrees right, 90 right, 135 right and 45 left of the run (back to the start and the camera along its first
+# view between them). Retail's steering swings each 60 Hz slide past its direction in its last frame of steering.
+until-gstate 7 3000
+idle 11
+hold START 5
+until-gstate 8 300
+idle 128
+hold CROSS 5
+idle 295
+hold UP 3
+idle 97
+hold CROSS 3
+idle 247
+hold DOWN 3
+idle 67
+hold CROSS 3
+until-gstate 12 2000
+idle 151
+hold CROSS 3
+wait 40
+hold NONE 45 128 1 128 128
+hold CIRCLE 2 255 1 128 128
+hold NONE 60 255 1 128 128
+wait 30
+goto 6.3 -39.6 0.8 400
+look -0.70 0.70 4 10 300
+hold NONE 45 128 1 128 128
+hold CIRCLE 2 255 128 128 128
+hold NONE 60 255 128 128 128
+wait 30
+goto 6.3 -39.6 0.8 400
+look -0.70 0.70 4 10 300
+hold NONE 45 128 1 128 128
+hold CIRCLE 2 255 255 128 128
+hold NONE 60 255 255 128 128
+wait 30
+goto 6.3 -39.6 0.8 400
+look -0.70 0.70 4 10 300
+hold NONE 45 128 1 128 128
+hold CIRCLE 2 1 1 128 128
+hold NONE 60 1 1 128 128
+wait 30
+stop

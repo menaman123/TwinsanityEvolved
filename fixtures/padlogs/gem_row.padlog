@@ -1,0 +1,36 @@
+# gem_row fixture (tools/judges/gem_row_judge.py; authored with fixtures/padlogs/gem_row.plan, recorded with --record-pad):
+# NEW GAME on an empty card; P0 the pause screen before any gem; the beach's red gem picked up (no save point passed) and P1
+# the pause screen; five drops onto the beach's nitro crates, the GAME OVER, CONTINUE, and P2 the pause screen.
+# test=teleport -28.0349 8.1700 -7.8000@2847;teleport 0.2349 0.0460 -40.2560@2937;teleport -24.6000 1.6000 -4.8000@3187;teleport -24.1000 1.6000 -14.3000@3624;teleport -17.2999 1.6000 -5.0999@4061;teleport -20.5000 1.6000 -3.2999@4498;teleport -20.2000 1.6000 -13.6999@4935  (TE_TEST_ACTIONS: what the recording's plan asked of the game; the judge sets it)
+# twinsanityevolved padlog v1 -- pad 0 per frame boundary: BOUNDARY BUTTONS(wire order, hex) LX LY RX RY  # names
+# text-language=english
+# speech-language=english
+# disc-speed=console
+1 0000 128 128 128 128  # NONE
+1271 0008 128 128 128 128  # START
+1276 0000 128 128 128 128  # NONE
+1404 4000 128 128 128 128  # CROSS
+1409 0000 128 128 128 128  # NONE
+1704 0010 128 128 128 128  # UP
+1707 0000 128 128 128 128  # NONE
+1804 4000 128 128 128 128  # CROSS
+1807 0000 128 128 128 128  # NONE
+2054 0040 128 128 128 128  # DOWN
+2057 0000 128 128 128 128  # NONE
+2124 4000 128 128 128 128  # CROSS
+2127 0000 128 128 128 128  # NONE
+2607 4000 128 128 128 128  # CROSS
+2610 0000 128 128 128 128  # NONE
+2657 0008 128 128 128 128  # START
+2662 0000 128 128 128 128  # NONE
+2782 0008 128 128 128 128  # START
+2787 0000 128 128 128 128  # NONE
+2997 0008 128 128 128 128  # START
+3002 0000 128 128 128 128  # NONE
+3122 0008 128 128 128 128  # START
+3127 0000 128 128 128 128  # NONE
+5281 4000 128 128 128 128  # CROSS
+5284 0000 128 128 128 128  # NONE
+6133 0008 128 128 128 128  # START
+6138 0000 128 128 128 128  # NONE
+# end at boundary 6300

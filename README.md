@@ -216,7 +216,9 @@ North American disc, the crate has all its texts.
 **The built-in mods** come with the game, off by default:
 
 - `level select` — one row that opens the list of the game's levels, bosses and areas at once; choosing one starts it through
-  the game's own saved-level path (from the main menu as a new game would, from the pause menu with the current progress).
+  the game's own saved-level path (from the main menu as a new game would, from the pause menu with the current progress). The
+  level starts with the character its own start gives, alone: nothing of the level left comes along (Cortex beside Crash, the
+  Rollerbrawl of Cavern Catastrophe).
 - `speedrun mode` — one real-time timer (mm:ss.cc) in the game's font, centred at the top of the safe area, started at NEW
   GAME or the first level entered. The in-game time and a split on every level entry / exit are written into a
   `--record-pad` recording (`# split …` lines: a recorded run carries its timer and its splits). Practice save states on a
@@ -309,12 +311,45 @@ Release zips (`twinsanityevolved-<platform>.zip`, one per platform) contain the 
 Closing the window quits.
 
 **Display.** The title's OPTIONS > GRAPHIC OPTIONS page carries the port's display rows beside retail's centre screen and
-widescreen: aspect ratio (auto = the TV's 4:3 / normal / wide / 16:10 / ultra-wide), resolution (1x..4x: the PS2's own size and its multiples), texture filter
+widescreen: aspect ratio (auto = the TV's 4:3 / normal / wide / 16:10 / ultra-wide (21:9) / super wide (32:9)), resolution (1x..4x: the PS2's own size and its multiples), texture filter
 (original / point / bilinear), vsync, display mode (windowed / fullscreen / borderless) — applied at once and written to
 `~/.twinsanityevolved/ps2r.ini` (`video.aspect`, `video.scale`, `video.texture_filter`, `video.vsync`, `video.fullscreen`;
-the centre-screen move as `video.custom_offset_x/y`). The page's last row is the FPS COUNTER (labelled "fps overlay", off by
+the centre-screen move as `video.custom_offset_x/y`). The aspect ratio is the picture's shape, and with the game's own
+WIDESCREEN row on it is also the shape the game draws for: at wide (16:9) the game draws as on a 16:9 TV, at 16:10, 21:9
+and 32:9 it draws that shape -- the same height of the world, more of it at the sides -- with the movies at their own shape
+in the middle, and at 21:9 and 32:9 the menus and the HUD keep a 16:9 TV's layout in the middle of the picture. With
+WIDESCREEN off the game draws for 4:3 and the picture is that frame stretched to the shape. The page's last row is the FPS COUNTER (labelled "fps overlay", off by
 default): the SHOWN fps over the game Hz, top-right, drawn with the game's own menu font; `display.fps_counter` in ps2r.ini,
 `--fps-counter on|off` for one run.
+
+**Resolution.** The RESOLUTION row draws the picture at the PS2's own size (1x) or at 2, 3 or 4 times its width and
+height. At 4x the European disc's 512 by 512 picture becomes 2048 by 2048: 16 times the PS2's pixels (3x is 9 times, so
+4x is 1.8 times 3x). The game's mist, the 10th dimension's haze, the waterfalls and the explosions are see-through
+layers drawn over the scene, and each layer is drawn over every pixel it covers, so where they pile up the graphics
+chip's work grows with the resolution: a computer that holds 60 frames a second at 3x can drop below 60 at 4x there. If
+it does, choose 3x.
+
+**Cutscenes at 4x.** A 4x picture has 16 times the PS2's pixels. On an Apple M4 the cutscenes keep 60 frames a second at
+3x; at 4x the Psychetron's cutscene after Madame Amberly draws a couple of hundred large glowing layers over each other
+(up to 28 screens' worth of blended pixels a picture) and held about 34 before the fast fragment program, 60 with it; the
+bear's ride on Totem Hokum ends with a few slow pictures; on a slower GPU these two fall behind first. The cutscenes that read the next
+area while they play, such as the walk from the core's entrance into the lab, no longer stall at a camera cut when the GPU
+is behind: their textures are prepared ahead of their first use, as on the PS Vita, instead of the game waiting for each
+one.
+
+**Shadows on crates.** Crash's shadow falls on the top of a crate he stands or jumps over; on the PS2 it never falls on a
+crate. The PS2's picture is the reference for everything else, and this is the one place the port departs from it on
+purpose. Why the PS2 refused it: the shadow is a column cast straight down from the character to a fixed depth below his
+feet, and the GS darkens every pixel inside it, so through a crate the column darkens the top and also a band down the
+side it passes and a line along the bottom rail's ledge. The artists turned the shadow off on every crate's material (FBA,
+the frame alpha's top bit that the shadow volumes skip), and that lost the top too. The port keeps that bit on everything
+the column should not darken and clears it only on a crate's floors: the triangles that face up (within 45 degrees of
+straight up, the game's own floor bound) with no part of the crate above them, found once per model by a ray up from each
+triangle's centre. The bottom rail's ledge faces up too but lies under the top's rim, so it keeps the bit, as the sides do.
+The same rule applies to any upright object whose material sets FBA; a tilted one, and every character's skin,
+stays as on the PS2. The triangles are drawn in their own order, so nothing else in the picture changes by a single pixel
+(`tools/judges/crate_shadow_judge.py`). `video.shadows_on_crates = on|off` in ps2r.ini (on by default; off gives the PS2's
+picture exactly), `--shadows-on-crates on|off` for one run.
 
 **Frame rate.** The same page's FRAME RATE row (after VSYNC): 30 · 60 · 120 · 144 · 240 · uncapped, default 60; applied at
 once, written as `video.frame_rate` in ps2r.ini, `--frame-rate <value>` for one run. The game always runs at normal speed:
@@ -450,13 +485,30 @@ practice states (F9 / F10 / F11) are separate.
 **Settings** live in `~/.twinsanityevolved/ps2r.ini` (created on the first play run; `--config PATH` / `--config none`),
 or in the game folder's `ps2r.ini` when the launcher made one (it passes `--config <folder>/ps2r.ini`):
 the two languages (`game.text_language`, `game.speech_language`; the older `game.language` read for both when they are
-absent), the game rate (`game.hz`), the display rows (`video.*`, `display.fps_counter`), the disc speed of the loads
+absent), the game rate (`game.hz`), the display rows (`video.*`, `display.fps_counter`), the shadows on the crates' tops
+(`video.shadows_on_crates`, see Display; not on a menu), the disc speed of the loads
 (`disc.speed = device | console`, see Loading screens; not on a menu), the PS
 Vita's frame-rate lock (`display.tick_lock = auto | 60 | 30`, read by the PS Vita version), the mods
 (`mods.<id>.enabled`) and the game folder's own folders (`paths.memcards`, `paths.mods`: relative to the folder when
 inside it); every row is also changed from the title's OPTIONS menu and applied at once, and from the launcher's
-Settings page. Save files: `~/.twinsanityevolved/memcards` (vanilla) and `memcards-mods` (while any mod is on); practice
+Settings page. One setting of the file alone, not on a menu: `game.route_steps = reached | retail` -- reached, the
+default, lets a script's chaser reach the route's step the disc's script data makes it miss (Evil Crash in Bandicoot
+Pursuit, who on the console stops at the first step of the chase and no longer follows Cortex); retail keeps the
+console's stop. Save files: `~/.twinsanityevolved/memcards` (vanilla) and `memcards-mods` (while any mod is on); practice
 states `~/.twinsanityevolved/practice/`.
+
+**Game rules** (`ps2r.ini` only, not on a menu; the speedrun mod's runs keep the original game's rules for both):
+
+- `game.slide_steering = fixed | retail` (default `fixed`). A knee slide turns toward the stick's direction for its first
+  moments; in the last frame of that steering the original game divides by the part of the frame left before the steering
+  ends, so at 60 Hz that frame turns the slide far past its direction (tens of degrees; on the 60 Hz console a different
+  amount every slide). `fixed` takes the time left as no less than half a frame, so that frame turns at most twice its share
+  of the angle, as at the PAL disc's 50 Hz, where the original game does not swing and nothing changes. `retail` keeps the
+  swing.
+- `game.invincible_to_explosions = on | off` (default `off`). The third Aku Aku mask makes Crash invincible for 8 seconds:
+  enemies and other hits take nothing, but the original game lets a hit of 50 or more through, and every explosion's is 100
+  (a nitro or TNT crate kills an invincible Crash). `on` spares an invincible character explosions too, as the classic games'
+  Aku Aku did.
 
 **Reporting a problem:** report what you see with the binary's build id (`BUILD-ID` beside it in a release
 zip, or the commit it was built from), the level and a screenshot -- and, when you can, an F5 save state taken right
@@ -555,11 +607,15 @@ nothing is asked unless a plan or the knob below asks, and the PS2 never asks. T
 - `message NAME ID [FROM]` -- the user message ID sent to NAME's instance from FROM's, as a script's SendUserMessage sends one;
 - `counter N V [NAME]` -- the game counter N (0..999) set to V, or with NAME that instance's own counter N (0..3), as a script's
   SetCounter sets one;
+- `hitpoints N [NAME]` -- the player's (or NAME's) hit points set to N (0..255), as a script's SetHitPoints sets a character's
+  (2 is Aku Aku's first mask, 3 the shining one: the next mask picked up makes the character invincible);
 - `until-graph NAME GRAPH [STATE] [MAX_FRAMES]` -- the plan waits until NAME's instance runs that behaviour graph (at that state).
 
 Each request is logged as `[te.test] b BOUNDARY: SPEC`; `reach.py` writes a recording's as the entry's `test`, and the legs of
 `verify.py` and the judge replay them with `TE_TEST_ACTIONS=SPEC@BOUNDARY;SPEC@BOUNDARY...` (each at the first boundary of play
-from its boundary on).
+from its boundary on). `TE_TRACE_MOVES=1` adds the probe's `[move]` lines: every boundary of a knee slide (its state, the time
+into it, the facing's and the slide's yaw) and every change of the played character's hit points and invincibility, with the
+last contact's kinds and damage.
 
 Which cutscenes CROSS may skip is the table the game asks (`Platform::System::CutsceneSkippable`: for each graph a director's
 runner runs as its cutscene starts, and at CROSS for each graph the cutscene's agents run;
@@ -775,7 +831,9 @@ off), `TE_GFX_PARTICLE_UNCLAMPED=0|2` (the particle emitter with its VU clamps f
 block and their packets compared, a line every 1024 blocks; by default an ARM processor leaves the clamps out of a block
 whose floats are all finite: the same packets), `TE_GFX_SHADOW_DIAG=1` (the shadow composite without its stencil test),
 `TE_GFX_NO_SHADOWS=1` (volumes counted, never
-composited), `TE_GFX_NO_DECALS=1`, `TE_GFX_NO_PASSES=1` (a material's first shader only), `TE_MATH_STUB=collision,rays,joints`
+composited), `TE_GFX_DIAG_FLOORS=1` / `=paint` (each FBA model part's floors, the up-facing triangles its own model covers and
+the draws' runs, and the instances kept whole for not standing upright / those floors painted flat magenta: the pixels that
+take the shadow on a crate), `TE_GFX_NO_DECALS=1`, `TE_GFX_NO_PASSES=1` (a material's first shader only), `TE_MATH_STUB=collision,rays,joints`
 (those maths stubbed), `TE_GFX_DIAG_PRESENT=N` / `TE_GFX_DIAG_FLAT=1` (one present's model draws logged with state, screen
 box, colours and the material's shaders / painted by clip mode), with `TE_GFX_DIAG_PRESENT=N`: `TE_GFX_DIAG_VERTS=1` (every
 vertex of that present's draws logged: bucket, screen position, GS Z, depth test / write) and `TE_GFX_DIAG_MARK_BUCKET=a,b`
@@ -804,18 +862,36 @@ On a computer the driver keeps what the GPU reads: the same events are counted w
 
 At the high resolutions (the RESOLUTION row's 2x..4x): `TE_GFX_GPU_TIMERS=1|phases|breaks` (the GPU phase timer: after every pace line, the GPU's
 milliseconds, the pixels drawn and the drawing thread's time per phase of a frame -- the clear, the sky, the opaque scene,
-the blended draws, the shadow volumes and their composite, the screen copies, the HUD, the present; `1` cuts at every phase,
+the blended draws, the shadow volumes and their composite, the screen copies, the HUD, the present, and the window's worst
+frame with its phases; `1` cuts at every phase,
 or only where the frame's render pass ends on a tile-based GPU such as Apple's; not free there: the hub at 4x on an Apple
-M4 presents 56 frames a second with it, 60 without), `TE_GFX_SKY_LAST=0|abN` (the sky's layers drawn first, as before,
+M4 presents 56 frames a second with it, 60 without), `TE_GFX_EAGER_TEXTURES=0` (the textures decoded on the game thread at
+their load and made with the game thread waiting for the drawing thread, as before, instead of decoded ahead on the builders
+and made between pictures -- the default on every platform; `TE_LOAD_CENSUS=1` prints what each window loaded and waited
+for), `TE_GFX_SKY_LAST=0|abN` (the sky's layers drawn first, as before,
 instead of after the opaque scene / switched on and off every N presents), `TE_GFX_SHADOW_REGION=0|abN` (the shadow
-passes over the whole frame, as before, instead of the volumes' tiles only / switched), `TE_GFX_SCALE_AB=N` (the internal
-scale switched between the setting and 1x every N presents), `TE_GFX_DUMP_TARGET=1` (the dumps at the frame target's own
-size, 2048x2048 at 4x, instead of the presented picture).
+passes over the whole frame, as before, instead of the volumes' tiles only / switched), `TE_GFX_PS2_FAST=0|abN` (every
+draw with the full PS2 fragment program, as before, instead of its fast form -- the same source with the arms no draw of
+the port turns on folded away, the same pixels, 2.4 times faster per pixel on an Apple M4 / switched),
+`TE_GFX_SCALE_AB=N` (the internal scale switched between the setting and 1x every N presents), `TE_GFX_DUMP_TARGET=1` (the
+dumps at the frame target's own size, 2048x2048 at 4x, instead of the presented picture). A burst of explosions is the particles' fill: a 4x frame draws
+16 times the PS2's pixels for each particle quad, and the roof's detonator under its 24 TNT and nitro crates draws about
+24 frames' worth of particle quads at its peak -- 100 million pixels a frame at 4x, of the PS2's full fragment program
+(on an Apple M4 the blended draws then take 7-10 ms of the GPU's frame instead of about 2). `TE_GFX_PARTICLE_CENSUS=1` (a line
+per census window: the particle blocks, their triangles and the frames' worth of pixels they cover, in Mpx at the scale),
+`TE_GFX_PARTICLE_CULL=0|abN` (the particle triangles that draw nothing -- every fragment fails the alpha test and is
+discarded -- drawn as before instead of left out / switched every N presents: the same picture),
+`TE_GFX_PARTICLE_SCALE=title|abN` (the additive particles -- the fire, the glows -- drawn at the PS2's own resolution into a
+picture of their own and added to the frame: 1/16 of their pixels at 4x, the particles as soft as on the PS2, and an edge
+of the scene in front of them decided per PS2 pixel -- a stair step up to four pixels deep along a crate shard's edge over the
+fire at 4x; off by default; `frame` = the default; abN switched every N presents).
 
 Judges: `tools/ci/judges.sh --iso IMAGE` runs every regression judge (`tools/judges/*.py` with `fixtures/judges/*.json`:
-skins, shadows, particles, decals, dust, the crystals, Ice Climb's cave passes against the exact GS depth test, the orb,
-the ocean, the heap layout, display, language, mods,
-speedrun, infinite lives, fps counter, voice pitch, the loads at the device's speed; the mods folder's disc overlay, the mod importer and the game's Mods page; the Arabic
+skins, shadows, the shadow on a crate's top, particles, decals, dust, the crystals, Ice Climb's cave passes against the exact
+GS depth test, the textures made ahead of their use (two cutscenes that read their next area: nothing decoded or waited for on
+the game thread, the pictures the synchronous path's), the orb,
+the ocean, the heap layout, the fill a 4x frame draws where the fog and the waterfall are, display, language, mods,
+speedrun, infinite lives, the pause screen's gem row, fps counter, voice pitch, the loads at the device's speed; the mods folder's disc overlay, the mod importer and the game's Mods page; the Arabic
 language pack; `--set launcher`: the launcher's cold install, its Settings and Mods pages and the no-codenames lint; `--set
 discs`: the disc identity, the region-aware loader and, with `--ntsc-iso`, the North American boot) and
 `tools/judges/run_graphics_judges.sh` (the self-test frames; the legal screen and

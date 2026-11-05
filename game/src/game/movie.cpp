@@ -228,9 +228,29 @@ void MoviePlayer::Draw()
     u32 screenWidth = g_DisplayWidth;
     u32 screenHeight = g_DisplayHeight;
     f32 widthLevel = static_cast<f32>(screenWidth);
+    f32 heightLevel = static_cast<f32>(screenHeight);
     Platform::Movie::Area area = {0, 0, static_cast<s32>(screenWidth), static_cast<s32>(screenHeight)};
     bool widescreen = flags.widescreen != 0;
-    if (g_WidescreenTv != 0)
+    f32 tv = TvAspect();
+    if (g_WidescreenTv != 0 && tv != WideAspect)
+    {
+        // TwinsanityEvolved: on another wide shape (16:10, 21:9, 32:9) the movie keeps its own in the middle: as much of the
+        // width as it is narrower than the picture, or of the height as it is wider
+        f32 picture = widescreen ? WideAspect : NarrowAspect;
+        if (picture < tv)
+        {
+            f32 share = picture / tv;
+            area.x = static_cast<s32>(widthLevel * 0.5f - widthLevel * (share * 0.5f));
+            area.width = static_cast<s32>(widthLevel * share);
+        }
+        else
+        {
+            f32 share = tv / picture;
+            area.y = static_cast<s32>(heightLevel * 0.5f - heightLevel * (share * 0.5f));
+            area.height = static_cast<s32>(heightLevel * share);
+        }
+    }
+    else if (g_WidescreenTv != 0)
     {
         if (!widescreen)
         {
@@ -240,7 +260,7 @@ void MoviePlayer::Draw()
     }
     else if (widescreen)
     {
-        area.y = static_cast<s32>(static_cast<f32>(screenHeight) * 0.5f - widthLevel * (WidePictureHeight * 0.5f));
+        area.y = static_cast<s32>(heightLevel * 0.5f - widthLevel * (WidePictureHeight * 0.5f));
         area.height = static_cast<s32>(widthLevel * WidePictureHeight);
     }
 

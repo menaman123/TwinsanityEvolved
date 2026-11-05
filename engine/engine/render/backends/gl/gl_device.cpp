@@ -174,6 +174,16 @@ bool GlDevice::Init(std::function<void()> swap) {
         }
     }
     executor_ = std::make_unique<GlDrawExecutor>(*this);
+#if !PS2R_HOST_VITA
+    {
+        // the fast PS2 program (gl_shader_library.cpp kFastConstants) and its in-run A/B: TE_GFX_PS2_FAST=abN switches it
+        // off / on every N presents, on first (the arms share the host's load)
+        const char* f = std::getenv("TE_GFX_PS2_FAST");
+        if (f && std::strncmp(f, "ab", 2) == 0 && shaders_.Ps2FastProgram()) ps2_fast_ab_ = f[2] ? std::max(1, std::atoi(f + 2)) : 600;
+        std::fprintf(stderr, "[gl] PS2 fast program: %s\n", !shaders_.Ps2FastProgram() ? "not built (TE_GFX_PS2_FAST=0, or the build refused it)"
+                     : ps2_fast_ab_ ? "on, switched off / on in turns (TE_GFX_PS2_FAST=abN)" : "on");
+    }
+#endif
 #if PS2R_HOST_VITA
     {
         // the per-draw call sequence (TE_GFX_DRAW_LEGACY=1: as before the drawing thread's rework, for an A/B; TE_AB=draws flips it in-run)
@@ -1570,6 +1580,67 @@ void GlDevice::CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, cons
     state_.BindTex2D(0);
 }
 
+#if !PS2R_HOST_VITA
+// The particle pass's depth (Backend::DepthDown): a nearest blit of the depth attachment -- one source sample per destination
+// pixel, the scissor off (a blit obeys it), the depth writes on (the next draw sets its own mask)
+bool GlDevice::DepthDown(SurfaceId src_color, SurfaceId src_depth, SurfaceId dst_color, SurfaceId dst_depth) {
+    const GlSurface* sc = Surface(src_color);
+    const GlSurface* dc = Surface(dst_color);
+    const GlSurface* sd = Surface(src_depth);
+    const GlSurface* dd = Surface(dst_depth);
+    if (!sc || !dc || !sd || !dd || !sd->rbo || !dd->rbo) return false;
+    EndDrawRun();
+    const uint32_t src_fbo = BindTarget(src_color, src_depth);
+    const uint32_t dst_fbo = BindTarget(dst_color, dst_depth);
+    if (!src_fbo || !dst_fbo) return false;
+    state_.BindFb(GL_READ_FRAMEBUFFER, src_fbo);
+    state_.Disable(GL_SCISSOR_TEST);
+    state_.DepthMask(true);
+    ++timer_work_;
+    glBlitFramebuffer(0, 0, GLint(sc->desc.width), GLint(sc->desc.height), 0, 0, GLint(dc->desc.width), GLint(dc->desc.height),
+                      GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    state_.BindFb(GL_READ_FRAMEBUFFER, dst_fbo);
+    return true;
+}
+
+// The particle pass added to the frame (Backend::AddTarget): the scan-out program's quad over the whole destination, the
+// source through the linear sampler, blended ONE + ONE with the alpha written not at all
+bool GlDevice::AddTarget(SurfaceId src, SurfaceId dst_color, SurfaceId dst_depth) {
+    const GlSurface* s = Surface(src);
+    const GlSurface* dc = Surface(dst_color);
+    if (!s || !s->tex || !dc) return false;
+    EndDrawRun();
+    if (!BindTarget(dst_color, dst_depth)) return false;
+    state_.Viewport(0, 0, int(dc->desc.width), int(dc->desc.height));
+    state_.Disable(GL_SCISSOR_TEST);
+    state_.Disable(GL_DEPTH_TEST);
+    state_.Disable(GL_STENCIL_TEST);
+    state_.Enable(GL_BLEND);
+    state_.BlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    state_.BlendFuncSeparate(GL_ONE, GL_ONE, GL_ZERO, GL_ONE);
+    state_.ColorMask(true, true, true, false);
+    state_.UseProgram(shaders_.ScanoutProgram());
+    state_.ActiveTexture(GL_TEXTURE0);
+    state_.BindTex2D(s->tex);
+    glBindSampler(0, present_linear_);
+    glUniform1i(shaders_.ScanoutTextureLocation(), 0);
+    // the source covers the destination: texture coordinates 0..1 over the clip square, the two targets' rows alike
+    static const float kQuad[]{-1.f, -1.f, 0.f, 0.f, 1.f, -1.f, 1.f, 0.f, -1.f, 1.f, 0.f, 1.f,
+                               1.f,  -1.f, 1.f, 0.f, 1.f, 1.f,  1.f, 1.f, -1.f, 1.f, 0.f, 1.f};
+    state_.BindArrayBuffer(scanout_vbo_);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof kQuad, kQuad);
+    state_.BindVertexArray(scanout_vao_);
+    ++timer_work_;
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindSampler(0, 0);   // (the next draw observes only its own texture parameters)
+    state_.BindVertexArray(0);
+    state_.UseProgram(0);
+    state_.ColorMask(true, true, true, true);
+    state_.Enable(GL_DEPTH_TEST);
+    return true;
+}
+#endif
+
 #if PS2R_HOST_VITA
 namespace {
 // vitaGL r1488's framebuffer object (source/shared.h `framebuffer`): the GLuint glGenFramebuffers hands out IS its
@@ -2107,6 +2178,13 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         c.swap_us += swap_us;
         if (swap_us > c.swap_max_us) c.swap_max_us = swap_us;
         c.presents++;
+#if !PS2R_HOST_VITA
+        if (ps2_fast_ab_ > 0 && ++ps2_fast_ab_presents_ % uint64_t(ps2_fast_ab_) == 0) {
+            shaders_.SetPs2FastEnabled(!shaders_.Ps2FastEnabled());
+            std::fprintf(stderr, "[gl] PS2 fast program A/B: present %llu: %s\n", (unsigned long long)ps2_fast_ab_presents_ + 1,
+                         shaders_.Ps2FastEnabled() ? "on" : "off");
+        }
+#endif
 #if PS2R_HOST_VITA
         // the A/B arm this frame was drawn with (the lean programs' when their A/B runs, else the fast program's), and its A/B
         const int arm = vita_ps2_lean_ab_ ? (shaders_.Ps2LeanEnabled() ? 1 : 0) : (shaders_.Ps2FastEnabled() ? 1 : 0);

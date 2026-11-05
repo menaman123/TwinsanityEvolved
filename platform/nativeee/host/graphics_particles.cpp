@@ -10,19 +10,24 @@
 // (DrawDistortionBlock, the frame copied as their texture) are not drawn yet.
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "engine/ee/cpu/cpu_state.h"
 #include "engine/vu/hle/vu1_hle_contract.h"
 #include "games/slus_20909_crash_twinsanity/vu1_library/zero_kick.h"
 #include "graphics_internal.h"
+#include "te_display.h"
 #include "te_prof.h"
 #include "ps2e_seam.h"
 #include "te_gfx_layout.h"
 #include "te_host.h"
+
+extern "C" uint64_t te_graphics_presents();   // host/graphics.cpp: frames presented so far
 
 namespace {
 using te::gfx::Draw;
@@ -48,6 +53,9 @@ constexpr uint32_t kGsPrimTriStrip = 4;
 constexpr uint32_t kNode = 0x20, kTop = 0x100, kPacketBase = 0x180, kPacketStride = 0x50;
 constexpr uint32_t kEmitterPc = 0x1720, kClassCTpc = 0x1820;
 constexpr uint32_t kQwCount = 1024;
+// The game's widescreen option (renderer.h g_WidescreenTv, D_0030AAC4) and 16:9 as the game has it (WideAspect)
+constexpr uint32_t kWidescreenTv = 0x0030AAC4;
+constexpr float kWideAspect = 0x1.C71C72p+0f;
 
 // ParticleLook as the game lays it out (include/platform/graphics.h): gravity, texture[4], hexagons (bool, padded), the 12
 // hexagon corners, 64 steps of {shape[6], colour[4]}
@@ -238,7 +246,140 @@ void CheckUnclamped(const Vu1HleInput& in, uint8_t* memory, const Vu1HleOutput& 
                      "draw)\n", (unsigned long long)n, (unsigned long long)g_checkDiffered.load(std::memory_order_relaxed),
                      (unsigned long long)g_checkTrianglesDiffered.load(std::memory_order_relaxed));
 }
-bool RunBlock(const uint8_t* block, const GuestTable& table, const float (*matrix)[4], float time, std::vector<std::vector<uint8_t>>& kicks) {
+// ---- the triangles that draw nothing, and the particles' fill census --------------------------------------------------------
+// The largest vertex alpha (PS2 scale) at which every fragment of a triangle fails the draw's alpha test and is discarded
+// whole -- AFAIL KEEP writes neither colour nor alpha nor depth -- or -1 when the state gives no such bound. The fragment's
+// alpha (gl_shader_sources.cpp, the PS2 program) is at most its vertex alpha Av: MODULATE with the texture's alpha is
+// trunc(Av * At / 128) with At at most 128 (the decoded texel's alpha back on the PS2 scale), MODULATE / DECAL / HIGHLIGHT
+// without it (TCC 0) and an untextured draw give Av itself; the vertex colour reaches the program as a normalised byte, and
+// between three vertices its interpolated value rounds to at most their largest. So a triangle whose three vertices' alpha
+// are at most the bound draws nothing (the frame copy as the texture is left alone: its texels are the frame's own).
+int DiscardedAlphaBound(const ps2e_draw_state& s) {
+    if (!s.alpha_test || s.alpha_fail != 0 || s.texture == PS2E_DRAW_TEXTURE_FRAME_COPY) return -1;
+    if (s.texture && s.tcc && s.tfx != PS2E_DRAW_TFX_MODULATE) return -1;   // (the texel's own alpha, or added to Av)
+    switch (s.alpha_method) {
+        case PS2E_DRAW_ATST_NEVER: return 255;
+        case PS2E_DRAW_ATST_GREATER: return s.alpha_reference;            // passes only above AREF
+        case PS2E_DRAW_ATST_GEQUAL:
+        case PS2E_DRAW_ATST_EQUAL: return int(s.alpha_reference) - 1;     // passes only at AREF or above it
+        default: return -1;
+    }
+}
+
+// TE_GFX_PARTICLE_CULL: the particle triangles that draw nothing (DiscardedAlphaBound) left out of the draw lists -- the same
+// picture, none of their fragments shaded. 1 (default) on; 0 off; abN on and off every N presents (an in-run A/B of the GPU's
+// time; read at the first block, as TE_GFX_PARTICLE_UNCLAMPED is)
+bool CullOn() {
+    static const long mode = [] {
+        const char* v = std::getenv("TE_GFX_PARTICLE_CULL");
+        if (!v || !*v) return 1L;
+        if (std::strncmp(v, "ab", 2) == 0) return -std::max(1L, v[2] ? std::atol(v + 2) : 600L);
+        return v[0] == '0' ? 0L : 1L;
+    }();
+    if (mode >= 0) return mode == 1;
+    const bool on = (te_graphics_presents() / uint64_t(-mode)) % 2 == 0;
+    static std::atomic<int> last{-1};
+    if (last.exchange(on ? 1 : 0, std::memory_order_relaxed) != (on ? 1 : 0))
+        std::fprintf(stderr, "[te.gfx] TE_GFX_PARTICLE_CULL A/B: present %llu: %s\n", (unsigned long long)te_graphics_presents(),
+                     on ? "on" : "off");
+    return on;
+}
+
+// TE_GFX_PARTICLE_CENSUS=1: the particles' fill per present in the census window (te::gfx::ParticleFillLine) -- the blocks,
+// the triangles drawn and their area clipped to the frame (the fragments the GPU makes for them, overdraw included), the
+// triangles left out and the area they had, the share the title-resolution pass can take (TE_GFX_PARTICLE_SCALE: additive
+// draws). The areas are summed on the build threads in 1/16 pixel (one atomic add a block)
+bool CensusOn() {
+    static const bool on = [] { const char* v = std::getenv("TE_GFX_PARTICLE_CENSUS"); return v && v[0] == '1'; }();
+    return on;
+}
+std::atomic<uint64_t> g_fillBlocks{0}, g_fillTriangles{0}, g_fillArea{0}, g_cutTriangles{0}, g_cutArea{0}, g_cutBlocks{0},
+    g_additiveArea{0};
+
+// a triangle's area inside the frame (0..w x 0..h; frame pixels): the polygon clipped against the four edges
+double ClippedArea(const ps2e_draw_vertex* t, float w, float h) {
+    float px[9], py[9], qx[9], qy[9];
+    int n = 3;
+    for (int i = 0; i < 3; ++i) { px[i] = t[i].x; py[i] = t[i].y; }
+    for (int edge = 0; edge < 4 && n; ++edge) {
+        int m = 0;
+        auto inside = [&](float x, float y) { return edge == 0 ? x >= 0.f : edge == 1 ? x <= w : edge == 2 ? y >= 0.f : y <= h; };
+        for (int i = 0; i < n; ++i) {
+            const int j = (i + 1) % n;
+            const bool a = inside(px[i], py[i]), b = inside(px[j], py[j]);
+            if (a) { qx[m] = px[i]; qy[m] = py[i]; ++m; }
+            if (a != b) {
+                float s;
+                if (edge < 2) {
+                    const float e = edge == 0 ? 0.f : w;
+                    s = (e - px[i]) / (px[j] - px[i]);
+                    qx[m] = e;
+                    qy[m] = py[i] + s * (py[j] - py[i]);
+                } else {
+                    const float e = edge == 2 ? 0.f : h;
+                    s = (e - py[i]) / (py[j] - py[i]);
+                    qx[m] = px[i] + s * (px[j] - px[i]);
+                    qy[m] = e;
+                }
+                ++m;
+            }
+        }
+        n = m;
+        std::memcpy(px, qx, sizeof(float) * size_t(n));
+        std::memcpy(py, qy, sizeof(float) * size_t(n));
+    }
+    double a = 0;
+    for (int i = 0; i < n; ++i) {
+        const int j = (i + 1) % n;
+        a += double(px[i]) * py[j] - double(px[j]) * py[i];
+    }
+    return std::fabs(a) * 0.5;
+}
+
+bool AdditiveParticles(const ps2e_draw_state& s) { return te::gfx::AdditiveParticleState(s); }
+
+// A block's lowered triangles: those that draw nothing (bound >= 0) taken out in place, the census's sums noted
+void FilterBlock(std::vector<ps2e_draw_vertex>& verts, int bound, bool additive, float w, float h) {
+    const bool census = CensusOn();
+    if (bound < 0 && !census) return;
+    const size_t n = verts.size() / 3 * 3;
+    size_t kept = 0, cut = 0;
+    double area = 0, cutArea = 0;
+    for (size_t i = 0; i < n; i += 3) {
+        const ps2e_draw_vertex* t = &verts[i];
+        const bool nothing = bound >= 0 && t[0].a <= bound && t[1].a <= bound && t[2].a <= bound;
+        if (census) (nothing ? cutArea : area) += ClippedArea(t, w, h);
+        if (nothing) {
+            ++cut;
+            continue;
+        }
+        if (kept != i) std::memmove(&verts[kept], t, 3 * sizeof(ps2e_draw_vertex));
+        kept += 3;
+    }
+    verts.resize(kept);
+    if (cut) g_cutTriangles.fetch_add(cut, std::memory_order_relaxed);
+    if (cut && !kept) g_cutBlocks.fetch_add(1, std::memory_order_relaxed);
+    if (!census) return;
+    g_fillBlocks.fetch_add(1, std::memory_order_relaxed);
+    g_fillTriangles.fetch_add(kept / 3, std::memory_order_relaxed);
+    g_fillArea.fetch_add(uint64_t(area * 16.0 + 0.5), std::memory_order_relaxed);
+    g_cutArea.fetch_add(uint64_t(cutArea * 16.0 + 0.5), std::memory_order_relaxed);
+    if (additive) g_additiveArea.fetch_add(uint64_t(area * 16.0 + 0.5), std::memory_order_relaxed);
+}
+
+// The particles' widths on a picture drawn for another wide shape (te_display.h WidescreenAspect, with the game's widescreen
+// option on): the table's quads are as wide in the frame as the game made them for 16:9 -- its projection's squeeze is not in
+// them -- so drawn for 32:9 they would show twice as wide as on a 16:9 TV. 16:9's share of the shape's width keeps a 16:9
+// TV's; 1 (the table as it is) at auto, 4:3, 16:9 and with the option off.
+float ParticleWidths() {
+    const float shape = te::display::WidescreenAspect();
+    if (!(shape > 0.f)) return 1.f;
+    const uint8_t* on = te::GuestPointer(kWidescreenTv, 1);
+    return on && *on ? kWideAspect / shape : 1.f;
+}
+
+bool RunBlock(const uint8_t* block, const GuestTable& table, const float (*matrix)[4], float time, float widths,
+              std::vector<std::vector<uint8_t>>& kicks) {
     static const unsigned short profPrep = te::prof::Register("particle: block image"), profStub = te::prof::Register("particle: VU stub (RunC)"),
                                 profEmit = te::prof::Register("particle: VU emitter (RunCCont)");
     te::prof::Scope scope(profPrep);
@@ -259,9 +400,31 @@ bool RunBlock(const uint8_t* block, const GuestTable& table, const float (*matri
     img.SetQw(kVuHeadAddress, head);
     img.SetQw(kVuHeadAddress + 1, table.distortion);
     for (uint32_t q = 0; q < 3; ++q) img.SetQw(kVuStepsAddress + q, &table.corners[q * 4]);
-    for (uint32_t s = 0; s < kRenderSteps; ++s) {
-        img.SetQw(kVuStepsAddress + 3 + 2 * s, table.steps[s].shape);
-        img.SetQw(kVuStepsAddress + 4 + 2 * s, &table.steps[s].shape[4]);
+    if (widths == 1.f) {
+        for (uint32_t s = 0; s < kRenderSteps; ++s) {
+            img.SetQw(kVuStepsAddress + 3 + 2 * s, table.steps[s].shape);
+            img.SetQw(kVuStepsAddress + 4 + 2 * s, &table.steps[s].shape[4]);
+        }
+    } else {
+        // a step's shape: the corner (x, y), the edge to the next corner (x, y), the opposite corner (x, y): the across terms
+        // scaled, each word of the first four keeping its low byte (the step's colour, packed there by the table's writer)
+        const auto across = [widths](float& v, bool colour) {
+            uint32_t was, now;
+            std::memcpy(&was, &v, 4);
+            const float scaled = v * widths;
+            std::memcpy(&now, &scaled, 4);
+            if (colour) now = (now & ~0xFFu) | (was & 0xFFu);
+            std::memcpy(&v, &now, 4);
+        };
+        for (uint32_t s = 0; s < kRenderSteps; ++s) {
+            float step[8];
+            std::memcpy(step, &table.steps[s], sizeof step);
+            across(step[0], true);
+            across(step[2], true);
+            across(step[4], false);
+            img.SetQw(kVuStepsAddress + 3 + 2 * s, step);
+            img.SetQw(kVuStepsAddress + 4 + 2 * s, &step[4]);
+        }
     }
     // the block: its GIF tag then the 32 particle records (the VIF unpack of quadwords - 1 to TOPS)
     const uint32_t quadwords = kParticleBlockBytes / 16 - 1;   // the RET tag's count: GIF tag + particles
@@ -319,6 +482,10 @@ bool RunBlock(const uint8_t* block, const GuestTable& table, const float (*matri
 }  // namespace
 
 namespace te::gfx {
+bool AdditiveParticleState(const ps2e_draw_state& s) {
+    return s.blend && s.blend_a == 0 && s.blend_b == 2 && (s.blend_c == 0 || s.blend_c == 2) && s.blend_d == 1 && !s.depth_write &&
+           s.stencil == PS2E_DRAW_STENCIL_OFF && !s.no_colour_write && s.texture != PS2E_DRAW_TEXTURE_FRAME_COPY;
+}
 void SetParticleFull(bool on) { g_particleFull.store(on, std::memory_order_relaxed); }
 std::string ParticleCensusLine(double frames) {
     if (frames <= 0) return std::string();
@@ -327,6 +494,27 @@ std::string ParticleCensusLine(double frames) {
     char b[256];
     std::snprintf(b, sizeof b, "[te.gfx.vita] particle builds per present: blocks %.1f by the emitter's form: unclamped %.1f, "
                   "clamped %.1f (TE_GFX_PARTICLE_UNCLAMPED %d)\n", u + c, u, c, UnclampedMode());
+    return b;
+}
+std::string ParticleFillLine(double frames, int frame_w, int frame_h, int scale) {
+    const uint64_t cut = g_cutTriangles.exchange(0, std::memory_order_relaxed), cutBlocks = g_cutBlocks.exchange(0, std::memory_order_relaxed);
+    const uint64_t blocks = g_fillBlocks.exchange(0, std::memory_order_relaxed), tris = g_fillTriangles.exchange(0, std::memory_order_relaxed);
+    const double area = double(g_fillArea.exchange(0, std::memory_order_relaxed)) / 16.0;
+    const double cutArea = double(g_cutArea.exchange(0, std::memory_order_relaxed)) / 16.0;
+    const double additive = double(g_additiveArea.exchange(0, std::memory_order_relaxed)) / 16.0;
+    if (frames <= 0 || (!blocks && !cut)) return std::string();
+    const double frame = double(std::max(1, frame_w)) * double(std::max(1, frame_h)), s2 = double(scale) * double(scale);
+    char b[512];
+    if (!CensusOn()) {
+        std::snprintf(b, sizeof b, "[te.gfx] particles per present: %.1f triangles left out that draw nothing (TE_GFX_PARTICLE_CULL %s), "
+                      "%.1f blocks with none left\n", double(cut) / frames, CullOn() ? "on" : "off", double(cutBlocks) / frames);
+        return b;
+    }
+    std::snprintf(b, sizeof b, "[te.gfx] particles per present (TE_GFX_PARTICLE_CENSUS): blocks %.1f, triangles drawn %.1f covering %.2f "
+                  "frames (%.2f Mpx at %dx; additive %.2f frames), left out that draw nothing %.1f triangles covering %.2f frames "
+                  "(%.2f Mpx; %.1f blocks with none left; TE_GFX_PARTICLE_CULL %s)\n", double(blocks) / frames, double(tris) / frames,
+                  area / frame / frames, area * s2 / 1e6 / frames, scale, additive / frame / frames, double(cut) / frames,
+                  cutArea / frame / frames, cutArea * s2 / 1e6 / frames, double(cutBlocks) / frames, CullOn() ? "on" : "off");
     return b;
 }
 }
@@ -445,6 +633,11 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
     const float tw = textured ? float(1 << m.texture->texture.widthPower) : 1.f;
     const float th = textured ? float(1 << m.texture->texture.heightPower) : 1.f;
     const float offX = te::gfx::GsOriginX(), offY = te::gfx::GsOriginY();
+    const float widths = ParticleWidths();
+    // the triangles that draw nothing (TE_GFX_PARTICLE_CULL) by the draw's own state; the frame's size for the census
+    const int bound = CullOn() ? DiscardedAlphaBound(state) : -1;
+    const bool additive = AdditiveParticles(state);
+    const float frameW = float(te::gfx::ScreenW()), frameH = float(te::gfx::ScreenH());
     auto& scene = te::gfx::Scene();
     static const char* const diagPresent = std::getenv("TE_GFX_DIAG_PRESENT");
     // the counts a worker's blocks reached, folded in here (the census is the game thread's)
@@ -467,6 +660,7 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
         }
         if (!count) return;
         te::gfx::DeferredBuild& build = te::gfx::ReserveDeferred(bucket, state);
+        build.particles = true;
         std::vector<uint8_t>& input = build.input;
         input.resize(kInputHead + count * kParticleBlockBytes);
         std::memcpy(input.data(), t, sizeof(GuestTable));
@@ -480,7 +674,7 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
             std::memcpy(&next, block + 4, 4);
             blockAddress = next;   // (the walk above: the blocks before the last are NEXT tags)
         }
-        te::gfx::PostBuild(build, [&build, time, offX, offY, tw, th, textured] {
+        te::gfx::PostBuild(build, [&build, time, widths, offX, offY, tw, th, textured, bound, additive, frameW, frameH] {
             TE_PROF_SCOPE("particle build");
             thread_local GuestTable table;
             thread_local std::vector<std::vector<uint8_t>> kicks;
@@ -492,7 +686,7 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
             const auto* mat = reinterpret_cast<const float(*)[4]>(m16);
             for (size_t at = kInputHead; at + kParticleBlockBytes <= in.size(); at += kParticleBlockBytes) {
                 kicks.clear();
-                if (!RunBlock(in.data() + at, table, mat, time, kicks)) {
+                if (!RunBlock(in.data() + at, table, mat, time, widths, kicks)) {
                     deferredRefused++;
                     break;
                 }
@@ -500,6 +694,7 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
                 {
                     TE_PROF_SCOPE("particle: lower packets");
                     for (const auto& packet : kicks) te::gfx::LowerPackedPacket(packet, offX, offY, tw, th, textured, verts);
+                    FilterBlock(verts, bound, additive, frameW, frameH);
                 }
                 const size_t n = verts.size() / 3 * 3;
                 if (!n) continue;
@@ -520,7 +715,7 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
         uint32_t tag;
         std::memcpy(&tag, block, 4);
         kicks.clear();
-        if (!RunBlock(block, *t, matrix, time, kicks)) {
+        if (!RunBlock(block, *t, matrix, time, widths, kicks)) {
             scene.particle_refused++;
             static int said = 0;
             if (said++ < 4) std::fprintf(stderr, "[te.gfx] particle block %#x: the program declined\n", address);
@@ -528,6 +723,7 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
         }
         verts.clear();
         for (const auto& packet : kicks) te::gfx::LowerPackedPacket(packet, offX, offY, tw, th, textured, verts);
+        FilterBlock(verts, bound, additive, frameW, frameH);
         if (!verts.empty()) {
             // the interpolator: particle blocks are the NEWEST picture's as they are. A block is a pool node the game re-fills
             // and re-chains every frame (a particle dies, another is born into its slot; the chain is re-sorted), so the quads
@@ -536,6 +732,7 @@ void ps2e_graphics_draw_particle_block(ps2e_u32 blockAddress, ps2e_u32 tableAddr
             // picture rate they read as they do at 60.
             (void)chainIndex;
             Draw& d = te::gfx::OpenDraw(bucket, state);
+            d.particles = true;
             d.verts.insert(d.verts.end(), verts.begin(), verts.end());
             te::gfx::CloseDraw(bucket);
             scene.particle_triangles += verts.size() / 3;

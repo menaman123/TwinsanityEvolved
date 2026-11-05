@@ -10,7 +10,9 @@
 //  - the fragments that passed the depth and stencil tests: GL_SAMPLES_PASSED queries, one per phase (the shaded fill);
 //    where the producer knows the area a phase rasterises (a full-frame pass, a copy, the volumes' triangles) it notes it
 //    (NoteFill) and that area is the phase's fill;
-//  - the drawing thread's wall time between two phase marks (the GL calls' CPU time and what the driver blocks on).
+//  - the drawing thread's wall time between two phase marks (the GL calls' CPU time and what the driver blocks on);
+//  - the window's worst frame: the one with the most GPU time, its segments and the fragments its phases passed (a spike
+//    one frame long is a thirtieth of a 30-frame window's mean).
 // Where the time queries cut the frame. On an immediate-mode GPU (the desktop's discrete and integrated GPUs) a query
 // boundary costs nothing: every phase is timed apart (mode kPhases). On a TILE-BASED GPU (Apple's: the renderer string
 // starts with "Apple") a query boundary inside a render pass ends the pass -- the tiles stored and loaded again, ~0.36 ms
@@ -107,6 +109,12 @@ private:
         double ms = 0;
     };
     std::vector<Seg> win_segs_;   // in the order the masks first appeared
+    // the window's worst frame (the most GPU time): its segments and the fragments its phases passed -- a spike one
+    // frame long is a thirtieth of a window's mean
+    double worst_ms_ = 0;
+    std::vector<Seg> worst_segs_;
+    double worst_samples_[kPhaseCount] = {};
+    std::vector<Seg> frame_segs_;   // (Harvest's scratch: the frame being read)
     double win_samples_[kPhaseCount] = {}, win_fill_[kPhaseCount] = {}, win_cpu_[kPhaseCount] = {};
     uint64_t win_count_[kPhaseCount] = {};
     double win_swap_ = 0;

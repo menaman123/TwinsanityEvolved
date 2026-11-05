@@ -69,6 +69,14 @@ struct ps2e_draw {
     // the open bracket's -- its clear and mark were made over them, its composite is drawn over them
     std::vector<int> next_shadow_rects, bracket_rects;
     bool next_shadow_region = false, bracket_region = false;
+    // The particles at the title's resolution (ps2e_draw_particle_pass_*; the desktop): the off-screen target of the frame's
+    // logical size (its colour, its depth -- the frame's taken down at each pass's start -- and a Cd copy tracker of its own),
+    // whether a pass is open (the vertex draws go into it), and the census: passes and the draws drawn in them
+    render::SurfaceId ptc_color, ptc_depth;
+    render::CdCopyState ptc_cd_copy;
+    int ptc_w = 0, ptc_h = 0;
+    bool ptc_open = false, ptc_failed = false;
+    uint64_t ptc_passes = 0, ptc_draws = 0;
     std::string renderer;         // the backend's GPU / driver name (ps2e_draw_renderer)
     int target_logged_scale = 1;  // the frame target's scale the log last named (MakeFrameTarget)
     bool early_casters = false;  // this frame's casters marked before its translucent draws (kEarlyCasterBit)
@@ -394,6 +402,15 @@ const ps2e_draw::MeshBounds* FindBounds(ps2e_draw* d, uint32_t mesh) {
 inline double TargetPixels(const ps2e_draw* d) {
     return double(d->frame_w) * d->scale * double(d->frame_h) * d->scale;
 }
+// The open particle pass (ps2e_draw_particle_pass_begin) added to the frame and closed; every entry that draws into the frame
+// otherwise, copies it or reads it closes it first (the producer closes it itself after its run)
+void EndParticlePass(ps2e_draw* d) {
+    if (!d->ptc_open) return;
+    d->ptc_open = false;
+    TimerFill(d, PS2E_DRAW_PHASE_BLENDED, TargetPixels(d));   // (the composite: a pass over the whole target)
+    d->device->AddTarget(d->ptc_color, d->color, d->depth);
+    d->mesh_run = false;
+}
 #if !PS2R_HOST_VITA
 // frame-pixel rectangles (x0, y0, x1, y1, exclusive) as the target's physical texels (the GS's rows are the target's: no
 // flip), clipped to the frame; their area in physical pixels (the shadow regions': the Vita takes none)
@@ -604,7 +621,7 @@ int ps2e_draw_pump(ps2e_draw* d) {
             if (d->applied_window_mode == PS2E_DRAW_WINDOWED) {
                 const int ws = std::clamp(wscale, 1, 8);
                 // the window sized for the picture at the frame's height times the scale: the TV's 4:3 for a TV shape,
-                // the frame's own size for the pixel shape, 16:9 / 16:10 / 21:9 as chosen
+                // the frame's own size for the pixel shape, 16:9 / 16:10 / 21:9 / 32:9 as chosen
                 int aspect_mode;
                 { std::lock_guard<std::mutex> lock(d->presentation_mutex); aspect_mode = d->wanted.aspect; }
                 double aspect = double(d->frame_w) / d->frame_h;
@@ -612,6 +629,7 @@ int ps2e_draw_pump(ps2e_draw* d) {
                 else if (aspect_mode == PS2E_DRAW_ASPECT_16_9) aspect = 16.0 / 9.0;
                 else if (aspect_mode == PS2E_DRAW_ASPECT_16_10) aspect = 16.0 / 10.0;
                 else if (aspect_mode == PS2E_DRAW_ASPECT_21_9) aspect = 21.0 / 9.0;
+                else if (aspect_mode == PS2E_DRAW_ASPECT_32_9) aspect = 32.0 / 9.0;
                 d->window.Resize(int(d->frame_h * ws * aspect + 0.5), d->frame_h * ws);
                 int w = 0, h = 0;
                 SDL_GL_GetDrawableSize(d->window.Handle(), &w, &h);
@@ -905,6 +923,7 @@ void ps2e_draw_movie_counts(const ps2e_draw* d, uint64_t* drawn, uint64_t* refus
 
 void ps2e_draw_begin_frame(ps2e_draw* d, const ps2e_draw_clear* clear) {
     if (!d) return;
+    EndParticlePass(d);
     d->mesh_run = false;
     if (d->in_frame) d->device->EndDrawRun();
     // A changed internal scale takes effect at a frame's start (the target re-made before its draws); the texture
@@ -1082,6 +1101,14 @@ static render::DrawParams TargetParams(ps2e_draw* d, const ps2e_draw_state* st) 
     p.scale = uint8_t(d->scale);
     p.has_32bit_content = true;
     p.cd_copy = &d->cd_copy;
+    if (d->ptc_open) {
+        // the particle pass (ps2e_draw_particle_pass_begin): the same logical frame, into its target at the title's size
+        p.color = d->ptc_color;
+        p.depth = d->ptc_depth;
+        p.scale = 1;
+        p.cd_copy = &d->ptc_cd_copy;
+        d->ptc_draws++;
+    }
     // The counter: the frame's depth attachment is the DepthStencil24_8 surface, and the backend applies the stencil
     // test and update around this one draw (VolumeStencil).
     if (st->stencil == PS2E_DRAW_STENCIL_INSIDE) StencilProbe(d, "composite");
@@ -1551,6 +1578,9 @@ int ps2e_draw_submit(ps2e_draw* d, const ps2e_draw_state* st, const ps2e_draw_ve
         return -1;
     }
     if (!d->in_frame) ps2e_draw_begin_frame(d, nullptr);
+    // (the particle pass takes the plain colour draws the producer hands it; a stencil draw or a movie closes it)
+    if (d->ptc_open && (st->stencil != PS2E_DRAW_STENCIL_OFF || (st->texture & ps2e_draw::kMovieIdMask) == ps2e_draw::kMovieIdBase))
+        EndParticlePass(d);
     if ((st->texture & ps2e_draw::kMovieIdMask) == ps2e_draw::kMovieIdBase) return SubmitMovie(d, st, v, count);
     if (st->stencil == PS2E_DRAW_STENCIL_CLEAR) {
         // The counter's origin (15: counts 1..16 set bit 4, as the GS byte 120 + 8n set bit 7 for n in 1..16)
@@ -1953,6 +1983,7 @@ int ps2e_draw_submit_mesh(ps2e_draw* d, const ps2e_draw_state* st, uint32_t mesh
         return -1;
     }
     if (!d->in_frame) ps2e_draw_begin_frame(d, nullptr);
+    EndParticlePass(d);   // (the particle pass takes vertex draws only)
 #if PS2R_HOST_VITA
     d->frame_draws++;
     if (st->blend && st->blend_c == 2) {
@@ -2781,6 +2812,7 @@ int ps2e_draw_mark_casters_early(ps2e_draw* d) {
 #if PS2R_HOST_VITA
     return 0;   // (the re-stamp keeps these casters already: drawn again where they are still the nearest surface)
 #else
+    EndParticlePass(d);
     d->mesh_run = false;
     TimerPhase(d, PS2E_DRAW_PHASE_COMPOSITE);
     TimerFill(d, PS2E_DRAW_PHASE_COMPOSITE, TargetPixels(d));
@@ -2799,6 +2831,7 @@ int ps2e_draw_mark_casters_early_in(ps2e_draw* d, const int* rects, int n) {
     return 0;   // (the re-stamp keeps these casters already)
 #else
     if (d->stencil_diag) return ps2e_draw_mark_casters_early(d);
+    EndParticlePass(d);
     d->mesh_run = false;
     d->early_casters = false;
     if (n <= 0) return 0;   // no volume this frame: nothing reads the early casters
@@ -2963,6 +2996,7 @@ void ps2e_draw_lookup_census(const ps2e_draw* d, uint64_t out[5]) {
 
 int ps2e_draw_copy_frame(ps2e_draw* d) {
     if (!d || !d->frame_copy.surface.id) return 0;
+    EndParticlePass(d);
     d->mesh_run = false;
     if (!d->in_frame) ps2e_draw_begin_frame(d, nullptr);
 #if PS2R_HOST_VITA
@@ -2991,6 +3025,7 @@ int ps2e_draw_copy_frame_region(ps2e_draw* d, const float box[4]) {
     if (!d || !d->frame_copy.surface.id) return 0;
     // the frame's first copy is whole: the texture holds the frame before then nowhere
     if (!box || !d->frame_copy_valid || !(box[2] >= box[0]) || !(box[3] >= box[1])) return ps2e_draw_copy_frame(d);
+    EndParticlePass(d);
     d->mesh_run = false;
     if (!d->in_frame) ps2e_draw_begin_frame(d, nullptr);
     // the region in the target's physical pixels: the frame's GS rows are the target's rows (the scanout flips them for the
@@ -3014,6 +3049,64 @@ void ps2e_draw_expect_frame_copies(ps2e_draw* d, int copies) {
     if (d) d->expect_copies = copies > 0 ? copies : 0;
 }
 
+int ps2e_draw_particle_pass_begin(ps2e_draw* d) {
+#if PS2R_HOST_VITA
+    (void)d;
+    return 0;
+#else
+    if (!d || !d->device) return 0;
+    if (d->ptc_open) return 1;
+    if (!d->in_frame) ps2e_draw_begin_frame(d, nullptr);
+    if (d->scale <= 1 || !d->color.id || !d->depth.id || d->frame_w <= 0 || d->frame_h <= 0 || d->ptc_failed) return 0;
+    if (!d->ptc_color.id || d->ptc_w != d->frame_w || d->ptc_h != d->frame_h) {
+        // the pass's target at the frame's logical size (made at the first pass, re-made with the frame's size)
+        if (d->ptc_color.id) d->device->DestroySurface(d->ptc_color);
+        if (d->ptc_depth.id) d->device->DestroySurface(d->ptc_depth);
+        render::SurfaceDesc cd;
+        cd.width = uint32_t(d->frame_w);
+        cd.height = uint32_t(d->frame_h);
+        cd.scale = 1;
+        cd.format = render::SurfaceFormat::Rgba8;
+        cd.renderable = true;
+        render::SurfaceDesc dd = cd;
+        dd.format = render::SurfaceFormat::DepthStencil24_8;
+        dd.renderable = false;
+        d->ptc_color = d->device->CreateSurface(cd);
+        d->ptc_depth = d->device->CreateSurface(dd);
+        d->ptc_w = d->frame_w;
+        d->ptc_h = d->frame_h;
+        if (!d->ptc_color.id || !d->ptc_depth.id) {
+            std::fprintf(stderr, "[ps2e_draw] the particle pass's %dx%d target could not be made: the particles draw into the frame\n",
+                         d->frame_w, d->frame_h);
+            if (d->ptc_color.id) d->device->DestroySurface(d->ptc_color);
+            if (d->ptc_depth.id) d->device->DestroySurface(d->ptc_depth);
+            d->ptc_color = d->ptc_depth = render::SurfaceId{};
+            d->ptc_failed = true;
+            return 0;
+        }
+    }
+    d->mesh_run = false;
+    // the frame's depth taken down (one sample per title pixel), then the target's colour cleared to nothing added
+    TimerFill(d, PS2E_DRAW_PHASE_BLENDED, double(d->frame_w) * d->frame_h);
+    if (!d->device->DepthDown(d->color, d->depth, d->ptc_color, d->ptc_depth)) return 0;
+    d->device->Clear(d->ptc_color, d->ptc_depth, 0u, 0.f, render::kClearColor);
+    d->ptc_cd_copy = render::CdCopyState{};
+    d->ptc_open = true;
+    d->ptc_passes++;
+    return 1;
+#endif
+}
+
+void ps2e_draw_particle_pass_end(ps2e_draw* d) {
+    if (d) EndParticlePass(d);
+}
+
+void ps2e_draw_particle_pass_census(ps2e_draw* d, uint64_t* passes, uint64_t* draws) {
+    if (passes) *passes = d ? d->ptc_passes : 0;
+    if (draws) *draws = d ? d->ptc_draws : 0;
+    if (d) d->ptc_passes = d->ptc_draws = 0;
+}
+
 namespace {
 // The present's body: the frame target scanned out -- to the window and swapped (to_window), or resolved for the armed
 // capture only (ps2e_draw_capture_frame: a picture the producer measures but does not show).
@@ -3022,6 +3115,7 @@ void Scanout(ps2e_draw* d, bool to_window);
 
 void ps2e_draw_present(ps2e_draw* d) {
     if (!d) return;
+    EndParticlePass(d);
     d->mesh_run = false;
 #if PS2R_HOST_VITA
     if (d->census_every > 0 && (d->presented + 1) % uint64_t(d->census_every) == 0)
@@ -3036,6 +3130,7 @@ void ps2e_draw_present(ps2e_draw* d) {
 
 void ps2e_draw_capture_frame(ps2e_draw* d) {
     if (!d) return;
+    EndParticlePass(d);
     Scanout(d, false);
 }
 
@@ -3079,6 +3174,7 @@ void Scanout(ps2e_draw* d, bool to_window) {
     case PS2E_DRAW_ASPECT_16_9: aspect = 16.0 / 9.0; break;
     case PS2E_DRAW_ASPECT_16_10: aspect = 16.0 / 10.0; break;
     case PS2E_DRAW_ASPECT_21_9: aspect = 21.0 / 9.0; break;
+    case PS2E_DRAW_ASPECT_32_9: aspect = 32.0 / 9.0; break;
     case PS2E_DRAW_ASPECT_WINDOW: aspect = double(ww) / wh; break;
     default: break;
     }

@@ -1,0 +1,18 @@
+# twinsanityevolved padlog v1 -- LOAD GAME on the hub card (load_game.padlog to 2884: Playing, then the card notice), CROSS at 2950: play in the hub, Crash standing; START at 3500: the pause page. The display judge's wide-shape legs (a card whose save has the widescreen option on: tools/warp_save.py --widescreen on)
+# language-bank=0  -- recorded against the disc's slot-0 text bank (the replay pins it)
+1 0000 128 128 128 128  # NONE
+1273 0008 128 128 128 128  # START
+1278 0000 128 128 128 128  # NONE
+1353 0040 128 128 128 128  # DOWN
+1356 0000 128 128 128 128  # NONE
+1403 4000 128 128 128 128  # CROSS
+1408 0000 128 128 128 128  # NONE
+1803 0040 128 128 128 128  # DOWN
+1806 0000 128 128 128 128  # NONE
+1903 4000 128 128 128 128  # CROSS
+1906 0000 128 128 128 128  # NONE
+2950 4000 128 128 128 128  # CROSS
+2954 0000 128 128 128 128  # NONE
+3500 0008 128 128 128 128  # START
+3504 0000 128 128 128 128  # NONE
+# end at boundary 3720

@@ -1,0 +1,19 @@
+# twinsanityevolved padlog v1 -- Bandicoot Pursuit's chase: LOAD GAME on the hub card warped to levels\altearth\hub\altdoc at story 21 (tools/warp_save.py --story 21), the notice after the load dismissed, then the neutral pad; the chase is started and kept going by test requests (the fixture's TE_TEST_ACTIONS: Crash on the chase's checkpoint crate at 2968, on the piston's pressure pad at 3068) -- recorded from an autopilot plan of game-state waits and teleports
+# text-language=english
+# speech-language=english
+# end at boundary 3720
+1 0000 128 128 128 128  # NONE
+1271 0008 128 128 128 128  # START
+1276 0000 128 128 128 128  # NONE
+1354 0040 128 128 128 128  # DOWN
+1357 0000 128 128 128 128  # NONE
+1404 4000 128 128 128 128  # CROSS
+1409 0000 128 128 128 128  # NONE
+1804 0040 128 128 128 128  # DOWN
+1807 0000 128 128 128 128  # NONE
+1904 4000 128 128 128 128  # CROSS
+1907 0000 128 128 128 128  # NONE
+2880 4000 128 128 128 128  # CROSS
+2883 0000 128 128 128 128  # NONE
+2920 4000 128 128 128 128  # CROSS
+2923 0000 128 128 128 128  # NONE

@@ -24,7 +24,7 @@ public:
         // presenter / the video stack and persisted in the settings file:
         // video.fullscreen (0 windowed, 1 fullscreen, 2 borderless), video.scale
         // (0 = native window, 1..4), video.vsync (0/1), video.aspect (the
-        // AspectSel order: 0 auto, 1 4:3, 2 16:9, 3 16:10, 4 21:9) and
+        // AspectSel order: 0 auto, 1 4:3, 2 16:9, 3 16:10, 4 21:9, 5 32:9) and
         // video.render_rate (0 = 60, 1 = display).
         SetDisplayMode, SetScale, SetVSync, SetAspect, SetRenderRate,
         // The Display page's texture filtering rows (video.texture_filter: the

@@ -43,5 +43,9 @@ void DumpHulls(const std::string& name, uint64_t boundary);   // the named insta
 // --trace-bodies N: every N boundaries one [bodies] line per floating body of the physics world (buoyancy > 0; every body with
 // TE_TRACE_BODIES_ALL=1): its place, motion, rotation, water level, forces and its instance's box (the icebergs' depth)
 void InstallBodies(unsigned every);
+// TE_TRACE_MOVES=1: the played character's moves the frame-rate and pickup judges read -- a [move] line every boundary of a
+// knee slide (its crouch state, the time into it and its length, the facing's and the slide's yaw in degrees, the turn asked
+// for) and one at every change of the hit points, the invincibility or the character's mode
+void InstallMoves();
 
 }  // namespace te::probe

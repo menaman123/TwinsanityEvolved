@@ -777,6 +777,12 @@ void Platform::Graphics::SetDisplaySetting(u32, u32)
 {
 }
 
+// The PS2's widescreen option draws for a 16:9 TV
+f32 Platform::Graphics::WidescreenAspect()
+{
+    return 0.0f;
+}
+
 // The PS2 draws no texts of its own over the game's (TwinsanityEvolved D57)
 void Platform::Graphics::QueuePlatformTexts(Renderer*, Font*)
 {

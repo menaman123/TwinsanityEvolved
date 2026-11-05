@@ -108,6 +108,22 @@ void ApplyTestRequests(GameProgress* progress)
 
             break;
         }
+        case Platform::System::TestHitPoints:
+        {
+            // As SetHitPoints sets a character's (game/src/game/commandsagents.cpp): the part's hit points, alive again with some
+            auto* node = instance != nullptr ? static_cast<AgentNode*>(GetGameNode(&instance->nodes, NodeCharacter)) : nullptr;
+            auto* character = node != nullptr ? static_cast<CharacterAgent*>(node->agent) : nullptr;
+            if (character != nullptr && request.value >= 0)
+            {
+                static_cast<CreaturePart*>(character->part)->flags.hitPoints = static_cast<u32>(request.value);
+                if (request.value > 0)
+                {
+                    character->state.dead = 0;
+                }
+            }
+
+            break;
+        }
         default:
             break;
         }

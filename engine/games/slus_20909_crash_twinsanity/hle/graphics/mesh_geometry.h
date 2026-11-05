@@ -33,6 +33,12 @@ public:
         Vector guard{};
         std::array<float, 2> scroll{};
         bool clipped = true;
+        // BuildPrepared: the triangles' classes -- classes[at] for the triangle the strip vertex `at` (Prepared's index)
+        // ends -- and `classed(user, c)`, called with the sink's `user` before the first triangles handed over and at each
+        // change of class: the sink's calls are cut there (a strip's body in runs of one class), the triangles, their
+        // order and their values as without it. Null = one class, no calls.
+        const uint8_t* classes = nullptr;
+        void (*classed)(void* user, uint8_t c) = nullptr;
     };
     enum class Result { Ok, InvalidAsset, InvalidGeometry, UnsupportedState, LimitExceeded };
     enum class Layout { Sky, Unlit };

@@ -470,11 +470,24 @@ void Platform::Graphics::QueuePlatformTexts(Renderer* renderer, Font* font)
             continue;
         }
 
+        Vector2 place = {line.x, line.y};
+        Vector2 size = {line.scale, line.scale};
+        if (g_WidescreenTv != 0)
+        {
+            // with the game's widescreen option on, a line goes where the game puts its own widgets: squeezed towards the
+            // screen's edge it is aligned to (its middle for a centred line), and on a picture wider than 16:9 kept in the
+            // middle 16:9 (renderer.cpp FitPlaceToScreen / FitSizeToScreen); with it off, as the platform placed it
+            const u32 across = line.alignment & (TextAlignment::Left | TextAlignment::Right);
+            Vector2 anchor = {across == TextAlignment::Left ? 0.0f : across == TextAlignment::Right ? 1.0f : 0.5f, 0.5f};
+            FitPlaceToScreen(0, &anchor, &place);
+            FitSizeToScreen(0, &size);
+        }
+
         renderer->font = font;
         renderer->colour = line.colour;
-        renderer->textScale.x = line.scale;
-        renderer->textScale.y = line.scale;
+        renderer->textScale.x = size.x;
+        renderer->textScale.y = size.y;
         renderer->textAlignment.value = line.alignment;
-        QueueText(renderer, line.text, line.x, line.y);
+        QueueText(renderer, line.text, place.x, place.y);
     }
 }

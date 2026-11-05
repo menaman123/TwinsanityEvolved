@@ -41,12 +41,13 @@ constexpr const char* kTable[MenuStrings::kCount][kLanguageCount] = {
     {"borderless", "borderless", "sans bordure", "randlos", "sin bordes", "senza bordi"},
     // Aspect
     {"aspect ratio", "aspect ratio", "format image", "seitenverhaeltnis", "relacion aspecto", "formato immagine"},
-    // AspectAuto, AspectNormal (4:3), AspectWide (16:9), AspectWideTen (16:10), AspectUltraWide (21:9)
+    // AspectAuto, AspectNormal (4:3), AspectWide (16:9), AspectWideTen (16:10), AspectUltraWide (21:9), AspectSuperWide (32:9)
     {"auto", "auto", "auto", "auto", "auto", "auto"},
     {"normal", "normal", "normal", "normal", "normal", "normale"},
     {"wide", "wide", "large", "breit", "ancho", "largo"},
     {"wide ten", "wide ten", "large dix", "breit zehn", "ancho diez", "largo dieci"},
     {"ultra wide", "ultra wide", "ultra large", "ultrabreit", "ultra ancho", "ultra largo"},
+    {"super wide", "super wide", "super large", "superbreit", "super ancho", "super largo"},
     // RenderRate
     {"render rate", "render rate", "cadence rendu", "bildrate", "tasa de cuadros", "frequenza render"},
     // RateSixty, RateDisplay

@@ -395,6 +395,18 @@ u32 Platform::System::InfiniteLives()
     return 0;
 }
 
+// The console's slide steers as retail's
+u32 Platform::System::SlideSteeringFixed()
+{
+    return 0;
+}
+
+// The console's explosions go through the invincibility
+u32 Platform::System::InvincibleToExplosions()
+{
+    return 0;
+}
+
 // The console's loader waits its seconds
 u32 Platform::System::LoadReadsDone()
 {
@@ -403,6 +415,12 @@ u32 Platform::System::LoadReadsDone()
 
 // No table of verified skips on the PS2: its cutscenes play as retail's
 u32 Platform::System::CutsceneSkippable(u32)
+{
+    return 0;
+}
+
+// The console aims where retail's straight-ahead point is
+u32 Platform::System::RouteStepsReached()
 {
     return 0;
 }

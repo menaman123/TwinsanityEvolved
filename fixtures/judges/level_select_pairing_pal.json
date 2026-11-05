@@ -1,0 +1,15 @@
+{
+  "disc": "PAL SLES-52568; deterministic headless, no scene draws: --deterministic --no-sdl-input --no-audio --skip-movies --config none --trace-state --trace-player 0; TE_GFX_HEADLESS=1 TE_GFX_NO_DRAW=1 TE_CUTSCENE_STATE=<state_every>; an empty --mc-dir",
+  "state_every": 150,
+  "span": 302,
+  "cases": [
+    {"name": "cavern_rollerbrawl_to_hub", "row_from": 3, "row_to": 1, "chunk_to": "levels\\earth\\hub\\beach",
+     "warp_padlog": "fixtures/padlogs/level_select_warp_row3_row1.padlog", "warp_stop_at": 4340,
+     "reference_padlog": "fixtures/padlogs/level_select_row1.padlog", "reference_stop_at": 2750},
+    {"name": "cavern_rollerbrawl_to_rooftop", "row_from": 3, "row_to": 16, "chunk_to": "levels\\school\\rooftop\\roof01",
+     "warp_padlog": "fixtures/padlogs/level_select_warp_row3_row16.padlog", "warp_stop_at": 4330,
+     "reference_padlog": "fixtures/padlogs/level_select_row16.padlog", "reference_stop_at": 2740}
+  ],
+  "why": "the warp pad logs walk the title's level select to row 3 (Cavern Catastrophe: StartingPlay 2357, its Rollerbrawl -- pairing 3, Cortex the second -- from ~2700), press START at 2959 and walk the pause menu's options (the cursor still on mods from the title's walk) -> mods -> level select (the list still on row 3) to row 1 (the hub: B's StartingPlay 4024) or row 16 (Rooftop Rampage, Nina: 4009); the references walk the title's level select straight to row 1 (StartingPlay 2431) / row 16 (2424). Both B starts are compared from their StartingPlay line to +302 (state lines at +0, +2, +152, +302): the pairing, the character, the second and the player's place (0.05)",
+  "frozen": "2026-11-03 product: RED on the warp of fixes 7276bc0 (the hub: pairing 3 crash+cortex, Crash pulled from (6.33, -0.42, -39.60) to (-1.67, 0.80, -24.64) by the Rollerbrawl's vehicle; the rooftop: pairing 3 nina+cortex, Cavern's Cortex at Nina's place, his death behaviour by +122, the fade at +320, the restart keeping the pairing and the deaths repeating to a GameOver), GREEN with the warp that writes play alone and no second character into the summary for every row"
+}

@@ -152,7 +152,31 @@ bool GlDrawExecutor::BindPs2Program(const Step& s, bool again, bool mesh, uint32
     (void)tex_w;
     (void)tex_h;
     (void)first;
+    // the fast program while every uniform it folds holds its constant, else the full one (both hold every value the
+    // uniform cache sent: it names the program it writes)
+    const GlShaderLibrary& sh = dev_.Shaders();
+    if (sh.Ps2FastProgram()) {
+        bool fast = sh.Ps2FastEnabled();
+        if (fast) {
+            int n = 0;
+            const GlShaderLibrary::FastConstant* fc = GlShaderLibrary::FastConstants(&n);
+            const GlUniformLocations& L = sh.Locations();
+            const GlUniformCache& u = dev_.Uniforms();
+            for (int i = 0; i < n && fast; ++i) fast = u.Holds1i(L.*(fc[i].field), fc[i].value);
+        }
+        dev_.State().UseProgram(fast ? sh.Ps2FastProgram() : sh.Ps2Program());
+        if (fast) Census().draws_ps2_fast++;
+        else Census().draws_ps2_full++;
+    }
     return false;
+#endif
+}
+
+void GlDrawExecutor::BindForUniforms() {
+#if PS2R_HOST_VITA
+    if (legacy_) dev_.State().UseProgram(dev_.Shaders().Ps2Program());
+#else
+    if (!dev_.Shaders().Ps2FastProgram()) dev_.State().UseProgram(dev_.Shaders().Ps2Program());
 #endif
 }
 
@@ -287,7 +311,7 @@ DrawResult GlDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource& t
     GlStateCache& st = dev_.State();
     GlUniformCache& u = dev_.Uniforms();
     const GlUniformLocations& L = dev_.Shaders().Locations();
-    if (BindFullFirst()) st.UseProgram(dev_.Shaders().Ps2Program());   // (the Vita sets uniforms unbound, binds the draw's program last)
+    BindForUniforms();   // (the Vita sets uniforms unbound, binds the draw's program last)
     // the vertices as they are (a native mesh draw leaves its transform on: cached, so a run of these sets nothing)
     u.Set1i(L.native, 0);
     u.Set1i(L.uv_mode, 0);
@@ -378,7 +402,7 @@ DrawResult GlDrawExecutor::DrawMesh(const gs::DrawIr& ir, const gs::TextureSourc
     GlStateCache& st = dev_.State();
     GlUniformCache& u = dev_.Uniforms();
     const GlUniformLocations& L = dev_.Shaders().Locations();
-    if (BindFullFirst()) st.UseProgram(dev_.Shaders().Ps2Program());
+    BindForUniforms();
     u.Set2f(L.screen_size, static_cast<float>(s.render_w), static_cast<float>(s.render_h));
     TextureUniforms(ir, tex, p, s);
     RegisterUniforms(ir, p);
@@ -404,7 +428,7 @@ DrawResult GlDrawExecutor::DrawMesh(const gs::DrawIr& ir, const gs::TextureSourc
     ScissorState(ir, s);
     // the destination copy and the shader blend's set-up above may have used other programs: the PS2 program again,
     // with the mesh's transform, before its draw
-    if (BindFullFirst()) st.UseProgram(dev_.Shaders().Ps2Program());
+    BindForUniforms();
     u.Set1i(L.native, 1);
     u.Set1i(L.uv_mode, textured ? 2 : 3);
     if (textured) u.Set2f(L.uv_scale, static_cast<float>(t.uv_pre_w), static_cast<float>(t.uv_pre_h));
@@ -820,7 +844,7 @@ DrawResult GlDrawExecutor::DrawRaw(const gs::DrawIr& ir, const gs::TextureSource
     GlStateCache& st = dev_.State();
     GlUniformCache& u = dev_.Uniforms();
     const GlUniformLocations& L = dev_.Shaders().Locations();
-    if (BindFullFirst()) st.UseProgram(dev_.Shaders().Ps2Program());
+    BindForUniforms();
     u.Set1i(L.native, 2);
     u.Set1i(L.uv_mode, textured ? 2 : 3);
     if (textured) u.Set2f(L.uv_scale, static_cast<float>(t.uv_pre_w), static_cast<float>(t.uv_pre_h));
@@ -832,7 +856,7 @@ DrawResult GlDrawExecutor::DrawRaw(const gs::DrawIr& ir, const gs::TextureSource
     DepthState(ir, p, s);
     ScissorState(ir, s);
     // the destination copy and the shader blend's set-up above may have used other programs
-    if (BindFullFirst()) st.UseProgram(dev_.Shaders().Ps2Program());
+    BindForUniforms();
 #if PS2R_HOST_VITA
     if (RawVertexDraws()) {
         // THE RAW VERTEX DRAW: the vertices written straight into the ring's slice (GlVertexStream::ReserveRaw:

@@ -50,6 +50,9 @@ public:
     // the first is the value of its pair's location too (pairs: first-program location, second-program location; empty:
     // none). Sent at once to both, or (deferred) by Sync(1).
     void SetMirror(const std::vector<std::pair<int, int>>& pairs);
+    // Elsewhere than the Vita (whose glUniform* writes the program a location belongs to): the two programs the locations
+    // belong to, written with glProgramUniform* whichever program is bound (0, 0: the bound one, as glUniform* writes it)
+    void SetPrograms(uint32_t first, uint32_t second);
     // the last value Set1i recorded for `loc` is `v` (false when unknown: never set, cleared, or the cache bypassed)
     bool Holds1i(int loc, int v) const;
     // A watched location (e.g. the uniforms a program variant's choice reads): WatchedMutations counts the changes of
@@ -109,7 +112,10 @@ private:
     Shadow& Slot(int loc);
     // a changed value of entry `idx`: sent at once, or marked for every program (deferred)
     void Changed(int idx, int loc);
-    void Send(const Shadow& s, int loc);
+    // `s` to location `loc` of program `program` (0 the first, 1 the mirrored one)
+    void Send(const Shadow& s, int loc, int program);
+    void SendArray(int loc, int count, const float* v, int program);
+    uint32_t programs_[2] = {0, 0};   // SetPrograms (0: the bound program)
     Entry table_[kSize];
     SentRecord* sent_shadow_ = nullptr;   // [kSize] when checking
     struct ArraySent { float v[2][32]; int count[2] = {0, 0}; };

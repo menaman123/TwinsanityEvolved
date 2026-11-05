@@ -150,9 +150,36 @@ void GlUniformCache::Watch(int loc) {
     if (idx >= 0) table_[idx].watched = true;
 }
 
-void GlUniformCache::Send(const Shadow& s, int loc) {
+void GlUniformCache::SetPrograms(uint32_t first, uint32_t second) {
+#if PS2R_HOST_VITA
+    (void)first;
+    (void)second;
+#else
+    programs_[0] = first;
+    programs_[1] = second;
+#endif
+}
+
+void GlUniformCache::Send(const Shadow& s, int loc, int program) {
     if (loc < 0) return;
     ++sent_;
+#if !PS2R_HOST_VITA
+    // (a named program: written whether or not it is bound -- the mirrored program is not when its pair's value changes)
+    if (const uint32_t p = programs_[program & 1]) {
+        switch (s.kind) {
+            case 1: glProgramUniform1i(p, loc, s.i[0]); break;
+            case 2: glProgramUniform1f(p, loc, s.f[0]); break;
+            case 3: glProgramUniform2f(p, loc, s.f[0], s.f[1]); break;
+            case 4: glProgramUniform3f(p, loc, s.f[0], s.f[1], s.f[2]); break;
+            case 5: glProgramUniform2i(p, loc, s.i[0], s.i[1]); break;
+            case 6: glProgramUniform4f(p, loc, s.f[0], s.f[1], s.f[2], s.f[3]); break;
+            default: --sent_; break;
+        }
+        return;
+    }
+#else
+    (void)program;
+#endif
     switch (s.kind) {
         case 1: glUniform1i(loc, s.i[0]); break;
         case 2: glUniform1f(loc, s.f[0]); break;
@@ -164,14 +191,28 @@ void GlUniformCache::Send(const Shadow& s, int loc) {
     }
 }
 
+void GlUniformCache::SendArray(int loc, int count, const float* v, int program) {
+    if (loc < 0) return;
+    ++sent_;
+#if !PS2R_HOST_VITA
+    if (const uint32_t p = programs_[program & 1]) {
+        glProgramUniform4fv(p, loc, count, v);
+        return;
+    }
+#else
+    (void)program;
+#endif
+    glUniform4fv(loc, count, v);
+}
+
 void GlUniformCache::Changed(int idx, int loc) {
     Entry& e = table_[idx];
     if (e.watched) ++watched_mutations_;
     if (!deferred_) {
-        Send(e.shadow, loc);
+        Send(e.shadow, loc, 0);
         NoteSent(idx, 0);
         if (mirror_on_) {
-            Send(e.shadow, MirrorOf(loc));
+            Send(e.shadow, MirrorOf(loc), 1);
             NoteSent(idx, 1);
         }
         return;
@@ -197,7 +238,7 @@ void GlUniformCache::Sync(int program) {
         Entry& e = table_[idx];
         if (!(e.dirty & bit)) continue;
         e.dirty &= uint8_t(~bit);
-        Send(e.shadow, program == 0 ? e.loc : MirrorOf(e.loc));
+        Send(e.shadow, program == 0 ? e.loc : MirrorOf(e.loc), program);
         NoteSent(int(idx), program);
     }
     pending_[program].clear();
@@ -207,8 +248,7 @@ void GlUniformCache::Sync(int program) {
         a.dirty &= uint8_t(~bit);
         const int to = program == 0 ? a.loc : MirrorOf(a.loc);
         if (to < 0) continue;
-        ++sent_;
-        glUniform4fv(to, a.count, a.v);
+        SendArray(to, a.count, a.v, program);
         NoteArraySent(k, program);
     }
     Check(program);
@@ -246,13 +286,10 @@ void GlUniformCache::Set4fv(int loc, int count, const float* v) {
         slot->dirty = mirror_on_ ? 3 : 1;
         return;
     }
-    ++sent_;
-    glUniform4fv(loc, count, v);
+    SendArray(loc, count, v, 0);
     if (kept) NoteArraySent(int(slot - arrays_), 0);
     if (mirror_on_) {
-        const int to = MirrorOf(loc);
-        if (to >= 0) ++sent_;
-        glUniform4fv(to, count, v);
+        SendArray(MirrorOf(loc), count, v, 1);
         if (kept) NoteArraySent(int(slot - arrays_), 1);
     }
     if (kept) slot->dirty = 0;
@@ -282,14 +319,16 @@ GlUniformCache::Shadow& GlUniformCache::Slot(int loc) {
 
 // The setters: the value recorded; unchanged -> nothing; changed -> Changed (sent at once, or marked for the programs).
 // A location the table cannot hold (full, or the cache bypassed) is sent at once to both programs, as before.
-#define TE_UNIFORM_SET(KIND, SAME, STORE, CALL)                                   \
+#define TE_UNIFORM_SET(KIND, SAME, STORE)                                         \
     if (loc < 0) return;                                                          \
     const int idx = SlotIndex(loc);                                               \
     if (idx < 0) {                                                                \
+        Shadow s;                                                                 \
+        s.kind = KIND;                                                            \
+        STORE;                                                                    \
         ++mutations_;                                                             \
-        ++sent_;                                                                  \
-        CALL(loc);                                                                \
-        if (mirror_on_) { const int to = MirrorOf(loc); if (to >= 0) ++sent_; CALL(to); } \
+        Send(s, loc, 0);                                                          \
+        if (mirror_on_) Send(s, MirrorOf(loc), 1);                                \
         return;                                                                   \
     }                                                                             \
     Shadow& s = table_[idx].shadow;                                               \
@@ -299,41 +338,25 @@ GlUniformCache::Shadow& GlUniformCache::Slot(int loc) {
     ++mutations_;                                                                 \
     Changed(idx, loc);
 
-void GlUniformCache::Set1i(int loc, int v) {
-#define TE_CALL(L) glUniform1i(L, v)
-    TE_UNIFORM_SET(1, s.i[0] == v, s.i[0] = v, TE_CALL)
-#undef TE_CALL
-}
+void GlUniformCache::Set1i(int loc, int v) { TE_UNIFORM_SET(1, s.i[0] == v, s.i[0] = v) }
 
-void GlUniformCache::Set1f(int loc, float v) {
-#define TE_CALL(L) glUniform1f(L, v)
-    TE_UNIFORM_SET(2, s.f[0] == v, s.f[0] = v, TE_CALL)
-#undef TE_CALL
-}
+void GlUniformCache::Set1f(int loc, float v) { TE_UNIFORM_SET(2, s.f[0] == v, s.f[0] = v) }
 
 void GlUniformCache::Set2f(int loc, float a, float b) {
-#define TE_CALL(L) glUniform2f(L, a, b)
-    TE_UNIFORM_SET(3, s.f[0] == a && s.f[1] == b, (s.f[0] = a, s.f[1] = b), TE_CALL)
-#undef TE_CALL
+    TE_UNIFORM_SET(3, s.f[0] == a && s.f[1] == b, (s.f[0] = a, s.f[1] = b))
 }
 
 void GlUniformCache::Set2i(int loc, int a, int b) {
-#define TE_CALL(L) glUniform2i(L, a, b)
-    TE_UNIFORM_SET(5, s.i[0] == a && s.i[1] == b, (s.i[0] = a, s.i[1] = b), TE_CALL)
-#undef TE_CALL
+    TE_UNIFORM_SET(5, s.i[0] == a && s.i[1] == b, (s.i[0] = a, s.i[1] = b))
 }
 
 void GlUniformCache::Set3f(int loc, float a, float b, float c) {
-#define TE_CALL(L) glUniform3f(L, a, b, c)
-    TE_UNIFORM_SET(4, s.f[0] == a && s.f[1] == b && s.f[2] == c, (s.f[0] = a, s.f[1] = b, s.f[2] = c), TE_CALL)
-#undef TE_CALL
+    TE_UNIFORM_SET(4, s.f[0] == a && s.f[1] == b && s.f[2] == c, (s.f[0] = a, s.f[1] = b, s.f[2] = c))
 }
 
 void GlUniformCache::Set4f(int loc, float a, float b, float c, float d) {
-#define TE_CALL(L) glUniform4f(L, a, b, c, d)
     TE_UNIFORM_SET(6, s.f[0] == a && s.f[1] == b && s.f[2] == c && s.f[3] == d,
-                   (s.f[0] = a, s.f[1] = b, s.f[2] = c, s.f[3] = d), TE_CALL)
-#undef TE_CALL
+                   (s.f[0] = a, s.f[1] = b, s.f[2] = c, s.f[3] = d))
 }
 #undef TE_UNIFORM_SET
 

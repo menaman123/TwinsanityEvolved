@@ -1,0 +1,17 @@
+{
+  "beach": {"padlog": "fixtures/padlogs/invincible_beach.padlog", "stop_at": 3100},
+  "huba": {
+    "padlog": "fixtures/padlogs/invincible_huba.padlog",
+    "chunk": "levels\\earth\\hub\\huba",
+    "stop_at": 3000,
+    "second_crate_before": "teleport -56.4",
+    "between": 2700,
+    "crab_damage": 1
+  },
+  "disc": "PAL SLES-52568; deterministic headless: --config none (or a ps2r.ini with game.invincible_to_explosions = on) --deterministic --no-sdl-input --no-audio --skip-movies --trace-state (--harness-out on the beach); TE_TRACE_MOVES=1, TE_TEST_ACTIONS from each pad log's '# test=' line",
+  "invincible_ticks": 72000,
+  "explosion_kinds": 2,
+  "explosion_damage": 100,
+  "why": "THE BEACH: NEW GAME on an empty card (recorded from fixtures/padlogs/invincible_beach.plan with the default rules), the hit points set to 3 at 2657 (TEST: the shining mask), the east cliff's Aku Aku crate spun: its mask the third, invulnerable with modeTicks 72000 at 2711 (8 s); the run into the nitro west of the start: the explosion (kinds 0x2, damage 100) takes the hit points 3 -> 0 at 2782 while invulnerable, the fade-out at 2916 and the restart (hp 2). With game.invincible_to_explosions = on two explosions are spared (2781, 2807) and the hit points stay 3 to the invincibility's end at 3195. The speedrun mod: 0 at 2782 again. JUNGLE BUNGLE: LOAD GAME on the hub card warped to huba (recorded from fixtures/padlogs/invincible_huba.plan), the iron stack's Aku Aku crate landed on (hp 3 at 2682), the river crate spun: invulnerable, modeTicks 72000 at 2766; the run into the crab takes nothing. With hitpoints 2 asked at 2700 the river crate's mask makes hp 3 without invincibility and the crab's contact (kinds 0x400, damage 1) takes one at 2818 (the hurt's 2 s, modeTicks 18000)",
+  "frozen": "2026-11-03 product: written with the explosions-while-invincible setting (game.invincible_to_explosions, Platform::System::InvincibleToExplosions) and the hitpoints test request (the qol-sm branch from fixes 7276bc0); RED on a runner without them (no spared line; the hitpoints request refused)"
+}

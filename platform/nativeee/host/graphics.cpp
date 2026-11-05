@@ -1481,6 +1481,7 @@ Draw& OpenDraw(uint32_t bucket, const ps2e_draw_state& state, bool copy_frame = 
     d.mesh = 0;
     d.pool = 0;
     d.params = nullptr;
+    d.particles = false;
     d.tag = g.tag;
     d.has_transform = g.tag_has_transform;
     if (g.tag_has_transform) d.transform = g.tag_transform;
@@ -1952,12 +1953,14 @@ DeferredBuild& ReserveDeferred(uint32_t bucket, const ps2e_draw_state& state) {
     d.mesh = 0;
     d.pool = 0;
     d.params = nullptr;
+    d.particles = false;
     d.tag = g.tag;
     d.has_transform = g.tag_has_transform;
     if (g.tag_has_transform) d.transform = g.tag_transform;
     if (g.deferred_used == g.deferred.size()) g.deferred.push_back(std::make_unique<DeferredBuild>());
     DeferredBuild& build = *g.deferred[g.deferred_used++];
     build.state = state;
+    build.particles = false;
     build.verts.clear();
     build.segments.clear();
     build.alternate.clear();
@@ -1987,12 +1990,16 @@ void FlushBuilds() { Builds().Flush(); }
 // Work wanted ahead of its use (BuildPool::background): a worker runs it when no frame build waits
 void PostBackgroundJob(BuildJob&& job) { Builds().PostBackground(std::move(job)); }
 
-// ---- EAGER TEXTURES (the Vita's default; TE_GFX_EAGER_TEXTURES=0 the synchronous path, =1 elsewhere) ----------------------
+// ---- EAGER TEXTURES (the default on every platform; TE_GFX_EAGER_TEXTURES=0 the synchronous path) ---------------------------
 // A game texture was decoded (its GS upload chain -> RGBA, ~5 ms of the device's CPU a texture) on the game
 // thread at the game's ReadTexture and then made on the drawing thread with the game thread waiting for it (OnRender: up to
 // a picture's drawing). The game's chunk reader is time-budgeted, but the port's clock does not move inside a tick (only
 // the drive model charges it), so one tick reads every resource whose bytes have landed: a chunk's textures arrived as a
-// burst of decodes in ONE tick -- the 100-250 ms ticks at loads and area entries. Now ReadTexture's call reserves the
+// burst of decodes in ONE tick -- the 100-250 ms ticks at loads and area entries. On a computer the decode is short, but the
+// wait is not: the drawing thread runs the game thread's jobs between pictures, so while it is behind (a GPU-bound picture
+// queued after the one it draws) each texture waited for a whole picture -- ticks of 20-58 ms in the level transition from
+// the core's entrance to the lab at the internal scale's 4x on an Apple M4 whose present call took 17-25 ms a picture.
+// Now ReadTexture's call reserves the
 // device id at once (ps2e_draw_texture_reserve: the id the synchronous creation would have taken -- ids are taken in the
 // order of the calls), queues the decode on the builder pool's background queue and returns; the decoded texture is made
 // on the drawing thread while it has no picture to draw (MakeReadyTextures), and a draw that names a texture not made yet
@@ -2033,11 +2040,9 @@ bool EagerTexturesOn() {
     EagerTextures& e = Eager();
     if (!e.read) {
         e.read = true;
-#if defined(__vita__)
+        // on everywhere: on a computer the synchronous creation's wait is a whole picture's drawing when the drawing thread
+        // is behind (the GPU's time a picture, which the internal scale multiplies), and the wait is per texture
         e.on = true;
-#else
-        e.on = false;
-#endif
         if (const char* v = std::getenv("TE_GFX_EAGER_TEXTURES")) {
             e.on = v[0] != '0';
             e.at_draw_only = v[0] == '2';
@@ -2639,6 +2644,7 @@ void ExpandBucket(Gfx::Bucket* buckets, int b) {
                 o.mesh = 0;
                 o.pool = 0;
                 o.params = nullptr;
+                o.particles = build.particles;
                 o.tag = d.tag;
                 o.has_transform = d.has_transform;
                 if (d.has_transform) o.transform = d.transform;
@@ -2757,6 +2763,7 @@ void ExpandBucket(Gfx::Bucket* buckets, int b) {
                     o.pending = nullptr;
                     o.mesh = 0;
                     o.params = nullptr;
+                    o.particles = build.particles;
                     o.tag = d.tag;
                     o.has_transform = d.has_transform;
                     if (d.has_transform) o.transform = d.transform;
@@ -3075,6 +3082,7 @@ void BuildInterpItems(Gfx::Frame& f) {
             it.verts = d.verts.data();
             it.count = uint32_t(d.verts.size());
             it.copy_frame = d.copy_frame;
+            it.particles = !d.mesh && d.particles;
             it.tag = d.tag;
             it.transform = d.has_transform ? &d.transform : nullptr;
             f.items.push_back(it);
@@ -3453,7 +3461,14 @@ void FillCensusBoxOf(const Draw& d, int screen_w, int screen_h) {
 // holds under both.
 constexpr float kSkyMinZ = 1024.f;   // GS z
 struct SkyMove {
+    // the layers a sky may have and still wait. The 10th dimension's skies (Twinsanity Island's chunks, the core, the lab,
+    // the rockslide) draw 48 to 62, their haze among them: 14-18 Mpx of a 4x frame when drawn first. The Vita keeps 32
+    // (its sky's wait has its own conditions: the scenes it may cross, the next picture's hint)
+#if defined(__vita__)
     static constexpr size_t kMaxLayers = 32;
+#else
+    static constexpr size_t kMaxLayers = 128;
+#endif
     bool pending = false;
     const Draw* layers[kMaxLayers] = {};   // bucket 0's sky draws in drawing order (the frame's records: alive until it is presented)
     size_t count = 0;
@@ -3510,6 +3525,55 @@ bool SkyLastOn() {
 #endif
     return sw.On();
 }
+#if !defined(__vita__)
+// THE PARTICLES AT THE TITLE'S RESOLUTION (TE_GFX_PARTICLE_SCALE; the desktop at an internal scale above 1). `frame` (the
+// default): the particles drawn into the frame target as every other draw. `title`: each run of additive particle draws in
+// drawing order (graphics_particles.cpp marks the particle draws; AdditiveParticleState) drawn into the device's pass at
+// the title's resolution and added to the frame where the run ends (ps2e_draw_particle_pass_begin: the frame's depth taken
+// down to one sample per title pixel) -- the PS2's own particle resolution, 1 / scale^2 of the fragments: the particles as
+// soft as the PS2 drew them, and an edge of the scene in front of them decided per title pixel. abN: title and frame every
+// N presents (title first), each switch logged
+struct ParticleScale {
+    int mode = -1;   // -1 unread, 0 frame, 1 title, 2 A/B
+    long period = 0;
+    int last = -1;
+    bool Title() {
+        if (mode < 0) {
+            const char* v = std::getenv("TE_GFX_PARTICLE_SCALE");
+            mode = v && std::strcmp(v, "title") == 0 ? 1 : v && std::strncmp(v, "ab", 2) == 0 ? 2 : 0;
+            if (mode == 2) period = std::max(1L, v[2] ? std::atol(v + 2) : 600L);
+            if (v && *v && mode == 0 && std::strcmp(v, "frame") != 0)
+                std::fprintf(stderr, "[te.gfx] TE_GFX_PARTICLE_SCALE=%s: not title, frame or abN: the particles at the frame's scale\n", v);
+        }
+        if (mode != 2) return mode == 1;
+        const bool title = (g.presents.load(std::memory_order_relaxed) / uint64_t(period)) % 2 == 0;
+        if (int(title) != last) {
+            last = int(title);
+            std::fprintf(stderr, "[te.gfx] TE_GFX_PARTICLE_SCALE A/B: present %llu: %s\n", (unsigned long long)g.presents.load(),
+                         title ? "title" : "frame");
+        }
+        return title;
+    }
+    bool Asked() { Title(); return mode != 0; }
+};
+ParticleScale g_particle_scale;
+// A run of the particle draws the pass takes, in drawing order: opened at its first draw, closed (added to the frame) at the
+// first draw it does not take, and at every bucket's end
+struct ParticleRun {
+    bool on = false;     // the knob says title for this picture
+    bool open = false;
+    void Close() {
+        if (open) ps2e_draw_particle_pass_end(g.dev);
+        open = false;
+    }
+    // right before a draw is submitted: `take` = the draw goes into the pass
+    void Before(bool take) {
+        if (!on) return;
+        if (!take) Close();
+        else if (!open) open = ps2e_draw_particle_pass_begin(g.dev) != 0;
+    }
+};
+#endif
 // bucket 0's last draw: the full-frame depth reset to the far value (no colour, no test, depth written, every vertex at z
 // 0, two triangles splitting a rectangle that holds the frame along a diagonal, no scissor)
 bool SkyResetQuad(const Draw& d, int w, int h) {
@@ -3933,6 +3997,10 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
     }
     const bool diag = count_as_picture && diagPresent >= 0 && g.pictures.load() + 1 == uint64_t(diagPresent);
     long submitIndex = 0;
+#if !defined(__vita__)
+    ParticleRun particleRun;   // the particles at the title's resolution (TE_GFX_PARTICLE_SCALE)
+    particleRun.on = !diag && g_particle_scale.Title();
+#endif
 #if defined(__vita__)
     // runs of one mesh range under one state handed over whole (ps2e_draw_submit_mesh_instances): when the device
     // draws them instanced -- not on the fill census's sampled frames (each draw its own box and counter) nor the diagnosis
@@ -4150,6 +4218,12 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
 #endif
         for (size_t i = 0; i < count; ++i) {
             const Draw& d = *list[i];
+#if !defined(__vita__)
+            // the run of particle draws at the title's resolution: this draw in it or not (a draw it does not take closes it,
+            // before anything of this draw is drawn)
+            const bool takeParticle = particleRun.on && !d.mesh && d.particles && te::gfx::AdditiveParticleState(d.state);
+            if (!takeParticle) particleRun.Close();
+#endif
             // (the timer: StartFrame's clear -- bucket 0's first draw, an untextured quad with the depth test off -- is the clear)
             if (timers && b == TE_GFX_BUCKET_SKY && i <= 1) {
                 const bool clear = i == 0 && !d.mesh && !d.state.texture && d.state.depth_test == PS2E_DRAW_DEPTH_ALWAYS && d.VertexCount() == 6;
@@ -4186,6 +4260,9 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
                     const int stop = SkyStopOf(d);
 #endif
                     if (stop >= 0) {
+#if !defined(__vita__)
+                        particleRun.Close();   // (the sky's layers go into the frame)
+#endif
                         if (timers) ps2e_draw_gpu_phase(g.dev, PS2E_DRAW_PHASE_SKY);
                         FlushSky(sky, stop, screen_w, screen_h, fill, b, triangles);
                         if (timers) ps2e_draw_gpu_phase(g.dev, BucketPhase(b));
@@ -4233,6 +4310,8 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
             const bool timed = g.draw_timing && (++g_draw_timing.tick & g.draw_timing_mask) == 0;
 #if defined(__vita__)
             if (fill && d.state.stencil == PS2E_DRAW_STENCIL_OFF) FillCensusBoxOf(d, screen_w, screen_h);
+#else
+            particleRun.Before(takeParticle);
 #endif
             if (d.mesh) {
                 te::prof::Scope scope(profMesh, profSlot);
@@ -4382,6 +4461,9 @@ uint64_t SubmitBuckets(Gfx::Bucket* buckets, int screen_w, int screen_h, bool co
             }
             triangles += d.VertexCount() / 3;
         }
+#if !defined(__vita__)
+        particleRun.Close();   // (a run ends with its bucket: the next bucket's first draws see the particles added)
+#endif
         if (skyDiag) {
 #if defined(__vita__)
             g_sky_diag.plan = plan;
@@ -4500,6 +4582,29 @@ void NotePace(uint64_t presents) {
         }
 #if !defined(__vita__)
         std::fputs(SkyCensusLine(gaps).c_str(), stderr);   // (the Vita's census window prints its own)
+        {
+            // the PS2 fragment programs' draws (TE_GFX_PS2_FAST: the fast program while the uniforms it folds hold their
+            // constants, else the full one); only when the fast program is built
+            static uint64_t last_fast = 0, last_full = 0;
+            const ps2r::render::GlCensus& c = ps2r::render::Census();
+            const uint64_t fast = c.draws_ps2_fast - last_fast, full = c.draws_ps2_full - last_full;
+            last_fast = c.draws_ps2_fast;
+            last_full = c.draws_ps2_full;
+            if (fast + full)
+                std::fprintf(stderr, "[te.gfx] PS2 fragment programs per present (TE_GFX_PS2_FAST): fast %.1f, full %.1f draws\n",
+                             double(fast) / gaps, double(full) / gaps);
+        }
+        if (g.dev) {
+            int tw = 0, th = 0, scale = 1;
+            ps2e_draw_target_size(g.dev, &tw, &th, &scale);
+            std::fputs(te::gfx::ParticleFillLine(gaps, te::gfx::ScreenW(), te::gfx::ScreenH(), std::max(1, scale)).c_str(), stderr);
+            uint64_t passes = 0, taken = 0;
+            ps2e_draw_particle_pass_census(g.dev, &passes, &taken);
+            if (g_particle_scale.Asked() && (passes || taken))
+                std::fprintf(stderr, "[te.gfx] particles at the title's resolution (TE_GFX_PARTICLE_SCALE): %.1f passes, %.1f draws a "
+                             "present (each pass: the frame's depth taken down to %dx%d, its draws there, added to the %dx%d frame)\n",
+                             double(passes) / gaps, double(taken) / gaps, te::gfx::ScreenW(), te::gfx::ScreenH(), tw, th);
+        }
 #endif
         if (g.dev) {
             // the textures' memory (ps2e_draw_texture_memory_census; the drawing thread's, as this line is): alive, their
@@ -4975,12 +5080,26 @@ void RenderBetween(Gfx::Frame& prev, Gfx::Frame& cur, double fraction, int64_t s
     BeginFrameTarget(cur.screen_w, cur.screen_h);
     ps2e_draw_gpu_phase(g.dev, PS2E_DRAW_PHASE_SCENE);   // (the timer: an interpolated frame's draws, as one phase)
     uint64_t submitted = 0;
+#if !defined(__vita__)
+    ParticleRun particleRun;   // (the in-between frames' particles as the pictures' are: TE_GFX_PARTICLE_SCALE)
+    particleRun.on = g_particle_scale.Title();
+#endif
     for (const auto& o : rt.interp_out) {
         if (o.count < 3) continue;
+#if !defined(__vita__)
+        const bool takeParticle = particleRun.on && o.particles && te::gfx::AdditiveParticleState(*o.state);
+        if (!takeParticle) particleRun.Close();
+#endif
         if (o.copy_frame) ps2e_draw_copy_frame(g.dev);
+#if !defined(__vita__)
+        particleRun.Before(takeParticle);
+#endif
         if (ps2e_draw_submit(g.dev, o.state, o.verts, int(o.count)) < 0) g.dropped_draws++;
         submitted++;
     }
+#if !defined(__vita__)
+    particleRun.Close();
+#endif
     g.draws_submitted += submitted;
     rt.target_slot = cur_slot;
     rt.target_fraction = interpolated ? fraction : 1.0;
@@ -5978,6 +6097,14 @@ extern "C" void te_graphics_present_census(char* out, size_t size) {
     const std::string row = PresentCensus();
     if (!out || !size) return;
     std::snprintf(out, size, "%s", row.c_str());
+}
+
+extern "C" void te_graphics_finish_pictures(int timeout_ms) {
+    auto& rt = g.rt;
+    if (!rt.started || OnRenderThread()) return;
+    std::unique_lock<std::mutex> lock(rt.mutex);
+    rt.done.wait_for(lock, std::chrono::milliseconds(std::max(0, timeout_ms)),
+                     [&] { return rt.stop || (rt.queue.empty() && rt.jobs.empty() && !rt.drawing); });
 }
 
 // ---- save state (savestate.h, kTagGraphics): the renderer's host-side state the game cannot rebuild -- the textures

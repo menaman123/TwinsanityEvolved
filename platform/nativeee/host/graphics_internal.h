@@ -86,6 +86,10 @@ struct alignas(32) Draw {
     // picture's draw as it is (untagged). Stamped from the current tag at OpenDraw (SetDrawTag).
     ps2r::ps2e::InterpTag tag;
     uint32_t ext_count = 0;         // (`ext`'s vertex count: read only where `ext` is set -- the drawing thread's own records)
+    // A particle block's draw (graphics_particles.cpp; a vertex draw: read only where `mesh` is 0): the particle census and
+    // TE_GFX_PARTICLE_SCALE take these draws. Set where a vertex record is made (OpenDraw, ReserveDeferred, the expansion's
+    // segments from DeferredBuild::particles); a mesh record leaves it as it was (never read there)
+    bool particles = false;
     // ---- lines 2-7
     alignas(32) ps2e_draw_mesh_params own_params{};
     // ---- lines 8-11
@@ -194,6 +198,7 @@ struct DeferredBuild {
     // A build's copy of what it reads from guest memory that the game rewrites before the build runs (the particle blocks,
     // their table and matrix): the build's own storage, kept across frames as `verts` is (no allocation once grown)
     std::vector<uint8_t> input;
+    bool particles = false;   // a particle chain's build: its segments' draws are particle draws (Draw::particles)
     std::atomic<bool> done{false};
     // the Vita's low-latency hand-over replaced the picture this build is for before it was drawn: a worker that has not
     // started the build skips it (done all the same; nothing reads its storage) -- graphics.cpp PresentFrame / CancelBuild
@@ -391,6 +396,14 @@ std::string BuildersCensusLine(double frames);
 std::string PoolCensusLine(double frames);
 // The particle builds' census per frame (graphics_particles.cpp): blocks built, by the emitter's form
 std::string ParticleCensusLine(double frames);
+// The particles' fill per frame (graphics_particles.cpp; the census window's, any thread): the triangles left out that draw
+// nothing (TE_GFX_PARTICLE_CULL) and, with TE_GFX_PARTICLE_CENSUS=1, the blocks, triangles and their area against the frame
+// (frame_w x frame_h, the title's pixels) and at the target's `scale`; empty when no particle was drawn in the window
+std::string ParticleFillLine(double frames, int frame_w, int frame_h, int scale);
+// Whether a particle draw of this state may be drawn in the title-resolution pass (TE_GFX_PARTICLE_SCALE, graphics.cpp): an
+// additive blend, (Cs - 0) * As|FIX + Cd, no depth write, no stencil, colour written, not sampling the frame copy -- the
+// frame's colour only added to, so the draws of a run sum to the same in any order and the sum adds to the frame once
+bool AdditiveParticleState(const ps2e_draw_state& s);
 void RetireMesh(uint32_t mesh);
 // The Vita's draw order for the GPU's hidden-surface removal (graphics_zorder.cpp; TE_GFX_VITA_ZORDER): a bucket's draw
 // ORDER (`used` pointers to its draws, graphics.cpp ExpandBucket) permuted on the drawing thread right before the draws are

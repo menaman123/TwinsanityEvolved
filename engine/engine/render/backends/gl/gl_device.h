@@ -122,6 +122,11 @@ public:
 #endif
     void CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, const Rect& dst_rect,
                   uint32_t transform) override;
+#if !PS2R_HOST_VITA
+    // the particle pass's depth taken down and its colour added (Backend::DepthDown / AddTarget; the desktop's GL)
+    bool DepthDown(SurfaceId src_color, SurfaceId src_depth, SurfaceId dst_color, SurfaceId dst_depth) override;
+    bool AddTarget(SurfaceId src, SurfaceId dst_color, SurfaceId dst_depth) override;
+#endif
 #if PS2R_HOST_VITA
     // vitaGL: the frame target's own depth/stencil surface force-stored for the frame (keep) and force-loaded again after
     // each copy (CopyRect) -- see Backend::KeepDepthAcrossCopies; TE_GFX_VITA_KEEP_DEPTH=0 leaves it transient
@@ -234,6 +239,10 @@ private:
     // CreateMesh / CreateMeshIndexed: a mesh from its list (deduplicated here on the Vita) or from its indexed form given
     uint32_t MakeMesh(const MeshVertex* verts, size_t count, const MeshVertex* pre_distinct, size_t pre_count, const uint16_t* pre_indices);
     void EnsureMeshIndexMode();        // (the Vita: TE_GFX_VITA_MESH_INDEX read once)
+#if !PS2R_HOST_VITA
+    int ps2_fast_ab_ = 0;              // TE_GFX_PS2_FAST=abN: the fast PS2 program off / on in turns every N presents
+    uint64_t ps2_fast_ab_presents_ = 0;
+#endif
 #if PS2R_HOST_VITA
     float scanout_quad_[24] = {};      // what scanout_vbo_ holds (the Vita uploads the quad only when it changes)
     bool scanout_quad_valid_ = false;

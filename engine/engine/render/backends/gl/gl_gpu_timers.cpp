@@ -171,21 +171,33 @@ void GlGpuTimers::Harvest() {
         if (!f.times.empty()) glGetQueryObjectiv(f.times.back().query, GL_QUERY_RESULT_AVAILABLE, &avail);
         if (avail && !f.samples.empty()) glGetQueryObjectiv(f.samples.back().query, GL_QUERY_RESULT_AVAILABLE, &avail);
         if (!avail) return;
+        frame_segs_.clear();
+        double frame_ms = 0;
         for (const TimeRec& r : f.times) {
             GLuint64 ns = 0;
             glGetQueryObjectui64v(r.query, GL_QUERY_RESULT, &ns);
+            const double ms = double(ns) / 1e6;
             auto it = std::find_if(win_segs_.begin(), win_segs_.end(), [&](const Seg& s) { return s.mask == r.mask; });
             if (it == win_segs_.end()) {
                 win_segs_.push_back(Seg{r.mask, 0.0});
                 it = win_segs_.end() - 1;
             }
-            it->ms += double(ns) / 1e6;
+            it->ms += ms;
+            auto ft = std::find_if(frame_segs_.begin(), frame_segs_.end(), [&](const Seg& s) { return s.mask == r.mask; });
+            if (ft == frame_segs_.end()) frame_segs_.push_back(Seg{r.mask, ms});
+            else ft->ms += ms;
+            frame_ms += ms;
         }
         double samples[kPhaseCount] = {};
         for (const SampleRec& r : f.samples) {
             GLuint64 n = 0;
             glGetQueryObjectui64v(r.query, GL_QUERY_RESULT, &n);
             samples[r.phase] += double(n);
+        }
+        if (frame_ms > worst_ms_) {
+            worst_ms_ = frame_ms;
+            worst_segs_ = frame_segs_;
+            std::memcpy(worst_samples_, samples, sizeof worst_samples_);
         }
         for (int p = 0; p < kPhaseCount; ++p) {
             win_samples_[p] += samples[p];
@@ -237,6 +249,33 @@ std::string GlGpuTimers::Lines(double wall_ms) {
     std::snprintf(buf, sizeof buf, " ms; total %.2f of %.2f ms wall (%llu frames read, %llu dropped)\n", total, wall_ms,
                   (unsigned long long)win_frames_, (unsigned long long)win_dropped_);
     out += buf;
+    // the window's worst frame: its segments in the frame's order, the fragments its phases passed
+    if (worst_ms_ > 0) {
+        std::stable_sort(worst_segs_.begin(), worst_segs_.end(), [](const Seg& a, const Seg& b) {
+            return __builtin_ctz(a.mask | 0x80000000u) < __builtin_ctz(b.mask | 0x80000000u);
+        });
+        std::snprintf(buf, sizeof buf, "[te.gfx] gpu worst frame of the window: %.2f ms =", worst_ms_);
+        out += buf;
+        first = true;
+        for (const Seg& s : worst_segs_) {
+            std::string name;
+            for (int p = 0; p < kPhaseCount; ++p)
+                if (s.mask & (1u << p)) name += (name.empty() ? "" : "+") + std::string(Name(p));
+            if (name.empty()) name = "between";
+            std::snprintf(buf, sizeof buf, "%s %s %.2f", first ? "" : ",", name.c_str(), s.ms);
+            out += buf;
+            first = false;
+        }
+        out += "; Mpx passed:";
+        first = true;
+        for (int p = 0; p < kPhaseCount; ++p) {
+            if (p == kWait || worst_samples_[p] <= 0) continue;
+            std::snprintf(buf, sizeof buf, "%s %s %.2f", first ? "" : ",", Name(p), worst_samples_[p] / 1e6);
+            out += buf;
+            first = false;
+        }
+        out += "\n";
+    }
     // the fill: the area a phase rasterises where the producer knows it, else the fragments that passed the tests
     out += "[te.gfx] gpu fill per frame (Mpx; passed = fragments through the depth / stencil tests):";
     first = true;
@@ -271,6 +310,9 @@ std::string GlGpuTimers::Lines(double wall_ms) {
     std::snprintf(buf, sizeof buf, "; the swap %.2f; total %.2f\n", win_swap_ / nc, cpu_total + win_swap_ / nc);
     out += buf;
     win_segs_.clear();
+    worst_ms_ = 0;
+    worst_segs_.clear();
+    std::memset(worst_samples_, 0, sizeof worst_samples_);
     std::memset(win_samples_, 0, sizeof win_samples_);
     std::memset(win_fill_, 0, sizeof win_fill_);
     std::memset(win_cpu_, 0, sizeof win_cpu_);

@@ -301,7 +301,7 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
     auto newest_all = [&]() {
         for (size_t i = 0; i < cur.count; ++i) {
             const InterpItem& it = cur.items[i];
-            out.push_back(InterpOutput{it.state, it.verts, it.count, it.copy_frame});
+            out.push_back(InterpOutput{it.state, it.verts, it.count, it.copy_frame, it.particles});
         }
         stats_.newest_items += cur.count;
     };
@@ -359,7 +359,7 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
     std::unordered_map<uint64_t, Object> objects;
     for (size_t i = 0; i < cur.count; ++i) {
         const InterpItem& it = cur.items[i];
-        InterpOutput o{it.state, it.verts, it.count, it.copy_frame};
+        InterpOutput o{it.state, it.verts, it.count, it.copy_frame, it.particles};
         bool matched = false;
         uint64_t accum_key = it.tag.kind == InterpKind::Vertices ? Key(it.tag) : it.tag.id;
         const Object* object = nullptr;
@@ -458,7 +458,7 @@ bool SceneInterpolator::Interpolate(const InterpScene& prev, const InterpScene& 
                     Multiply4(kprev, world_to_screen, kprev);
                     size_t begin = 0;
                     if (ReprojectRigid(pi, kprev, cur.off_x, cur.off_y, cur.screen_scale, &begin)) {
-                        out.push_back(InterpOutput{pi.state, scratch_.data() + begin, pi.count, false});
+                        out.push_back(InterpOutput{pi.state, scratch_.data() + begin, pi.count, false, pi.particles});
                         stats_.cover_items++;
                     }
                 }

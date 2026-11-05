@@ -69,6 +69,11 @@ u32 DisplaySettingChoices(u32 setting);
 void DisplaySettingChoiceLabel(u32 setting, u32 choice, char* out, u32 size);
 u32 DisplaySettingValue(u32 setting);
 void SetDisplaySetting(u32 setting, u32 choice);
+// TwinsanityEvolved: the shape, width over height, that the game's widescreen option draws for when the platform shows the
+// picture at a wide shape other than a 16:9 TV's: the projection and the culling frustum (more of the world at the sides), the
+// menus' and the HUD's squeeze and the movies' picture; wider than 16:9, the menus and the HUD keep the 16:9 layout in the
+// middle of the picture. 0 = a 16:9 TV's (the PS2): the game draws as on the console
+f32 WidescreenAspect();
 // TwinsanityEvolved: the platform's own texts over the frame (an fps counter, a mod's timer), queued through the GAME's
 // text system every frame -- the renderer's QueueText with the game's font -- after the game's own overlay; the PS2 queues none
 void QueuePlatformTexts(Renderer* renderer, Font* font);

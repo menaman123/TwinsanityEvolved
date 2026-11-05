@@ -20,7 +20,7 @@ namespace te::test_requests {
 
 namespace {
 // Platform::System::TestRequestKind and TestRequest (game/include/platform/system.h): eight 32-bit words in the game's memory
-constexpr unsigned kTeleport = 1, kMessage = 2, kCounter = 3, kAgentCounter = 4;
+constexpr unsigned kTeleport = 1, kMessage = 2, kCounter = 3, kAgentCounter = 4, kHitPoints = 5;
 constexpr unsigned kCounters = 1000;     // ChunkManager::Counters
 constexpr unsigned kAgentCounters = 4;   // Agent::Counters
 constexpr unsigned kPlaying = 12;      // GameController::StatePlaying
@@ -64,8 +64,15 @@ bool Parse(const std::string& spec, Request* out, std::string* error) {
             if (r.instance == "player" || r.counter >= kAgentCounters || v < 0 || v > 255)
                 return fail("counter N V NAME: an object's instance, N 0..3, V 0..255");
         }
+    } else if (op == "hitpoints") {
+        r.kind = kHitPoints;
+        long v = -1;
+        if (!(in >> v) || v < 0 || v > 255) return fail("hitpoints N [NAME] (N 0..255)");
+        r.value = int32_t(v);
+        in >> r.instance;
+        if (r.instance == "player") r.instance.clear();
     } else {
-        return fail("unknown test request (teleport, message, counter)");
+        return fail("unknown test request (teleport, message, counter, hitpoints)");
     }
     std::string extra;
     if (in >> extra) return fail("more words than the request takes");
@@ -80,6 +87,8 @@ std::string Spec(const Request& r) {
     else if (r.kind == kMessage)
         std::snprintf(text, sizeof text, "message %s %d%s%s", IsPlayer(r.instance) ? "player" : r.instance.c_str(), r.value,
                       r.other.empty() ? "" : " ", r.other.c_str());
+    else if (r.kind == kHitPoints)
+        std::snprintf(text, sizeof text, "hitpoints %d%s%s", r.value, r.instance.empty() ? "" : " ", r.instance.c_str());
     else if (r.kind == kAgentCounter)
         std::snprintf(text, sizeof text, "counter %u %d %s", r.counter, r.value, r.instance.c_str());
     else

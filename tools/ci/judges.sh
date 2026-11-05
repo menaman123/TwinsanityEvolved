@@ -6,13 +6,20 @@
 #   tools/ci/judges.sh --iso <disc image> [--bin BIN] [--build-dir DIR] [--out DIR] [--launcher-build DIR]
 #                      [--set standing|features|title|launcher|discs|all] [--ntsc-iso <the North American disc>]
 #
-#   standing   the hub's skinned characters, shadow volumes, the shadow kept off the caster, landing dust, particles, the
+#   standing   the hub's skinned characters, shadow volumes, the shadow kept off the caster, the shadow on a crate's top (and
+#              nowhere else on it), landing dust, particles, the
 #              cryscave flicker, Ice Climb's cave passes against the exact GS depth test, Ice Climb's floating ice against the
-#              recompiled reference's heights, the frozen heap layout
-#   features   the speedrun HUD, level select, the language table (text and speech, two lists) and the pairs chosen apart, the fps counter, the cavern crystals, the title
+#              recompiled reference's heights, the frozen heap layout, the fill a 4x frame draws where the fog and the waterfall
+#              are (the GPU's own counts, no time), the textures made ahead of their use (none decoded or waited for on the game
+#              thread in two cutscenes that read their next area; the pictures the synchronous path's)
+#   features   the speedrun HUD, level select (one click; a warp from inside a level carries no pairing), Evil Crash's chase in
+#              Bandicoot Pursuit (game.route_steps), the language table (text and speech, two lists) and the pairs chosen apart, the fps counter, the cavern crystals, the title
 #              orb, mod saves namespaced, the mods folder's disc overlay (a text bank, a level chunk, the order, nothing on =
 #              identical), the mod importer (images, xdelta / PPF / BPS, Mod Crates, executables, the base check), speedrun mode, infinite lives
-#              (the hub's deaths: the lives counted down to the game over without it, kept with it), the language setting, decals, display settings, the CT16 present,
+#              (the hub's deaths: the lives counted down to the game over without it, kept with it), the pause screen's gem row
+#              (a gem shown the moment it is picked up, gone after the GAME OVER's CONTINUE as the save's rule has it), the knee
+#              slide's steering (60 Hz slides kept to their direction, 50 Hz unchanged), the third mask's invincibility (and
+#              explosions through it), the language setting, decals, display settings, the CT16 present,
 #              the intro ocean seams (the fixture's frozen maximum; the oracle comparison needs the oracle dump), voice pitch,
 #              the Arabic language pack (picked in the options and drawn, length, the language judges with it present), the game's Mods page with a mods
 #              folder (the built-ins only: no folder mod's row or note; the overlays still apply), the loads at the device's speed (LOAD
@@ -77,16 +84,31 @@ standing() {
   j skin skin_judge --fixture fixtures/judges/hub_skin_pal.json
   j shadow shadow_judge --fixture fixtures/judges/hub_shadow_pal.json
   j shadow_caster shadow_caster_judge --fixture fixtures/judges/hub_shadow_caster_pal.json
+  # Crash's shadow on a crate's top (video.shadows_on_crates): the floors take it, darkened by the composite, and nothing
+  # else changes -- no band down a side, no line along the bottom rail's ledge; the hub pad log identical off and on
+  j crate_shadows crate_shadow_judge --fixture fixtures/judges/crate_shadow_pal.json
   j landing_dust dust_judge --fixture fixtures/judges/landing_dust_pal.json
   j particles particle_judge --fixture fixtures/judges/hub_particles_pal.json
   j cryscave_flicker flicker_judge --fixture fixtures/judges/cavern_cryscave_flicker_pal.json
   j iceclimb_depth icetex_judge --fixture fixtures/judges/icetex_pal.json
   j iceclimb_bergs iceclimb_bergs_judge --fixture fixtures/judges/iceclimb_bergs_pal.json
   j heap_layout heap_layout_judge
+  # the fill at 4x where see-through layers pile up (the 10th dimension's sky waiting for the scene, every draw on the PS2
+  # fast program, the mist / sea / waterfall sheets' fragments within 10 % of their frozen counts, the copies coalesced)
+  j fx_fill fx_fill_judge --fixture fixtures/judges/fx_fill_pal.json
+  # the textures made ahead of their use (the default): a cutscene that reads its next area decodes none on the game thread
+  # and waits for none there, and draws, plays and ends exactly as the synchronous path (TE_GFX_EAGER_TEXTURES=0)
+  j texture_pipeline texture_pipeline_judge --fixture fixtures/judges/texture_pipeline_pal.json
 }
 features() {
   j speedrun_hud speedrun_hud_judge
   j level_select level_select_judge
+  # a level select warp made inside a level (Cavern Catastrophe's Rollerbrawl, then the hub / the rooftop as Nina) starts the
+  # level as a warp from the menus does: the pairing and the second character of the level left are not carried
+  j level_select_pairing level_select_pairing_judge
+  # Bandicoot Pursuit: Evil Crash's first route step, missed straight ahead by the disc's script data, kept missed with
+  # game.route_steps = retail (he stops as on the console) and reached with the default (he follows Cortex, rants, jumps on)
+  j evil_crash_chase evil_crash_chase_judge
   j language_table language_table_judge
   j language_tuple language_tuple_judge
   j fps_counter fps_counter_judge
@@ -104,6 +126,15 @@ features() {
   # infinite lives: the hub's death route without the mod (the lives 5 -> 0, the fifth death the game over) and with it (seven
   # deaths, the lives kept, a restart at the checkpoint after each); nothing else differs
   j infinite_lives infinite_lives_judge
+  # the pause screen's gem row: the beach's red gem shown the moment it is picked up (the live progress), and gone again
+  # after the GAME OVER's CONTINUE (the save's snapshot, which a gem joins only at a save point: the retail rule)
+  j gem_row gem_row_judge
+  # the knee slide's steering: four 60 Hz slides kept to their direction (retail's last frame of steering swings each past it,
+  # game.slide_steering = retail and the speedrun mod), the 50 Hz slides identical either way
+  j slide_steering slide_steering_judge
+  # the third Aku Aku mask: its invincibility starts and takes the crab's contact (a hit point without it); the nitro's explosion
+  # goes through it by retail's rule, spared with game.invincible_to_explosions = on (retail's again with the speedrun mod)
+  j invincibility invincibility_judge
   j language language_judge
   # the Arabic language pack (mods/arabic, not a mod): picked in GAME OPTIONS > TEXT LANGUAGE and drawn right (forms,
   # direction, boxes), every text fitting, and the disc's languages unchanged with it present

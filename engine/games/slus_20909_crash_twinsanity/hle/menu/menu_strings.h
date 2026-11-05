@@ -32,7 +32,7 @@ public:
         DisplayMode,        // "display mode" (video.fullscreen)
         Windowed, Borderless,                              // + Fullscreen above
         Aspect,             // "aspect ratio" (video.aspect)
-        AspectAuto, AspectNormal, AspectWide, AspectWideTen, AspectUltraWide,
+        AspectAuto, AspectNormal, AspectWide, AspectWideTen, AspectUltraWide, AspectSuperWide,
         RenderRate,         // "render rate" (video.render_rate)
         RateSixty, RateDisplay,
         TextureFilter,      // "texture filter" (video.texture_filter)

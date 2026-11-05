@@ -11,6 +11,10 @@ struct Vector2;
 constexpr f32 NarrowAspect = 0x1.555556p+0f;
 constexpr f32 WideAspect = 0x1.C71C72p+0f;
 
+// The TV's shape the game draws for: 4:3, or with the widescreen option on the platform's widescreen shape (16:9 on the PS2;
+// TwinsanityEvolved: the shape a wide monitor shows the picture at, Platform::Graphics::WidescreenAspect)
+f32 TvAspect();
+
 // The renderer's frames: the render buckets (the PS2's DMA chains) linked into one chain the platform presents
 extern "C"
 {

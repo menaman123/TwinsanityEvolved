@@ -97,12 +97,12 @@ public:
     int MovieYuvSizeLocation() const { return movie_yuv_size_loc_; }   // u_luma_size: the luma plane's size, the chroma's
     const GlStencilLocations& StencilLocations() const { return sloc_; }
 
-    // The Vita's FAST PS2 program (0 elsewhere, or when TE_GFX_VITA_PS2_FAST=0): the same vertex shader and the same
-    // fragment source with the uniforms of the arms no Vita draw takes replaced by their values (kVitaFastConstants in
-    // gl_shader_library.cpp) -- Sony's compiler drops those arms. A draw may use it only while every one of those
-    // uniforms holds exactly that value (GlDrawExecutor::SelectPs2Variant checks the uniform cache's shadows): then the
-    // two programs compute the same expressions. Its uniforms mirror the full program's (FastMirror: full location ->
-    // fast location; the uniform cache writes both).
+    // The FAST PS2 program (0 when TE_GFX_VITA_PS2_FAST=0 on the Vita, TE_GFX_PS2_FAST=0 elsewhere): the same vertex
+    // shader and the same fragment source with the uniforms of the arms no ps2e_draw state takes replaced by their values
+    // (kFastConstants in gl_shader_library.cpp) -- the compiler drops those arms. A draw may use it only while every one
+    // of those uniforms holds exactly that value (GlDrawExecutor::BindPs2Program checks the uniform cache's shadows):
+    // then the two programs compute the same expressions. Its uniforms mirror the full program's (the uniform cache
+    // writes both: SetMirror, SetPrograms).
     uint32_t Ps2FastProgram() const { return ps2_fast_program_; }
     bool Ps2FastEnabled() const { return ps2_fast_program_ != 0 && ps2_fast_enabled_; }
     void SetPs2FastEnabled(bool on) { ps2_fast_enabled_ = on; }
